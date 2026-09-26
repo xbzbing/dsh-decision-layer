@@ -6,11 +6,16 @@ function sessionKey(value) {
 function emptyState() {
   return { enabled: true, attempts: 0, failures: 0,
     gate: { attempts: 0, failures: 0, ask: 0, deny: 0, allow: 0, actual: { allow: 0, deny: 0, error: 0 } },
-    check: { attempts: 0, failures: 0, low: 0 } };
+    check: { attempts: 0, failures: 0, low: 0 }, log: [] };
 }
 
-export function createSessionState({ maxSessions = 1024 } = {}) {
+function safeTool(value) {
+  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 128) : undefined;
+}
+
+export function createSessionState({ maxSessions = 1024, maxLogEntries = 50 } = {}) {
   if (!Number.isSafeInteger(maxSessions) || maxSessions < 1) throw new Error('Invalid session limit');
+  if (!Number.isSafeInteger(maxLogEntries) || maxLogEntries < 1) throw new Error('Invalid log limit');
   const sessions = new Map();
   const writable = id => {
     const key = sessionKey(id);
@@ -37,6 +42,7 @@ export function createSessionState({ maxSessions = 1024 } = {}) {
       if (overflow) value.capacityExceeded = true;
       if (state.gate.attempts > 0) value.gate = { ...state.gate, actual: { ...state.gate.actual } };
       if (state.check.attempts > 0) value.check = { ...state.check };
+      if (state.log.length > 0) value.log = state.log.map(entry => ({ ...entry }));
       return value;
     },
     record(id, kind, outcome) {
@@ -58,6 +64,20 @@ export function createSessionState({ maxSessions = 1024 } = {}) {
       state.check.attempts++;
       if (outcome === 'error') { state.failures++; state.check.failures++; }
       else if (outcome === 'low') state.check.low++;
+    },
+    log(id, entry) {
+      if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Invalid log entry');
+      if (!['gate', 'check'].includes(entry.kind)) throw new Error('Invalid log entry');
+      const record = { at: Date.now(), kind: entry.kind, outcome: typeof entry.outcome === 'string' ? entry.outcome.slice(0, 32) : '' };
+      const tool = safeTool(entry.tool);
+      if (tool) record.tool = tool;
+      if (typeof entry.suggestion === 'string' && entry.suggestion) record.suggestion = entry.suggestion.slice(0, 16);
+      if (typeof entry.action === 'string' && entry.action) record.action = entry.action.slice(0, 16);
+      if (typeof entry.reason === 'string' && entry.reason) record.reason = entry.reason.slice(0, 32);
+      if (Number.isSafeInteger(entry.score)) record.score = entry.score;
+      const state = writable(id);
+      state.log.push(record);
+      if (state.log.length > maxLogEntries) state.log.splice(0, state.log.length - maxLogEntries);
     },
   };
 }

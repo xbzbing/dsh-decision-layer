@@ -78,3 +78,35 @@ test('non-dangerous calls are passed to the next policy stage', async () => {
   const gate = createDangerGate({ evaluate: async () => { throw new Error('must not run'); } });
   assert.deepEqual(await gate.preExecute(exec('shell', { command: 'echo safe' }), async () => ({ kind: 'allow' })), { kind: 'allow' });
 });
+
+test('gate writes a structured decision log entry with tool, suggestion and action', async () => {
+  const entries = [];
+  const sessions = { snapshot: () => ({ enabled: true }), record: () => {}, log: (_id, entry) => entries.push(entry) };
+  const deny = createDangerGate({ sessions, evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 1, probabilities: { allow: 0, ask: 0, deny: 1 } } } }) });
+  await deny.evaluate(exec('bash', { command: 'rm -rf /tmp/build' }));
+  assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'deny', tool: 'bash', suggestion: 'deny', action: 'deny' });
+  const unavailable = createDangerGate({ sessions, evaluate: async () => { throw new Error('offline'); } });
+  await unavailable.evaluate(exec('edit', { path: '/etc/passwd' }));
+  assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'error', tool: 'edit', action: 'ask', reason: 'unreachable' });
+});
+
+test('gate logs distinct fallback reasons for invalid response and low confidence', async () => {
+  const entries = [];
+  const sessions = { snapshot: () => ({ enabled: true }), record: () => {}, log: (_id, entry) => entries.push(entry) };
+  const invalid = createDangerGate({ sessions, evaluate: async () => ({ answers: { verdict: { type: 'choice' } } }) });
+  await invalid.evaluate(exec('bash', { command: 'rm -rf /tmp/x' }));
+  assert.equal(entries.at(-1).reason, 'invalid-response');
+  const lowConf = createDangerGate({ sessions, evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 0.2, probabilities: { allow: 0, ask: 0.1, deny: 0.9 } } } }) });
+  await lowConf.evaluate(exec('bash', { command: 'rm -rf /tmp/x' }));
+  assert.equal(entries.at(-1).reason, 'low-confidence');
+  const httpErr = createDangerGate({ sessions, evaluate: async () => { const e = new Error('http'); e.reason = 'http-error'; throw e; } });
+  await httpErr.evaluate(exec('bash', { command: 'rm -rf /tmp/x' }));
+  assert.equal(entries.at(-1).reason, 'http-error');
+});
+
+test('recognizes DSH file_path arguments for ordinary edit calls', () => {
+  const ordinaryEdit = exec('edit', { file_path: 'src/client/panel.tsx', old_string: 'old', new_string: 'new' });
+  const sensitiveEdit = exec('edit', { file_path: '/workspace/.env', old_string: 'old', new_string: 'new' });
+  assert.equal(classifyDangerous(ordinaryEdit, DEFAULT_DANGEROUS_RULES).dangerous, false);
+  assert.equal(classifyDangerous(sensitiveEdit, DEFAULT_DANGEROUS_RULES).dangerous, true);
+});

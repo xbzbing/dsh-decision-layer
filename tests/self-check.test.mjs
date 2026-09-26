@@ -91,3 +91,14 @@ test('empty output, disabled session, and backend failure skip the check without
   const disabled = createSelfCheck({ sessions: { snapshot: () => ({ enabled: false }) }, evaluate: async () => { throw new Error('must not run'); } });
   assert.equal((await disabled.review(turn('answer'))).evaluated, false);
 });
+
+test('self-check logs score on evaluation and a reason on failure', async () => {
+  const entries = [];
+  const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
+  const ok = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1 } } } }) });
+  await ok.review(turn('great answer'));
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 2 });
+  const offline = createSelfCheck({ sessions, evaluate: async () => { throw new Error('offline'); } });
+  await offline.review(turn('answer'));
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'error', reason: 'unreachable' });
+});

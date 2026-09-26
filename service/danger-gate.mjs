@@ -7,7 +7,7 @@ const DEFAULT_COMMAND_PATTERNS = Object.freeze([
 ]);
 const DEFAULT_PATH_PATTERNS = Object.freeze([/(?:^|[\\/])(?:etc|production|prod)[\\/]/i, /(?:^|[\\/])\.env(?:$|\.)/i]);
 const COMMAND_KEYS = new Set(['command', 'cmd', 'script', 'query']);
-const PATH_KEYS = new Set(['path', 'target', 'file', 'filename', 'directory']);
+const PATH_KEYS = new Set(['path', 'file_path', 'filePath', 'target', 'file', 'filename', 'directory']);
 const MAX_RULES = 64;
 const MAX_PATTERN_LENGTH = 128;
 const MAX_METADATA_LENGTH = 2048;
@@ -84,13 +84,16 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
   };
   const deniedCalls = new WeakSet();
   const evaluatedCalls = new WeakSet();
-  const record = (exec, outcome) => {
+  const record = (exec, outcome, detail = {}) => {
     const id = exec?.agent?.session?.id;
     if (!sessions || typeof id !== 'string') return;
     try { sessions.record(id, 'gate', outcome); } catch { /* metrics cannot change the security decision */ }
+    if (typeof sessions.log !== 'function') return;
+    try { sessions.log(id, { kind: 'gate', outcome, tool: exec?.name, ...detail }); }
+    catch { /* logging is best effort */ }
   };
-  const fallback = exec => {
-    record(exec, 'error');
+  const fallback = (exec, reason = 'unavailable') => {
+    record(exec, 'error', { action: 'ask', reason });
     if (exec && typeof exec === 'object') evaluatedCalls.add(exec);
     return { kind: 'ask', reason: 'Dangerous call requires host approval' };
   };
@@ -110,15 +113,17 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
     },
     async evaluate(exec) {
       if (exec && typeof exec === 'object') evaluatedCalls.add(exec);
+      let result;
       try {
-        const result = await evaluate(suggestionQuestion(exec), { signal: exec.signal });
-        const answer = result?.answers?.verdict;
-        const choice = answer?.choice;
-        if (!['allow', 'ask', 'deny'].includes(choice) || typeof answer.confidence !== 'number' || answer.confidence < minConfidence) return fallback(exec);
-        if (choice === 'deny') { record(exec, 'deny'); if (exec && typeof exec === 'object') deniedCalls.add(exec); return { kind: 'deny', reason: 'Dangerous call rejected by decision policy', modelSuggestion: choice }; }
-        record(exec, choice);
-        return { kind: 'ask', reason: 'Dangerous call requires host approval', modelSuggestion: choice };
-      } catch { return fallback(exec); }
+        result = await evaluate(suggestionQuestion(exec), { signal: exec.signal });
+      } catch (error) { return fallback(exec, typeof error?.reason === 'string' ? error.reason : 'unreachable'); }
+      const answer = result?.answers?.verdict;
+      const choice = answer?.choice;
+      if (!['allow', 'ask', 'deny'].includes(choice)) return fallback(exec, 'invalid-response');
+      if (typeof answer.confidence !== 'number' || answer.confidence < minConfidence) return fallback(exec, 'low-confidence');
+      if (choice === 'deny') { record(exec, 'deny', { suggestion: 'deny', action: 'deny' }); if (exec && typeof exec === 'object') deniedCalls.add(exec); return { kind: 'deny', reason: 'Dangerous call rejected by decision policy', modelSuggestion: choice }; }
+      record(exec, choice, { suggestion: choice, action: 'ask' });
+      return { kind: 'ask', reason: 'Dangerous call requires host approval', modelSuggestion: choice };
     },
     async preExecute(exec, next) {
       const classification = classifyDangerous(exec, await resolveRules());
@@ -129,8 +134,8 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
           const snapshot = sessions.snapshot(id);
           // A deliberate user toggle bypasses the gate; involuntary capacity overflow must not fail-open.
           if (snapshot.enabled === false && !snapshot.capacityExceeded) return next();
-          if (snapshot.capacityExceeded) return fallback(exec);
-        } catch { return fallback(exec); }
+          if (snapshot.capacityExceeded) return fallback(exec, 'capacity');
+        } catch { return fallback(exec, 'unreachable'); }
       }
       return this.evaluate(exec);
     },

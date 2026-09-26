@@ -7,6 +7,15 @@ const isObject = value => value !== null && typeof value === 'object' && !Array.
 const isContent = value => typeof value === 'string' ? value.trim().length > 0 : isObject(value) || Array.isArray(value);
 const probability = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 
+// A backend failure carries a stable `reason` code so callers can surface the
+// specific cause (unreachable / http-error / invalid-response / config) instead
+// of a single generic error.
+function backendError(reason, message) {
+  const error = new Error(message);
+  error.reason = reason;
+  return error;
+}
+
 export function validateRequest(input) {
   if (!isObject(input) || !isContent(input.state) || !isObject(input.questions)) throw new Error('Invalid state or questions');
   const questions = Object.entries(input.questions);
@@ -34,26 +43,26 @@ export function validateRequest(input) {
 }
 
 function validateAnswer(value, question) {
-  if (!isObject(value) || value.type !== question.type) throw new Error('Invalid response answer');
+  if (!isObject(value) || value.type !== question.type) throw backendError('invalid-response', 'Invalid response answer');
   if (question.type === 'noul') {
-    if (!probability(value.noul)) throw new Error('Invalid response probability');
+    if (!probability(value.noul)) throw backendError('invalid-response', 'Invalid response probability');
     return { type: 'noul', noul: value.noul };
   }
   const keys = question.type === 'choice' ? Object.keys(question.criteria) : question.criteria.map((_, i) => String(i));
   if (!isObject(value.probabilities) || !probability(value.confidence) ||
     Object.keys(value.probabilities).length !== keys.length || keys.some(key => !probability(value.probabilities[key])) ||
-    Math.abs(keys.reduce((sum, key) => sum + value.probabilities[key], 0) - 1) > 0.02) throw new Error('Invalid response probabilities');
+    Math.abs(keys.reduce((sum, key) => sum + value.probabilities[key], 0) - 1) > 0.02) throw backendError('invalid-response', 'Invalid response probabilities');
   const common = { type: value.type, confidence: value.confidence, probabilities: Object.fromEntries(keys.map(key => [key, value.probabilities[key]])) };
   if (question.type === 'choice') {
-    if (typeof value.choice !== 'string' || !keys.includes(value.choice)) throw new Error('Invalid response choice');
+    if (typeof value.choice !== 'string' || !keys.includes(value.choice)) throw backendError('invalid-response', 'Invalid response choice');
     return { ...common, choice: value.choice };
   }
-  if (!Number.isSafeInteger(value.score) || value.score < 0 || value.score > keys.length - 1) throw new Error('Invalid response score');
+  if (!Number.isSafeInteger(value.score) || value.score < 0 || value.score > keys.length - 1) throw backendError('invalid-response', 'Invalid response score');
   return { ...common, score: value.score };
 }
 
 function validateResponse(value, questions) {
-  if (!isObject(value) || !isObject(value.answers) || typeof value.model !== 'string') throw new Error('Invalid response');
+  if (!isObject(value) || !isObject(value.answers) || typeof value.model !== 'string') throw backendError('invalid-response', 'Invalid response');
   const answers = Object.create(null);
   for (const [id, question] of Object.entries(questions)) answers[id] = validateAnswer(value.answers[id], question);
   return { model: value.model, answers, usage: isObject(value.usage) ? {
@@ -64,7 +73,7 @@ function validateResponse(value, questions) {
 
 async function boundedJson(response) {
   const reader = response.body?.getReader();
-  if (!reader) throw new Error('Invalid response body');
+  if (!reader) throw backendError('invalid-response', 'Invalid response body');
   const chunks = [];
   let size = 0;
   try {
@@ -72,11 +81,11 @@ async function boundedJson(response) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > RESPONSE_LIMIT) throw new Error('Invalid response size');
+      if (size > RESPONSE_LIMIT) throw backendError('invalid-response', 'Invalid response size');
       chunks.push(value);
     }
   } finally { await reader.cancel().catch(() => {}); }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new Error('Invalid response JSON'); }
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw backendError('invalid-response', 'Invalid response JSON'); }
 }
 
 export function createBackend({ config, fetcher = globalThis.fetch, timeoutMs = 20_000, retryDelayMs = 200 }) {
@@ -89,16 +98,16 @@ export function createBackend({ config, fetcher = globalThis.fetch, timeoutMs = 
       const { state, questions } = validateRequest(input);
       const settings = await config();
       const key = settings.apiKey?.trim();
-      if (!key || /[\r\n]/.test(key)) throw new Error('API key is required');
+      if (!key || /[\r\n]/.test(key)) throw backendError('config', 'API key is required');
       let url;
-      try { url = new URL(settings.url); } catch { throw new Error('Invalid backend URL'); }
-      if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid backend URL');
-      if (url.protocol === 'http:' && settings.httpApprovedUrl !== settings.url) throw new Error('HTTP URL requires confirmation');
+      try { url = new URL(settings.url); } catch { throw backendError('config', 'Invalid backend URL'); }
+      if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw backendError('config', 'Invalid backend URL');
+      if (url.protocol === 'http:' && settings.httpApprovedUrl !== settings.url) throw backendError('config', 'HTTP URL requires confirmation');
       const model = settings.model || DEFAULT_MODEL;
-      if (typeof model !== 'string' || !model.trim() || /[\r\n]/.test(model)) throw new Error('Invalid model');
+      if (typeof model !== 'string' || !model.trim() || /[\r\n]/.test(model)) throw backendError('config', 'Invalid model');
       const endpoint = new URL(url.href);
       endpoint.pathname = `${url.pathname.replace(/\/+$/, '')}/v1/systemone`;
-      if (endpoint.origin !== url.origin) throw new Error('Invalid backend endpoint');
+      if (endpoint.origin !== url.origin) throw backendError('config', 'Invalid backend endpoint');
       const timeout = AbortSignal.timeout(timeoutMs);
       const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -106,12 +115,12 @@ export function createBackend({ config, fetcher = globalThis.fetch, timeoutMs = 
         try {
           reply = await fetcher(endpoint.href, { method: 'POST', redirect: 'error', signal: combined,
             headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify({ state, questions, model }) });
-        } catch { throw new Error('Backend request failed or timed out'); }
+        } catch { throw backendError('unreachable', 'Backend request failed or timed out'); }
         if (reply.ok) return validateResponse(await boundedJson(reply), questions);
         await reply.body?.cancel().catch(() => {});
-        if (![429, 529].includes(reply.status) || attempt === 2) throw new Error(`Backend HTTP ${reply.status}`);
+        if (![429, 529].includes(reply.status) || attempt === 2) throw backendError('http-error', `Backend HTTP ${reply.status}`);
         try { await wait(retryDelayMs * (attempt + 1), undefined, { signal: combined }); }
-        catch { throw new Error('Backend request failed or timed out'); }
+        catch { throw backendError('unreachable', 'Backend request failed or timed out'); }
       }
     },
   };

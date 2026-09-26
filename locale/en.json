@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Decision Layer",
+    "description": "A structured decision layer for the DeepSeek Harness agent loop: a danger-call gate, output self-check, and loop guard backed by a pluggable adjudication model."
+  }
+}

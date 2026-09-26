@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "决策层",
+    "description": "为 DeepSeek Harness agent 循环提供的结构化决策层：危险调用门控、产出自检与防循环，由可插拔的裁决模型驱动。"
+  }
+}

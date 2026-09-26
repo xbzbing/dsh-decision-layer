@@ -64,15 +64,17 @@ export function createManagerRoutes({ path, sessions, backend, env = process.env
     }),
     route('probe', {
       POST: async () => {
+        const effectiveUrl = (await resolveConfig({ path, env })).url;
         try {
           const result = await backend.evaluate({ state: 'Connection test', questions: {
             connected: { type: 'noul', instructions: 'Is this a connection test?' },
           } });
-          return { connected: true, model: result.model, usage: result.usage };
-        } catch { return { connected: false, reason: 'unavailable' }; }
+          return { connected: true, model: result.model, usage: result.usage, effectiveUrl };
+        } catch { return { connected: false, reason: 'unavailable', effectiveUrl }; }
       },
     }),
     route('metrics', { GET: req => sessions.snapshot(sessionId(req)) }),
+    route('log', { GET: req => ({ entries: sessions.snapshot(sessionId(req)).log ?? [] }) }),
     route('session', {
       GET: req => sessions.snapshot(sessionId(req)),
       PUT: async req => {

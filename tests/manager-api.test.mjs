@@ -32,6 +32,9 @@ test('read default configuration and session state without disclosing credential
   assert.equal((await json(response)).value.enabled, true);
   const count = await json(await fetch(`${base}/metrics?sessionId=s1`));
   assert.equal(count.value.hasAutomaticDecisions, false);
+  const log = await json(await fetch(`${base}/log?sessionId=s1`));
+  assert.equal(log.ok, true);
+  assert.deepEqual(log.value.entries, []);
 });
 
 test('origin-free mutations cannot change backend or trigger a probe', async () => {

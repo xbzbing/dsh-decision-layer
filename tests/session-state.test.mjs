@@ -55,3 +55,22 @@ test('each automatic attempt counts once and failure is separate', () => {
   assert.equal(sessions.snapshot('two').hasAutomaticDecisions, false);
   assert.throws(() => sessions.record('', 'gate', 'error'), /session/i);
 });
+
+test('decision log keeps a bounded newest-last ring and validates entries', () => {
+  const sessions = createSessionState({ maxLogEntries: 3 });
+  assert.equal(sessions.snapshot('one').log, undefined);
+  sessions.log('one', { kind: 'gate', outcome: 'deny', tool: 'bash', suggestion: 'deny' });
+  sessions.log('one', { kind: 'check', outcome: 'low', score: 0 });
+  const first = sessions.snapshot('one').log;
+  assert.equal(first.length, 2);
+  assert.equal(first[0].kind, 'gate');
+  assert.equal(first[0].tool, 'bash');
+  assert.equal(first[0].suggestion, 'deny');
+  assert.ok(Number.isSafeInteger(first[0].at));
+  assert.equal(first[1].score, 0);
+  for (let i = 0; i < 5; i++) sessions.log('one', { kind: 'gate', outcome: 'ask', tool: `t${i}` });
+  const bounded = sessions.snapshot('one').log;
+  assert.equal(bounded.length, 3);
+  assert.equal(bounded[2].tool, 't4');
+  assert.throws(() => sessions.log('one', { kind: 'bogus', outcome: 'x' }), /log entry/i);
+});

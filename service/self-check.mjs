@@ -42,10 +42,13 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
     const lowScoreThreshold = Number.isSafeInteger(raw?.lowScoreThreshold) && raw.lowScoreThreshold >= 0 ? raw.lowScoreThreshold : 1;
     return { mode, rubric: boundedRubric(raw?.rubric), lowScoreThreshold };
   };
-  const record = (turn, outcome) => {
+  const record = (turn, outcome, detail = {}) => {
     const id = turn?.agent?.session?.id;
     if (!sessions || typeof id !== 'string' || typeof sessions.recordCheck !== 'function') return;
     try { sessions.recordCheck(id, outcome); } catch { /* telemetry is best effort */ }
+    if (typeof sessions.log !== 'function') return;
+    try { sessions.log(id, { kind: 'check', outcome, ...detail }); }
+    catch { /* logging is best effort */ }
   };
   return {
     async review(turn) {
@@ -61,14 +64,17 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
       try {
         const result = await evaluate(scoreQuestion(output, rubric), { signal: turn.signal });
         answer = result?.answers?.quality;
-      } catch { record(turn, 'error'); return { evaluated: false, lowScore: false, steered: false }; }
-      if (!answer || answer.type !== 'score' || !Number.isSafeInteger(answer.score) ||
-        typeof answer.confidence !== 'number' || answer.confidence < minConfidence) {
-        record(turn, 'error');
+      } catch (error) { record(turn, 'error', { reason: typeof error?.reason === 'string' ? error.reason : 'unreachable' }); return { evaluated: false, lowScore: false, steered: false }; }
+      if (!answer || answer.type !== 'score' || !Number.isSafeInteger(answer.score)) {
+        record(turn, 'error', { reason: 'invalid-response' });
+        return { evaluated: false, lowScore: false, steered: false };
+      }
+      if (typeof answer.confidence !== 'number' || answer.confidence < minConfidence) {
+        record(turn, 'error', { reason: 'low-confidence' });
         return { evaluated: false, lowScore: false, steered: false };
       }
       const lowScore = answer.score <= lowScoreThreshold;
-      record(turn, lowScore ? 'low' : 'ok');
+      record(turn, lowScore ? 'low' : 'ok', { score: answer.score });
       if (!lowScore) return { evaluated: true, lowScore: false, steered: false, score: answer.score };
       if (mode === 'steer' && typeof steer === 'function' && turn?.agent) {
         const key = steerKey(turn);

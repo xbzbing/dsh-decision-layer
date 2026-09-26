@@ -1,7 +1,7 @@
 {
   "name": "dsh-decision-layer",
   "version": "0.1.0",
-  "description": "A structured decision layer for the DeepSeek Harness agent loop, backed by a pluggable adjudication model (dev / laya).",
+  "description": "A structured decision layer for the DeepSeek Harness agent loop: a danger-call gate, output self-check, and loop guard backed by a pluggable adjudication model.",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -14,11 +14,14 @@
   "license": "MIT",
   "type": "module",
   "private": true,
+  "icon": "./icon.svg",
   "main": "./service/dsh.mjs",
   "files": [
     "service",
     "skills",
     "lib/client.js",
+    "locale/*.json",
+    "icon.svg",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
@@ -36,7 +39,9 @@
   },
   "exports": {
     ".": "./service/dsh.mjs",
-    "./client": "./lib/client.js"
+    "./client": "./lib/client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.4",
