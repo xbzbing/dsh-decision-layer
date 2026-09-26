@@ -15,6 +15,14 @@
   "type": "module",
   "private": true,
   "main": "./service/dsh.mjs",
+  "files": [
+    "service",
+    "skills",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20.11"
   },
@@ -23,6 +31,43 @@
     "url": "https://github.com/xbzbing/dsh-decision-layer.git"
   },
   "scripts": {
-    "test": "node --test tests/"
+    "test": "node --test tests/*.test.mjs",
+    "build:client": "tsc -p tsconfig.client.json && node scripts/build-client.mjs"
+  },
+  "exports": {
+    ".": "./service/dsh.mjs",
+    "./client": "./lib/client.js"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@deepseek-ai/dsh": ">=0.1.7-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-client-locale": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-client-ui-plugin-manager": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.7-rc.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.0",
+    "esbuild": "^0.25.12",
+    "jsdom": "^26.1.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.3.1",
+    "typescript": "~5.9.3"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ],
+      "platform": "web"
+    }
   }
 }
