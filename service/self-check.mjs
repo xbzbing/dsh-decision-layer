@@ -25,7 +25,11 @@ export function scoreQuestion(output, rubric = DEFAULT_RUBRIC) {
 
 export function createSelfCheck({ evaluate, sessions, steer, rubric = DEFAULT_RUBRIC, mode = 'observe', lowScoreThreshold = 1, minConfidence = 0.6 } = {}) {
   if (typeof evaluate !== 'function') throw new Error('Self-check requires an evaluator');
-  const steeredTurns = new WeakSet();
+  const steeredTurns = new Set();
+  const steerKey = turn => {
+    const id = turn?.agent?.session?.id;
+    return typeof id === 'string' && Number.isInteger(turn?.turn) ? `${id}:${turn.turn}` : undefined;
+  };
   const resolveRubric = async () => {
     if (typeof rubric !== 'function') return rubric;
     try { return (await rubric()) ?? DEFAULT_RUBRIC; } catch { return DEFAULT_RUBRIC; }
@@ -57,10 +61,14 @@ export function createSelfCheck({ evaluate, sessions, steer, rubric = DEFAULT_RU
       const lowScore = answer.score <= lowScoreThreshold;
       record(turn, lowScore ? 'low' : 'ok');
       if (!lowScore) return { evaluated: true, lowScore: false, steered: false, score: answer.score };
-      if (mode === 'steer' && typeof steer === 'function' && !steeredTurns.has(turn)) {
-        steeredTurns.add(turn);
-        steer({ role: 'user', content: '本回合自检得分偏低：请复核是否答到了用户的问题、有无遗漏或自相矛盾，并在需要时补完。' });
-        return { evaluated: true, lowScore: true, steered: true, score: answer.score };
+      if (mode === 'steer' && typeof steer === 'function') {
+        const key = steerKey(turn);
+        if (key !== undefined && !steeredTurns.has(key)) {
+          steeredTurns.add(key);
+          if (steeredTurns.size > 4096) steeredTurns.delete(steeredTurns.values().next().value);
+          steer({ role: 'user', content: '本回合自检得分偏低：请复核是否答到了用户的问题、有无遗漏或自相矛盾，并在需要时补完。' });
+          return { evaluated: true, lowScore: true, steered: true, score: answer.score };
+        }
       }
       return { evaluated: true, lowScore: true, steered: false, score: answer.score };
     },

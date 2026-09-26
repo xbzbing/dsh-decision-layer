@@ -36,6 +36,20 @@ test('hard steer mode re-prompts once on a low score', async () => {
   assert.equal(again.steered, false, 'must not steer the same turn twice');
 });
 
+test('hard steer mode re-prompts once per turn even across fresh turn objects', async () => {
+  const steers = [];
+  const check = createSelfCheck({ mode: 'steer',
+    evaluate: async () => ({ answers: { quality: { type: 'score', score: 0, confidence: 1, probabilities: { '0': 1, '1': 0, '2': 0 } } } }),
+    steer: message => steers.push(message) });
+  const first = await check.review(turn('weak answer', { turn: 7 }));
+  assert.equal(first.steered, true);
+  const again = await check.review(turn('weak answer', { turn: 7 }));
+  assert.equal(again.steered, false, 'a fresh object for the same session+turn must not steer twice');
+  assert.equal(steers.length, 1);
+  const nextTurn = await check.review(turn('weak answer', { turn: 8 }));
+  assert.equal(nextTurn.steered, true, 'a later turn may steer again');
+});
+
 test('high score records without hinting or steering', async () => {
   const check = createSelfCheck({ evaluate: async () => ({ answers: { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1 } } } }) });
   const result = await check.review(turn('great answer'));

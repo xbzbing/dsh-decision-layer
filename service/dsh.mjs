@@ -13,15 +13,14 @@ export const inject = ['tools', 'skills'];
 // treats empty output as "skip", so an unreachable shape degrades safely.
 function lastAssistantText(agent) {
   try {
-    const messages = agent?.session?.surface?.messages;
-    if (!messages || typeof messages.values !== 'function') return '';
-    let text = '';
-    for (const message of messages.values()) {
+    const messages = agent?.session?.deriveMessages?.();
+    if (!Array.isArray(messages)) return '';
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
       if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
-      const joined = message.content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text).join('');
-      if (joined) text = joined;
+      return message.content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text).join('');
     }
-    return text;
+    return '';
   } catch { return ''; }
 }
 

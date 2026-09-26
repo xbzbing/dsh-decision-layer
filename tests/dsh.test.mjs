@@ -65,7 +65,7 @@ test('v0.3 self-check installs on turn-stopping and observes low scores without 
       on: (event, listener) => { if (event === 'agent/turn-stopping') turnListeners.push(listener); return () => {}; },
       effect: setup => setup(), inject: () => {} }, { configPath: path });
     assert.equal(turnListeners.length, 1);
-    const agent = { session: { id: 'check-session', surface: { messages: new Map([[1, { role: 'assistant', content: [{ type: 'text', text: 'final answer' }] }]]) } } };
+    const agent = { session: { id: 'check-session', deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'final answer' }] }] } };
     await turnListeners[0]({ agent, turn: 1, signal: AbortSignal.timeout(1000) });
     assert.equal(steers.length, 0);
   } finally { globalThis.fetch = realFetch; }
