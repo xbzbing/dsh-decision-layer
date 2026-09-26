@@ -12,7 +12,7 @@ export function fingerprintCall(exec) {
 // Deterministic, backend-free loop guard: it denies only a run of the SAME tool
 // call repeated consecutively past a threshold. Any different intervening call
 // resets the run, so a legitimate identical call reached again later is allowed.
-export function createLoopGuard({ threshold = 3, maxSessions = 1024 } = {}) {
+export function createLoopGuard({ threshold = 3, maxSessions = 1024, sessions } = {}) {
   if (!Number.isSafeInteger(threshold) || threshold < 2) throw new Error('Invalid loop threshold');
   const runs = new Map();
   const runFor = id => {
@@ -28,6 +28,14 @@ export function createLoopGuard({ threshold = 3, maxSessions = 1024 } = {}) {
     check(exec) {
       const id = exec?.agent?.session?.id;
       if (typeof id !== 'string') return undefined;
+      // The master switch pauses automatic intervention (mirrors the danger gate);
+      // capacity overflow still guards, since that is involuntary, not a user choice.
+      if (sessions) {
+        try {
+          const snapshot = sessions.snapshot(id);
+          if (snapshot.enabled === false && !snapshot.capacityExceeded) return undefined;
+        } catch { /* fall through and guard */ }
+      }
       const run = runFor(id);
       const key = fingerprintCall(exec);
       run.count = key === run.key ? run.count + 1 : 1;
