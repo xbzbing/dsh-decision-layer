@@ -112,9 +112,10 @@ function SessionPanel({ sessionId, t }: Props) {
   };
 
   const renderCheck = (entry: LogEntry) => {
-    if (entry.outcome === 'error') return <>{t('logCheck')} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
+    const label = <span title={t('logCheckHint')}>{t('logCheck')}</span>;
+    if (entry.outcome === 'error') return <>{label} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
     const result = entry.outcome === 'low' ? t('checkResultLow') : t('checkResultOk');
-    return <>{t('logCheck')} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null}{typeof entry.confidence === 'number' ? <span className="decision-log-detail"> · {t('logConfidence')} {entry.confidence}</span> : null}</>;
+    return <>{label} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null}{typeof entry.confidence === 'number' ? <span className="decision-log-detail"> · {t('logConfidence')} {entry.confidence}</span> : null}</>;
   };
 
   const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : status === 'checking' ? t('statusChecking') : t('statusIdle');
@@ -139,6 +140,7 @@ function SessionPanel({ sessionId, t }: Props) {
     <dialog ref={dialog} className="decision-dialog" aria-labelledby="decision-panel-title"
       onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); dialog.current?.close(); } }}
       onCancel={event => { event.preventDefault(); dialog.current?.close(); }}
+      onClick={event => { if (event.target === dialog.current) dialog.current?.close(); }}
       onClose={() => { setOpen(false); trigger.current?.focus(); }}>
       <div className="decision-head"><h2 id="decision-panel-title">{t('title')}</h2>
         <button type="button" onClick={() => { dialog.current?.close(); }} aria-label={t('close')}>×</button></div>
