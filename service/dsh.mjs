@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { resolveConfig } from './config-store.mjs';
 import { createBackend } from './backend.mjs';
 import { createManagerRoutes } from './manager-api.mjs';
@@ -34,7 +35,7 @@ export async function apply(ctx, options = {}) {
     sessions,
     rules: async () => normalizeDangerRules((await resolveConfig({ path })).dangerRules),
   });
-  const loopGuard = createLoopGuard();
+  const loopGuard = createLoopGuard({ sessions });
   if (typeof ctx.on === 'function') {
     if (typeof ctx.tools.guard === 'function') {
       // Deterministic loop guard runs with no backend; then the dangerous-gate
@@ -56,7 +57,11 @@ export async function apply(ctx, options = {}) {
     const selfCheck = createSelfCheck({
       evaluate: (input, request) => backend.evaluate(input, request),
       sessions,
-      steer: message => ctx.agent?.steer?.(message),
+      settings: async () => (await resolveConfig({ path })).checkSettings,
+      steer: (agent, text) => agent.steer(createUserMessage({
+        content: [{ type: 'text', text }],
+        source: { kind: 'user' },
+      })),
     });
     const installCheck = () => ctx.on('agent/turn-stopping', payload => selfCheck.review({
       agent: payload.agent, turn: payload.turn, signal: payload.signal,

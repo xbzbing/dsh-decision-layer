@@ -55,7 +55,7 @@ test('dialog discloses HTTPS destination and clears password when closed', async
     if (String(url).includes('/session?')) return envelope({ enabled: true });
     if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: false, attempts: 0, failures: 0 });
     if (String(url).endsWith('/config')) return envelope({ url: 'https://custom.test', model: 'jev-latest', apiKeySet: false,
-      httpApprovedUrl: '', effectiveUrl: 'https://custom.test' });
+      httpApprovedUrl: '', effectiveUrl: 'https://custom.test', checkSettings: { mode: 'observe', lowScoreThreshold: 1 } });
     throw new Error(`Unexpected URL ${url}`);
   };
   const view = render(React.createElement(Panel, { sessionId: 'privacy', t: translate }));
@@ -73,6 +73,24 @@ test('dialog discloses HTTPS destination and clears password when closed', async
   fireEvent.change(view.getByLabelText('API Key'), { target: { value: 'draft-secret' } });
   fireEvent.click(view.getByRole('button', { name: '关闭' }));
   await waitFor(() => assert.equal(view.getByLabelText('API Key').value, ''));
+});
+
+test('self-check steer toggle reflects config and posts the chosen mode on save', async () => {
+  let savedBody;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: false, attempts: 0, failures: 0 });
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', checkSettings: { mode: 'steer', lowScoreThreshold: 1 } }); }
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', checkSettings: { mode: 'observe', lowScoreThreshold: 1 } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'check', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  const toggle = await view.findByRole('checkbox', { name: '低分时补完（硬 steer）' });
+  assert.equal(toggle.checked, false, 'observe mode is unchecked by default');
+  fireEvent.click(toggle);
+  fireEvent.click(view.getByRole('button', { name: '保存配置' }));
+  await waitFor(() => assert.equal(savedBody?.checkSettings?.mode, 'steer'));
 });
 
 test('panel renders v0.2 gate metrics with separated suggestion and actual counters', async () => {

@@ -3,7 +3,8 @@ import type { Translate } from '@deepseek-ai/dsh-client-ui-slots';
 import type { TranslationKey } from './i18n.js';
 
 const api = '/plugins/dsh-decision-layer/api';
-interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string }
+interface CheckSettings { mode: 'observe' | 'steer'; lowScoreThreshold: number }
+interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string; checkSettings?: CheckSettings }
 interface GateMetrics { attempts: number; failures: number; ask: number; deny: number; allow: number; actual: { allow: number; deny: number; error: number } }
 interface CheckMetrics { attempts: number; failures: number; low: number }
 interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics }
@@ -29,6 +30,7 @@ function SessionPanel({ sessionId, t }: Props) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [capacityExceeded, setCapacityExceeded] = useState(false);
   const [config, setConfig] = useState<Config>({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+  const [checkMode, setCheckMode] = useState<'observe' | 'steer'>('observe');
   const [key, setKey] = useState('');
   const [removeKey, setRemoveKey] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -54,7 +56,7 @@ function SessionPanel({ sessionId, t }: Props) {
     setMessage('');
     setConfigReady(false);
     void request<Metrics>(`metrics?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (live) setMetrics(value); }).catch(() => {});
-    void request<Config>('config').then(value => { if (live) { setConfig(value); setDirty(false); setConfigReady(true); } })
+    void request<Config>('config').then(value => { if (live) { setConfig(value); setCheckMode(value.checkSettings?.mode ?? 'observe'); setDirty(false); setConfigReady(true); } })
       .catch(() => { if (live) setMessage(t('error')); });
     return () => { live = false; element.close(); };
   }, [open, t, sessionId]);
@@ -77,9 +79,10 @@ function SessionPanel({ sessionId, t }: Props) {
     setBusy(true);
     try {
       const value = await request<Config>('config', { method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url, model: config.model, ...(removeKey ? { apiKey: '' } : key ? { apiKey: key } : {}),
+        body: JSON.stringify({ url, model: config.model, checkSettings: { mode: checkMode },
+          ...(removeKey ? { apiKey: '' } : key ? { apiKey: key } : {}),
           ...(needsHttpConsent ? { confirmHttpUrl: url } : {}) }) });
-      setConfig(value);
+      setConfig(value); setCheckMode(value.checkSettings?.mode ?? 'observe');
       setKey(''); setRemoveKey(false); setDirty(false); setMessage(t('saved'));
     } catch { setMessage(t('error')); }
     finally { setBusy(false); }
@@ -121,6 +124,10 @@ function SessionPanel({ sessionId, t }: Props) {
         <label className="decision-switch"><input type="checkbox" checked={enabled === true} disabled={busy || enabled === null || capacityExceeded}
           onChange={event => void updateEnabled(event.target.checked)} />{t('enabled')}</label>
         <p className="decision-muted">{t('future')}</p></section>
+      <section><h3>{t('selfCheck')}</h3>
+        <label className="decision-switch"><input type="checkbox" checked={checkMode === 'steer'} disabled={!configReady}
+          onChange={event => { setCheckMode(event.target.checked ? 'steer' : 'observe'); setDirty(true); }} />{t('selfCheckSteer')}</label>
+        <p className="decision-muted">{t('selfCheckHint')}</p></section>
       <section><h3>{t('backend')}</h3>
         {configReady && <p className="decision-muted">{t('destination')} <code>{config.effectiveUrl}</code></p>}
         <form onSubmit={event => void save(event)}>

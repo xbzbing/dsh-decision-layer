@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSelfCheck, DEFAULT_RUBRIC, scoreQuestion } from '../service/self-check.mjs';
 
-const turn = (text, { sessionId = 's1', turn = 1 } = {}) => ({ agent: { session: { id: sessionId } }, turn, signal: AbortSignal.timeout(1000), output: text });
+const turn = (text, { sessionId = 's1', turn = 1 } = {}) => ({ agent: { id: sessionId, session: { id: sessionId } }, turn, signal: AbortSignal.timeout(1000), output: text });
+const lowScore = { answers: { quality: { type: 'score', score: 0, confidence: 1, probabilities: { '0': 1, '1': 0, '2': 0 } } } };
 
 test('builds a score question from the default rubric', () => {
   const question = scoreQuestion('some answer', DEFAULT_RUBRIC).questions.quality;
@@ -15,7 +16,7 @@ test('low score is observation-only by default and never steers', async () => {
   const steers = [];
   const check = createSelfCheck({
     evaluate: async () => ({ answers: { quality: { type: 'score', score: 0, confidence: 1, probabilities: { '0': 0.9, '1': 0.05, '2': 0.05 } } } }),
-    steer: message => steers.push(message),
+    steer: (agent, text) => steers.push({ agent, text }),
   });
   const result = await check.review(turn('final answer'));
   assert.equal(result.lowScore, true);
@@ -23,31 +24,54 @@ test('low score is observation-only by default and never steers', async () => {
   assert.equal(steers.length, 0);
 });
 
-test('hard steer mode re-prompts once on a low score', async () => {
+test('steer mode passes the turn agent and prompt text to the host steer callback', async () => {
   const steers = [];
-  const check = createSelfCheck({ mode: 'steer',
-    evaluate: async () => ({ answers: { quality: { type: 'score', score: 0, confidence: 1, probabilities: { '0': 1, '1': 0, '2': 0 } } } }),
-    steer: message => steers.push(message) });
-  const weak = turn('weak answer');
-  const result = await check.review(weak);
+  const check = createSelfCheck({ settings: () => ({ mode: 'steer' }),
+    evaluate: async () => lowScore, steer: (agent, text) => steers.push({ agent, text }) });
+  const t = turn('weak answer', { turn: 7 });
+  const result = await check.review(t);
   assert.equal(result.steered, true);
   assert.equal(steers.length, 1);
-  const again = await check.review(weak);
-  assert.equal(again.steered, false, 'must not steer the same turn twice');
+  assert.equal(steers[0].agent, t.agent, 'must steer the turn payload agent, not a ctx.agent');
+  assert.match(steers[0].text, /自检/);
 });
 
-test('hard steer mode re-prompts once per turn even across fresh turn objects', async () => {
+test('a throwing host steer is contained and reported as not steered', async () => {
+  const check = createSelfCheck({ settings: { mode: 'steer' },
+    evaluate: async () => lowScore, steer: () => { throw new Error('steer rejected'); } });
+  const result = await check.review(turn('weak answer'));
+  assert.equal(result.steered, false);
+  assert.equal(result.lowScore, true);
+});
+
+test('hard steer runs once per session turn even across fresh turn objects', async () => {
   const steers = [];
-  const check = createSelfCheck({ mode: 'steer',
-    evaluate: async () => ({ answers: { quality: { type: 'score', score: 0, confidence: 1, probabilities: { '0': 1, '1': 0, '2': 0 } } } }),
-    steer: message => steers.push(message) });
-  const first = await check.review(turn('weak answer', { turn: 7 }));
-  assert.equal(first.steered, true);
-  const again = await check.review(turn('weak answer', { turn: 7 }));
-  assert.equal(again.steered, false, 'a fresh object for the same session+turn must not steer twice');
+  const check = createSelfCheck({ settings: { mode: 'steer' },
+    evaluate: async () => lowScore, steer: (agent, text) => steers.push(text) });
+  assert.equal((await check.review(turn('weak', { turn: 7 }))).steered, true);
+  assert.equal((await check.review(turn('weak', { turn: 7 }))).steered, false, 'same session+turn must not steer twice');
   assert.equal(steers.length, 1);
-  const nextTurn = await check.review(turn('weak answer', { turn: 8 }));
-  assert.equal(nextTurn.steered, true, 'a later turn may steer again');
+  assert.equal((await check.review(turn('weak', { turn: 8 }))).steered, true, 'a later turn may steer again');
+});
+
+test('configurable rubric and threshold flow through settings', async () => {
+  const seen = [];
+  const check = createSelfCheck({
+    settings: () => ({ rubric: ['bad', 'ok', 'good', 'excellent'], lowScoreThreshold: 2 }),
+    evaluate: async question => { seen.push(question.questions.quality.criteria); return { answers: { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1, '3': 0 } } } }; },
+  });
+  const result = await check.review(turn('answer'));
+  assert.deepEqual(seen[0], ['bad', 'ok', 'good', 'excellent']);
+  assert.equal(result.lowScore, true, 'score 2 is low when threshold is 2');
+});
+
+test('invalid rubric or threshold falls back to safe defaults', async () => {
+  let asked;
+  const check = createSelfCheck({ settings: () => ({ rubric: ['only-one'], lowScoreThreshold: -3 }),
+    evaluate: async question => { asked = question.questions.quality.criteria; return { answers: { quality: { type: 'score', score: 0, confidence: 1, probabilities: { '0': 1, '1': 0, '2': 0 } } } }; } });
+  const result = await check.review(turn('answer'));
+  assert.deepEqual(asked, DEFAULT_RUBRIC, 'a rubric with fewer than two levels reverts to default');
+  assert.equal(result.lowScore, true);
 });
 
 test('high score records without hinting or steering', async () => {
@@ -59,7 +83,7 @@ test('high score records without hinting or steering', async () => {
 
 test('empty output, disabled session, and backend failure skip the check without steering', async () => {
   const steers = [];
-  const failing = createSelfCheck({ mode: 'steer', evaluate: async () => { throw new Error('offline'); }, steer: m => steers.push(m) });
+  const failing = createSelfCheck({ settings: { mode: 'steer' }, evaluate: async () => { throw new Error('offline'); }, steer: () => steers.push(1) });
   assert.equal((await failing.review(turn('anything'))).evaluated, false);
   assert.equal(steers.length, 0);
   const empty = createSelfCheck({ evaluate: async () => { throw new Error('must not run'); } });

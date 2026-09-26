@@ -53,6 +53,27 @@ function validRules(value) {
   return rules;
 }
 
+function validCheck(value) {
+  if (!safeObject(value)) return undefined;
+  if (Object.keys(value).some(key => !['mode', 'rubric', 'lowScoreThreshold'].includes(key))) throw new Error('Invalid self-check settings');
+  const check = {};
+  if (value.mode !== undefined) {
+    if (value.mode !== 'observe' && value.mode !== 'steer') throw new Error('Invalid self-check settings');
+    check.mode = value.mode;
+  }
+  if (value.rubric !== undefined) {
+    if (!Array.isArray(value.rubric) || value.rubric.length > 10 || value.rubric.some(item => typeof item !== 'string' || !item.trim() || item.length > 256)) {
+      throw new Error('Invalid self-check settings');
+    }
+    check.rubric = value.rubric.map(item => item.trim());
+  }
+  if (value.lowScoreThreshold !== undefined) {
+    if (!Number.isSafeInteger(value.lowScoreThreshold) || value.lowScoreThreshold < 0 || value.lowScoreThreshold > 9) throw new Error('Invalid self-check settings');
+    check.lowScoreThreshold = value.lowScoreThreshold;
+  }
+  return check;
+}
+
 function view(stored) {
   const result = {
     url: safeText(stored.url),
@@ -61,6 +82,7 @@ function view(stored) {
     httpApprovedUrl: safeText(stored.httpApprovedUrl),
   };
   if (stored.dangerRules !== undefined) result.dangerRules = validRules(stored.dangerRules);
+  if (stored.checkSettings !== undefined) result.checkSettings = validCheck(stored.checkSettings);
   return result;
 }
 
@@ -78,11 +100,12 @@ export async function resolveConfig({ path = configPath(), env = process.env } =
     httpApprovedUrl: safeText(stored.httpApprovedUrl),
   };
   if (stored.dangerRules !== undefined) resolved.dangerRules = validRules(stored.dangerRules);
+  if (stored.checkSettings !== undefined) resolved.checkSettings = validCheck(stored.checkSettings);
   return resolved;
 }
 
 export async function saveConfig(input, path = configPath()) {
-  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules'].includes(key))) {
+  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'checkSettings'].includes(key))) {
     throw new Error('Invalid configuration fields');
   }
   for (const key of ['url', 'apiKey', 'model', 'confirmHttpUrl']) {
@@ -96,6 +119,7 @@ export async function saveConfig(input, path = configPath()) {
     throw new Error('Invalid model or API key');
   }
   const dangerRules = input.dangerRules === undefined ? previous.dangerRules : validRules(input.dangerRules);
+  const checkSettings = input.checkSettings === undefined ? previous.checkSettings : validCheck(input.checkSettings);
   const confirmed = url.startsWith('http://') && input.confirmHttpUrl !== undefined &&
     checkedUrl(safeText(input.confirmHttpUrl)) === url;
   if (url.startsWith('http://') && !confirmed && previous.httpApprovedUrl !== url) {
@@ -103,6 +127,7 @@ export async function saveConfig(input, path = configPath()) {
   }
   const next = { url, apiKey, model, httpApprovedUrl: url.startsWith('http://') ? url : '' };
   if (dangerRules !== undefined) next.dangerRules = dangerRules;
+  if (checkSettings !== undefined) next.checkSettings = checkSettings;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {

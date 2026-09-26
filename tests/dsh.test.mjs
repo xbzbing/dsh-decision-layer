@@ -50,24 +50,34 @@ test('v0.2 gate installs on pre-execute and denies model-rejected dangerous call
   } finally { globalThis.fetch = realFetch; }
 });
 
-test('v0.3 self-check installs on turn-stopping and observes low scores without steering', async () => {
-  const path = join(directory, 'check-config.json');
-  await saveConfig({ apiKey: 'local-test-key' }, path);
-  const turnListeners = [];
-  const steers = [];
+test('v0.3 self-check installs on turn-stopping, observes by default, and steers the payload agent when configured', async () => {
+  const observePath = join(directory, 'check-observe.json');
+  await saveConfig({ apiKey: 'local-test-key' }, observePath);
+  const steerPath = join(directory, 'check-steer.json');
+  await saveConfig({ apiKey: 'local-test-key', checkSettings: { mode: 'steer' } }, steerPath);
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify({ model: 'jev-latest', answers: {
     quality: { type: 'score', score: 0, confidence: 1, probabilities: { '0': 1, '1': 0, '2': 0 } },
   } }));
-  try {
+  const runWith = async configPath => {
+    const turnListeners = [];
+    const steered = [];
     await apply({ tools: { register: () => {}, guard: () => () => {} }, skills: { register: () => {} },
-      agent: { steer: message => steers.push(message) },
       on: (event, listener) => { if (event === 'agent/turn-stopping') turnListeners.push(listener); return () => {}; },
-      effect: setup => setup(), inject: () => {} }, { configPath: path });
+      effect: setup => setup(), inject: () => {} }, { configPath });
     assert.equal(turnListeners.length, 1);
-    const agent = { session: { id: 'check-session', deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'final answer' }] }] } };
+    const agent = { steer: message => steered.push(message),
+      session: { id: 'check-session', deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'final answer' }] }] } };
     await turnListeners[0]({ agent, turn: 1, signal: AbortSignal.timeout(1000) });
-    assert.equal(steers.length, 0);
+    return steered;
+  };
+  try {
+    assert.equal((await runWith(observePath)).length, 0, 'observe mode never steers');
+    const steered = await runWith(steerPath);
+    assert.equal(steered.length, 1, 'steer mode steers the turn payload agent');
+    assert.equal(steered[0].role, 'user');
+    assert.ok(Array.isArray(steered[0].content) && steered[0].content[0].type === 'text');
+    assert.ok(steered[0].id, 'steer message carries a framework identity');
   } finally { globalThis.fetch = realFetch; }
 });
 

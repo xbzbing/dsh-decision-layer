@@ -52,6 +52,16 @@ test('danger rules are validated, persisted, and resolved', async () => {
   assert.deepEqual((await saveConfig({ dangerRules: {} }, rulesFile)).dangerRules, {});
 });
 
+test('self-check settings are validated, persisted, and resolved', async () => {
+  const checkFile = join(temporary, 'check.json');
+  const saved = await saveConfig({ apiKey: 'k', checkSettings: { mode: 'steer', rubric: ['bad', 'ok', 'good'], lowScoreThreshold: 1 } }, checkFile);
+  assert.deepEqual(saved.checkSettings, { mode: 'steer', rubric: ['bad', 'ok', 'good'], lowScoreThreshold: 1 });
+  assert.deepEqual((await resolveConfig({ path: checkFile, env: {} })).checkSettings, { mode: 'steer', rubric: ['bad', 'ok', 'good'], lowScoreThreshold: 1 });
+  await assert.rejects(saveConfig({ checkSettings: { mode: 'loud' } }, checkFile), /self-check/i);
+  await assert.rejects(saveConfig({ checkSettings: { lowScoreThreshold: 99 } }, checkFile), /self-check/i);
+  await assert.rejects(saveConfig({ checkSettings: { unknown: 1 } }, checkFile), /self-check/i);
+});
+
 test('invalid URLs are rejected and missing config has a safe display view', async () => {
   const missing = await loadConfig(join(temporary, 'missing.json'));
   assert.deepEqual(missing, { url: '', model: '', apiKeySet: false, httpApprovedUrl: '' });
