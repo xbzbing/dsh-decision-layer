@@ -24,6 +24,19 @@ test('reading unknown sessions does not consume the bounded state budget', () =>
   assert.throws(() => sessions.record('three', 'gate', 'deny'), /limit/i);
 });
 
+test('self-check records low scores and failures separately from the gate', () => {
+  const sessions = createSessionState();
+  sessions.recordCheck('one', 'ok');
+  sessions.recordCheck('one', 'low');
+  sessions.recordCheck('one', 'error');
+  const snapshot = sessions.snapshot('one');
+  assert.deepEqual(snapshot.check, { attempts: 3, failures: 1, low: 1 });
+  assert.equal(snapshot.gate, undefined);
+  assert.equal(snapshot.attempts, 3);
+  assert.equal(snapshot.failures, 1);
+  assert.throws(() => sessions.recordCheck('one', 'bogus'), /self-check/i);
+});
+
 test('gate suggestions and actual outcomes remain separate', () => {
   const sessions = createSessionState();
   sessions.record('one', 'gate', 'allow');

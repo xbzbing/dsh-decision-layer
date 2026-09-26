@@ -1,7 +1,7 @@
 export const dictionaries = {
   zh: {
     button: '决策层', title: '介入面板', close: '关闭', metrics: '自动裁决',
-    empty: '尚无自动裁决。手动裁决不计入这里。', attempts: '评估次数', failures: '失败回退', suggestions: '模型建议（放行 / 询问 / 拒绝）', actual: '实际宿主结果（放行 / 拒绝）', settings: '会话设置',
+    empty: '尚无自动裁决。手动裁决不计入这里。', attempts: '评估次数', failures: '失败回退', suggestions: '模型建议（放行 / 询问 / 拒绝）', actual: '实际宿主结果（放行 / 拒绝）', checkAttempts: '自检评估次数', checkLow: '低分次数', settings: '会话设置',
     enabled: '启用自动介入', future: '当前版本尚无自动介入功能；开关只保存本会话的偏好。',
     backend: '裁决后端', url: '服务地址', model: '模型', key: 'API Key',
     keyHint: '留空则保留已保存的 Key；若未保存，会回落到环境变量。',
@@ -13,7 +13,7 @@ export const dictionaries = {
   },
   en: {
     button: 'Decision layer', title: 'Intervention panel', close: 'Close', metrics: 'Automatic decisions',
-    empty: 'No automatic decisions yet. Manual verdicts are not counted here.', attempts: 'Evaluations', failures: 'Fallback failures', suggestions: 'Model suggestions (allow / ask / deny)', actual: 'Actual host outcomes (allow / deny)', settings: 'Session settings',
+    empty: 'No automatic decisions yet. Manual verdicts are not counted here.', attempts: 'Evaluations', failures: 'Fallback failures', suggestions: 'Model suggestions (allow / ask / deny)', actual: 'Actual host outcomes (allow / deny)', checkAttempts: 'Self-check evaluations', checkLow: 'Low scores', settings: 'Session settings',
     enabled: 'Enable automatic interventions', future: 'No automatic interventions are available yet; this saves your session preference.',
     backend: 'Decision backend', url: 'Server URL', model: 'Model', key: 'API key',
     keyHint: 'Leave blank to keep the saved key or use an environment credential.',

@@ -5,7 +5,8 @@ import type { TranslationKey } from './i18n.js';
 const api = '/plugins/dsh-decision-layer/api';
 interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string }
 interface GateMetrics { attempts: number; failures: number; ask: number; deny: number; allow: number; actual: { allow: number; deny: number; error: number } }
-interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics }
+interface CheckMetrics { attempts: number; failures: number; low: number }
+interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics }
 interface Session { enabled: boolean; capacityExceeded?: boolean }
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
 interface Props { sessionId: string; t: Translate<TranslationKey> }
@@ -102,11 +103,17 @@ function SessionPanel({ sessionId, t }: Props) {
       <div className="decision-head"><h2 id="decision-panel-title">{t('title')}</h2>
         <button type="button" onClick={() => { dialog.current?.close(); }} aria-label={t('close')}>×</button></div>
       <section><h3>{t('metrics')}</h3>
-        {!metrics?.gate ? <p role="status">{t('empty')}</p> : <dl className="decision-metrics">
-          <div><dt>{t('attempts')}</dt><dd>{metrics.gate.attempts}</dd></div>
-          <div><dt>{t('failures')}</dt><dd>{metrics.gate.failures}</dd></div>
-          <div><dt>{t('suggestions')}</dt><dd>{metrics.gate.allow} / {metrics.gate.ask} / {metrics.gate.deny}</dd></div>
-          <div><dt>{t('actual')}</dt><dd>{metrics.gate.actual.allow} / {metrics.gate.actual.deny}</dd></div>
+        {!metrics?.gate && !metrics?.check ? <p role="status">{t('empty')}</p> : <dl className="decision-metrics">
+          {metrics.gate && <>
+            <div><dt>{t('attempts')}</dt><dd>{metrics.gate.attempts}</dd></div>
+            <div><dt>{t('failures')}</dt><dd>{metrics.gate.failures}</dd></div>
+            <div><dt>{t('suggestions')}</dt><dd>{metrics.gate.allow} / {metrics.gate.ask} / {metrics.gate.deny}</dd></div>
+            <div><dt>{t('actual')}</dt><dd>{metrics.gate.actual.allow} / {metrics.gate.actual.deny}</dd></div>
+          </>}
+          {metrics.check && <>
+            <div><dt>{t('checkAttempts')}</dt><dd>{metrics.check.attempts}</dd></div>
+            <div><dt>{t('checkLow')}</dt><dd>{metrics.check.low}</dd></div>
+          </>}
         </dl>}</section>
       <section><h3>{t('settings')}</h3>
         {enabled === null && <p role="status">{t('loading')}</p>}

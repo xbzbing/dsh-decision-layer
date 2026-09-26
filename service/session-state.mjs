@@ -5,7 +5,8 @@ function sessionKey(value) {
 
 function emptyState() {
   return { enabled: true, attempts: 0, failures: 0,
-    gate: { attempts: 0, failures: 0, ask: 0, deny: 0, allow: 0, actual: { allow: 0, deny: 0, error: 0 } } };
+    gate: { attempts: 0, failures: 0, ask: 0, deny: 0, allow: 0, actual: { allow: 0, deny: 0, error: 0 } },
+    check: { attempts: 0, failures: 0, low: 0 } };
 }
 
 export function createSessionState({ maxSessions = 1024 } = {}) {
@@ -34,7 +35,8 @@ export function createSessionState({ maxSessions = 1024 } = {}) {
       const state = stored ?? emptyState();
       const value = { enabled: overflow ? false : state.enabled, hasAutomaticDecisions: state.attempts > 0, attempts: state.attempts, failures: state.failures };
       if (overflow) value.capacityExceeded = true;
-      if (state.attempts > 0) value.gate = { ...state.gate, actual: { ...state.gate.actual } };
+      if (state.gate.attempts > 0) value.gate = { ...state.gate, actual: { ...state.gate.actual } };
+      if (state.check.attempts > 0) value.check = { ...state.check };
       return value;
     },
     record(id, kind, outcome) {
@@ -48,6 +50,14 @@ export function createSessionState({ maxSessions = 1024 } = {}) {
     recordActual(id, outcome) {
       if (!['allow', 'deny', 'error'].includes(outcome)) throw new Error('Invalid actual decision');
       writable(id).gate.actual[outcome]++;
+    },
+    recordCheck(id, outcome) {
+      if (!['ok', 'low', 'error'].includes(outcome)) throw new Error('Invalid self-check outcome');
+      const state = writable(id);
+      state.attempts++;
+      state.check.attempts++;
+      if (outcome === 'error') { state.failures++; state.check.failures++; }
+      else if (outcome === 'low') state.check.low++;
     },
   };
 }

@@ -35,18 +35,39 @@ test('v0.2 gate installs on pre-execute and denies model-rejected dangerous call
   } }));
   try {
     await apply({ tools: { register: () => {}, guard: guard => { guards.push(guard); return () => {}; } }, skills: { register: () => {} }, on: (event, listener) => {
-      assert.ok(['tools/pre-execute', 'tools/post-execute'].includes(event));
+      assert.ok(['tools/pre-execute', 'tools/post-execute', 'agent/turn-stopping'].includes(event));
       if (event === 'tools/pre-execute') listeners.push(listener);
       return () => {};
     }, effect: setup => { disposers.push(setup()); }, inject: () => {} }, { configPath: path });
     assert.equal(listeners.length, 1);
-    assert.equal(disposers.length, 1);
+    assert.equal(disposers.length, 2);
     const exec = { name: 'shell', arguments: { command: 'rm -rf /tmp/build' }, callId: 'gate-call', token: Symbol('token'),
       signal: AbortSignal.timeout(1000), agent: { session: { id: 'gate-session' } } };
     const result = await listeners[0](exec, async () => ({ kind: 'allow' }));
     assert.equal(result.kind, 'deny');
     assert.equal(guards.length, 1);
     assert.match(guards[0](exec), /rejected/);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('v0.3 self-check installs on turn-stopping and observes low scores without steering', async () => {
+  const path = join(directory, 'check-config.json');
+  await saveConfig({ apiKey: 'local-test-key' }, path);
+  const turnListeners = [];
+  const steers = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ model: 'jev-latest', answers: {
+    quality: { type: 'score', score: 0, confidence: 1, probabilities: { '0': 1, '1': 0, '2': 0 } },
+  } }));
+  try {
+    await apply({ tools: { register: () => {}, guard: () => () => {} }, skills: { register: () => {} },
+      agent: { steer: message => steers.push(message) },
+      on: (event, listener) => { if (event === 'agent/turn-stopping') turnListeners.push(listener); return () => {}; },
+      effect: setup => setup(), inject: () => {} }, { configPath: path });
+    assert.equal(turnListeners.length, 1);
+    const agent = { session: { id: 'check-session', surface: { messages: new Map([[1, { role: 'assistant', content: [{ type: 'text', text: 'final answer' }] }]]) } } };
+    await turnListeners[0]({ agent, turn: 1, signal: AbortSignal.timeout(1000) });
+    assert.equal(steers.length, 0);
   } finally { globalThis.fetch = realFetch; }
 });
 

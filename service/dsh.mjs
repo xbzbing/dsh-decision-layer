@@ -4,9 +4,26 @@ import { createBackend } from './backend.mjs';
 import { createManagerRoutes } from './manager-api.mjs';
 import { createSessionState } from './session-state.mjs';
 import { createDangerGate, normalizeDangerRules } from './danger-gate.mjs';
+import { createSelfCheck } from './self-check.mjs';
 
 export const name = 'dsh-decision-layer';
 export const inject = ['tools', 'skills'];
+
+// Best-effort extraction of the turn's final assistant text. The self-check
+// treats empty output as "skip", so an unreachable shape degrades safely.
+function lastAssistantText(agent) {
+  try {
+    const messages = agent?.session?.surface?.messages;
+    if (!messages || typeof messages.values !== 'function') return '';
+    let text = '';
+    for (const message of messages.values()) {
+      if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
+      const joined = message.content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text).join('');
+      if (joined) text = joined;
+    }
+    return text;
+  } catch { return ''; }
+}
 
 export async function apply(ctx, options = {}) {
   const path = options.configPath;
@@ -29,6 +46,18 @@ export async function apply(ctx, options = {}) {
     };
     if (typeof ctx.effect === 'function') ctx.effect(install);
     else install();
+
+    const selfCheck = createSelfCheck({
+      evaluate: (input, request) => backend.evaluate(input, request),
+      sessions,
+      steer: message => ctx.agent?.steer?.(message),
+    });
+    const installCheck = () => ctx.on('agent/turn-stopping', payload => selfCheck.review({
+      agent: payload.agent, turn: payload.turn, signal: payload.signal,
+      output: lastAssistantText(payload.agent),
+    }));
+    if (typeof ctx.effect === 'function') ctx.effect(installCheck);
+    else installCheck();
   }
   const rawSkill = await readFile(new URL('../skills/decision-layer/SKILL.md', import.meta.url), 'utf8');
   const content = rawSkill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
