@@ -130,9 +130,11 @@ function SessionPanel({ sessionId, t }: Props) {
         <path d="M8 1.5 2 4.2v3.6c0 3.3 2.3 5.6 6 6.7 3.7-1.1 6-3.4 6-6.7V4.2L8 1.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
         <path d="m5.6 8 1.7 1.8L10.6 6.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <span className="decision-trigger-figure">{t('triggerDecisions')} <b>{attempts}</b></span>
-      <span className="decision-trigger-sep" aria-hidden="true">-</span>
-      <span className="decision-trigger-figure" title={t('triggerPassRate')}><b>{passRate === null ? '—' : `${passRate}%`}</b></span>
+      <span className="decision-trigger-text">
+        {t('triggerDecisions')} <b>{attempts}</b>
+        <span className="decision-trigger-sep" aria-hidden="true"> - </span>
+        <b title={t('triggerPassRate')}>{passRate === null ? '—' : `${passRate}%`}</b>
+      </span>
     </button>
     <dialog ref={dialog} className="decision-dialog" aria-labelledby="decision-panel-title"
       onCancel={event => { event.preventDefault(); dialog.current?.close(); }}
