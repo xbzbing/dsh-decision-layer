@@ -14,7 +14,7 @@ const MAX_METADATA_LENGTH = 2048;
 export const MIN_CONFIDENCE = 0.7;
 
 export const DEFAULT_DANGEROUS_RULES = Object.freeze({
-  toolNames: Object.freeze(['shell', 'bash', 'exec', 'terminal', 'run_command', 'file_write', 'write_file']),
+  toolNames: Object.freeze(['bash', 'pwsh', 'shell', 'exec', 'terminal', 'run_command', 'write', 'edit', 'str_replace_editor', 'file_write', 'write_file']),
   commandPatterns: DEFAULT_COMMAND_PATTERNS,
   pathPatterns: DEFAULT_PATH_PATTERNS,
 });

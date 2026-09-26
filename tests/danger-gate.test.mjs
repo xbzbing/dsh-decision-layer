@@ -46,6 +46,14 @@ test('backend deny becomes a monotonic deny, while unavailable falls back to ask
   assert.deepEqual(await unavailable.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), { kind: 'ask', reason: 'Dangerous call requires host approval' });
 });
 
+test('default rules cover the real DSH filesystem and shell tool names', () => {
+  for (const tool of ['bash', 'pwsh', 'write', 'edit', 'str_replace_editor']) {
+    assert.equal(DEFAULT_DANGEROUS_RULES.toolNames.includes(tool), true, `${tool} must be gated`);
+  }
+  assert.equal(classifyDangerous(exec('write', { path: '/etc/passwd', content: 'x' }), DEFAULT_DANGEROUS_RULES).dangerous, true);
+  assert.equal(classifyDangerous(exec('pwsh', { command: 'rm -rf /tmp/build' }), DEFAULT_DANGEROUS_RULES).dangerous, true);
+});
+
 test('capacity overflow must not fail-open the dangerous gate', async () => {
   const gate = createDangerGate({ sessions: { snapshot: () => ({ enabled: false, capacityExceeded: true }), record: () => {} },
     evaluate: async () => { throw new Error('backend unavailable'); } });
