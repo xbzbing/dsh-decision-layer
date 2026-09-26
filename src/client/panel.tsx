@@ -137,12 +137,13 @@ function SessionPanel({ sessionId, t }: Props) {
       </span>
     </button>
     <dialog ref={dialog} className="decision-dialog" aria-labelledby="decision-panel-title"
+      onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); dialog.current?.close(); } }}
       onCancel={event => { event.preventDefault(); dialog.current?.close(); }}
       onClose={() => { setOpen(false); trigger.current?.focus(); }}>
       <div className="decision-head"><h2 id="decision-panel-title">{t('title')}</h2>
         <button type="button" onClick={() => { dialog.current?.close(); }} aria-label={t('close')}>×</button></div>
       <div className="decision-body">
-      <section><h3>{t('settings')}</h3>
+      <section>
         {enabled === null && <p role="status">{t('loading')}</p>}
         {capacityExceeded && <p role="alert">{t('capacity')}</p>}
         <label className="decision-toggle"><span className="decision-toggle-text">{t('enabled')}</span>
