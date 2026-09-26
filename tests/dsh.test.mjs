@@ -45,8 +45,8 @@ test('v0.2 gate installs on pre-execute and denies model-rejected dangerous call
       signal: AbortSignal.timeout(1000), agent: { session: { id: 'gate-session' } } };
     const result = await listeners[0](exec, async () => ({ kind: 'allow' }));
     assert.equal(result.kind, 'deny');
-    assert.equal(guards.length, 1);
-    assert.match(guards[0](exec), /rejected/);
+    assert.equal(guards.length, 2);
+    assert.match(guards[1](exec), /rejected/);
   } finally { globalThis.fetch = realFetch; }
 });
 
@@ -68,6 +68,23 @@ test('v0.3 self-check installs on turn-stopping and observes low scores without 
     const agent = { session: { id: 'check-session', deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'final answer' }] }] } };
     await turnListeners[0]({ agent, turn: 1, signal: AbortSignal.timeout(1000) });
     assert.equal(steers.length, 0);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('v0.4 loop guard denies an identical repeated tool call without a backend call', async () => {
+  const path = join(directory, 'loop-config.json');
+  await saveConfig({ apiKey: 'local-test-key' }, path);
+  const guards = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('loop guard must not call the backend'); };
+  try {
+    await apply({ tools: { register: () => {}, guard: guard => { guards.push(guard); return () => {}; } }, skills: { register: () => {} },
+      on: () => () => {}, effect: setup => setup(), inject: () => {} }, { configPath: path });
+    const loopGuard = guards[0];
+    const call = { name: 'read', arguments: { path: '/tmp/x' }, agent: { session: { id: 'loop-session' } } };
+    assert.equal(loopGuard(call), undefined);
+    assert.equal(loopGuard(call), undefined);
+    assert.match(loopGuard(call), /repeat|loop/i);
   } finally { globalThis.fetch = realFetch; }
 });
 

@@ -5,6 +5,7 @@ import { createManagerRoutes } from './manager-api.mjs';
 import { createSessionState } from './session-state.mjs';
 import { createDangerGate, normalizeDangerRules } from './danger-gate.mjs';
 import { createSelfCheck } from './self-check.mjs';
+import { createLoopGuard } from './loop-guard.mjs';
 
 export const name = 'dsh-decision-layer';
 export const inject = ['tools', 'skills'];
@@ -33,8 +34,14 @@ export async function apply(ctx, options = {}) {
     sessions,
     rules: async () => normalizeDangerRules((await resolveConfig({ path })).dangerRules),
   });
+  const loopGuard = createLoopGuard();
   if (typeof ctx.on === 'function') {
-    if (typeof ctx.tools.guard === 'function') ctx.tools.guard(exec => gate.guardReason(exec));
+    if (typeof ctx.tools.guard === 'function') {
+      // Deterministic loop guard runs with no backend; then the dangerous-gate
+      // monotonic denial. Guards can only deny, never re-allow.
+      ctx.tools.guard(exec => loopGuard.check(exec));
+      ctx.tools.guard(exec => gate.guardReason(exec));
+    }
     const install = () => {
       const disposePre = ctx.on('tools/pre-execute', async (exec, next) => gate.preExecute(exec, next));
       const disposePost = ctx.on('tools/post-execute', async (exec, result, next) => {
