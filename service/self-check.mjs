@@ -28,7 +28,7 @@ export function scoreQuestion(output, rubric = DEFAULT_RUBRIC) {
 // `settings` is an async resolver so rubric/mode/threshold follow live config.
 // `steer(agent, text)` performs the host-native steer; the caller owns building
 // the framework UserMessage so this module stays free of DSH message types.
-export function createSelfCheck({ evaluate, sessions, steer, settings, minConfidence = 0.6 } = {}) {
+export function createSelfCheck({ evaluate, sessions, steer, settings, minConfidence = 0.4 } = {}) {
   if (typeof evaluate !== 'function') throw new Error('Self-check requires an evaluator');
   const steeredTurns = new Set();
   const steerKey = turn => {
@@ -69,14 +69,16 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
         record(turn, 'error', { reason: 'invalid-response' });
         return { evaluated: false, lowScore: false, steered: false };
       }
-      if (typeof answer.confidence !== 'number' || answer.confidence < minConfidence) {
-        record(turn, 'error', { reason: 'low-confidence', ...(typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? { confidence: answer.confidence } : {}) });
-        return { evaluated: false, lowScore: false, steered: false };
-      }
+      // A low-confidence Score is a legitimate answer, not a failure: the score
+      // stays usable and is recorded as ok/low. Confidence only gates the steer,
+      // because only interrupting the user warrants the model being sure.
+      const confidence = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? answer.confidence : undefined;
+      const detail = confidence === undefined ? {} : { confidence };
       const lowScore = answer.score <= lowScoreThreshold;
-      record(turn, lowScore ? 'low' : 'ok', { score: answer.score });
+      record(turn, lowScore ? 'low' : 'ok', { score: answer.score, ...detail });
       if (!lowScore) return { evaluated: true, lowScore: false, steered: false, score: answer.score };
-      if (mode === 'steer' && typeof steer === 'function' && turn?.agent) {
+      const confident = confidence !== undefined && confidence >= minConfidence;
+      if (mode === 'steer' && confident && typeof steer === 'function' && turn?.agent) {
         const key = steerKey(turn);
         if (key !== undefined && !steeredTurns.has(key)) {
           steeredTurns.add(key);

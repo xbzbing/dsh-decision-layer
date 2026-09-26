@@ -114,7 +114,7 @@ function SessionPanel({ sessionId, t }: Props) {
   const renderCheck = (entry: LogEntry) => {
     if (entry.outcome === 'error') return <>{t('logCheck')} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
     const result = entry.outcome === 'low' ? t('checkResultLow') : t('checkResultOk');
-    return <>{t('logCheck')} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null}</>;
+    return <>{t('logCheck')} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null}{typeof entry.confidence === 'number' ? <span className="decision-log-detail"> · {t('logConfidence')} {entry.confidence}</span> : null}</>;
   };
 
   const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : status === 'checking' ? t('statusChecking') : t('statusIdle');

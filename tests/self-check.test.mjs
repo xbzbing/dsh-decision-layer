@@ -97,21 +97,40 @@ test('self-check logs score on evaluation and a reason on failure', async () => 
   const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
   const ok = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1 } } } }) });
   await ok.review(turn('great answer'));
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 2 });
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 2, confidence: 1 });
   const offline = createSelfCheck({ sessions, evaluate: async () => { throw new Error('offline'); } });
   await offline.review(turn('answer'));
   assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'error', reason: 'unreachable' });
 });
 
-test('fractional scores are accepted and low confidence logs the confidence value', async () => {
+test('fractional scores are accepted and low confidence is a valid answer, not a failure', async () => {
   const entries = [];
   const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
   const fractional = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 1.43, confidence: 0.9, probabilities: { '0': 0, '1': 0.57, '2': 0.43 } } } }) });
   const result = await fractional.review(turn('great answer'));
   assert.equal(result.evaluated, true);
   assert.equal(result.lowScore, false, 'a fractional score above the threshold is not low');
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 1.43 });
-  const lowConf = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 1.43, confidence: 0.35, probabilities: { '0': 0, '1': 0.57, '2': 0.43 } } } }) });
-  await lowConf.review(turn('answer'));
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'error', reason: 'low-confidence', confidence: 0.35 });
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 1.43, confidence: 0.9 });
+  // A low-confidence score is still recorded as a real ok/low answer with its confidence, never as an error.
+  const lowConf = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 0, confidence: 0.17, probabilities: { '0': 0.4, '1': 0.35, '2': 0.25 } } } }) });
+  const lowConfResult = await lowConf.review(turn('answer'));
+  assert.equal(lowConfResult.evaluated, true);
+  assert.equal(lowConfResult.lowScore, true);
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'low', score: 0, confidence: 0.17 });
+});
+
+test('low confidence never steers even in steer mode, but a confident low score does', async () => {
+  const steers = [];
+  const shy = createSelfCheck({ settings: { mode: 'steer' },
+    evaluate: async () => ({ answers: { quality: { type: 'score', score: 0, confidence: 0.2, probabilities: { '0': 0.4, '1': 0.35, '2': 0.25 } } } }),
+    steer: (agent, text) => steers.push(text) });
+  const shyResult = await shy.review(turn('weak', { turn: 3 }));
+  assert.equal(shyResult.lowScore, true);
+  assert.equal(shyResult.steered, false, 'a low-confidence low score must not interrupt the user');
+  assert.equal(steers.length, 0);
+  const sure = createSelfCheck({ settings: { mode: 'steer' },
+    evaluate: async () => ({ answers: { quality: { type: 'score', score: 0, confidence: 0.9, probabilities: { '0': 0.9, '1': 0.05, '2': 0.05 } } } }),
+    steer: (agent, text) => steers.push(text) });
+  assert.equal((await sure.review(turn('weak', { turn: 4 }))).steered, true, 'a confident low score steers');
+  assert.equal(steers.length, 1);
 });
