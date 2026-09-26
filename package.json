@@ -1,5 +1,5 @@
 {
-  "name": "@xbzbing/dsh-decision-layer",
+  "name": "dsh-decision-layer",
   "version": "0.1.0",
   "description": "A structured decision layer for the DeepSeek Harness agent loop, backed by a pluggable adjudication model (dev / laya).",
   "keywords": [
