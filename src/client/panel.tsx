@@ -52,6 +52,8 @@ function SessionPanel({ sessionId, t }: Props) {
     void request<Session>(`session?sessionId=${encodeURIComponent(sessionId)}`)
       .then(value => { if (live) { setEnabled(value.enabled); setCapacityExceeded(Boolean(value.capacityExceeded)); } })
       .catch(() => { if (live) setMessage(t('error')); });
+    void request<Metrics>(`metrics?sessionId=${encodeURIComponent(sessionId)}`)
+      .then(value => { if (live) setMetrics(value); }).catch(() => {});
     return () => { live = false; };
   }, [sessionId, t]);
 
@@ -116,14 +118,25 @@ function SessionPanel({ sessionId, t }: Props) {
   const renderCheck = (entry: LogEntry) => {
     if (entry.outcome === 'error') return <>{t('logCheck')} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
     const result = entry.outcome === 'low' ? t('checkResultLow') : t('checkResultOk');
-    return <>{t('logCheck')} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail"> · {t('logScore')} {entry.score}/2</span> : null}</>;
+    return <>{t('logCheck')} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null}</>;
   };
 
   const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : t('statusChecking');
 
+  const attempts = metrics?.attempts ?? 0;
+  const passed = (metrics?.gate?.allow ?? 0)
+    + (metrics?.check ? metrics.check.attempts - metrics.check.low - metrics.check.failures : 0);
+  const passRate = attempts > 0 ? Math.round((passed / attempts) * 100) : null;
+
   return <>
-    <button ref={trigger} className="decision-trigger" type="button" aria-haspopup="dialog" aria-expanded={open} aria-busy={enabled === null} onClick={() => setOpen(true)}>
-      <span className={enabled ? 'decision-dot' : 'decision-dot decision-dot-off'} aria-hidden="true" />{t('button')}
+    <button ref={trigger} className="decision-trigger" type="button" aria-haspopup="dialog" aria-expanded={open} aria-busy={enabled === null} aria-label={t('button')} onClick={() => setOpen(true)}>
+      <svg className="decision-trigger-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M8 1.5 2 4.2v3.6c0 3.3 2.3 5.6 6 6.7 3.7-1.1 6-3.4 6-6.7V4.2L8 1.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+        <path d="m5.6 8 1.7 1.8L10.6 6.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span className="decision-trigger-figure">{t('triggerDecisions')} <b>{attempts}</b></span>
+      <span className="decision-trigger-sep" aria-hidden="true">-</span>
+      <span className="decision-trigger-figure" title={t('triggerPassRate')}><b>{passRate === null ? '—' : `${passRate}%`}</b></span>
     </button>
     <dialog ref={dialog} className="decision-dialog" aria-labelledby="decision-panel-title"
       onCancel={event => { event.preventDefault(); dialog.current?.close(); }}

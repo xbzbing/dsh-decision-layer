@@ -1,9 +1,11 @@
 const css = `
-.decision-trigger{position:relative;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--dsw-alias-border-l2,#ccd3da);border-radius:999px;background:var(--dsw-alias-bg-layer-1,#f6f8fa);color:var(--dsw-alias-label-secondary,#59636e);padding:2px 10px;font:inherit;font-size:13px;font-weight:500;line-height:20px;cursor:pointer;white-space:nowrap}
-.decision-trigger:hover{background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#202124)}
+.decision-trigger{position:relative;display:inline-flex;align-items:center;gap:6px;border:none;border-radius:var(--dsw-radius-sm,6px);background:0 0;color:var(--dsw-alias-label-tertiary,#77818b);padding:1px 8px;font:inherit;font-size:calc(var(--dsh-content-font-size-secondary,13px) - 1px);font-weight:400;line-height:calc(20px + var(--dsh-content-font-delta-secondary,0px));font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer}
+.decision-trigger:hover,.decision-trigger[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover,#eef1f3);color:var(--dsw-alias-label-secondary,#59636e)}
+.decision-trigger-icon{flex:none;color:inherit}
+.decision-trigger-sep{flex:none;color:var(--dsw-alias-label-caption,#9aa5b1)}
+.decision-trigger-figure{flex:none;display:inline-flex;align-items:baseline;gap:4px}
+.decision-trigger-figure b{color:inherit;font-weight:500;font-variant-numeric:tabular-nums}
 .decision-trigger:focus-visible,.decision-dialog button:focus-visible,.decision-dialog input:focus-visible,.decision-config input:focus-visible,.decision-config button:focus-visible{outline:2px solid #1f5d50;outline-offset:2px}
-.decision-dot{width:7px;height:7px;border-radius:50%;background:#1f8a70;flex:0 0 auto}
-.decision-dot-off{background:#9aa5b1}
 .decision-dialog{box-sizing:border-box;flex-direction:column;width:min(30rem,calc(100vw - 2rem));max-height:min(80vh,44rem);border:1px solid var(--dsw-alias-border-l2,#dce1e6);border-radius:14px;padding:0;overflow:hidden;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#202124);box-shadow:0 1rem 3rem rgba(0,0,0,.18);font:inherit}
 .decision-dialog[open]{display:flex}
 .decision-dialog::backdrop{background:rgba(0,0,0,.45)}

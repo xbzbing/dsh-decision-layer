@@ -11,7 +11,7 @@ import { installStyles } from './styles.js';
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap { 'dsh-decision-layer': TranslationKey }
-  interface SlotMap { 'conversation.input.left': { kind: 'list'; scope: 'session' } }
+  interface SlotMap { 'conversation.composer.dock': { kind: 'list'; scope: 'session' } }
 }
 
 interface ConfigProps extends PluginConfigViewProps { t: Translate<TranslationKey> }
@@ -21,8 +21,8 @@ export const inject = ['slots', 'locale'];
 export function apply(ctx: Context) {
   ctx.effect(installStyles);
   ctx.effect(() => ctx.locale.register('dsh-decision-layer', dictionaries));
-  ctx.slots.inject('conversation.input.left', () => ctx.slots.register({
-    name: 'conversation.input.left', id: 'decision-layer-panel', order: 20,
+  ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+    name: 'conversation.composer.dock', id: 'decision-layer-panel', order: 20,
     locale: 'dsh-decision-layer', registrant: 'dsh-decision-layer',
     inject: (sessionId: string) => ({ sessionId }),
   }, DecisionPanel));
