@@ -11,6 +11,18 @@ test('identical repeated calls produce a stable fingerprint', () => {
   assert.notEqual(a, fingerprintCall(exec('bash', { command: 'pwd' })));
 });
 
+test('only consecutive repeats trip the guard; an intervening call resets the run', () => {
+  const guard = createLoopGuard({ threshold: 3 });
+  const a = exec('bash', { command: 'ls' });
+  assert.equal(guard.check(a), undefined);
+  assert.equal(guard.check(a), undefined);
+  assert.equal(guard.check(exec('bash', { command: 'pwd' })), undefined);
+  // The run of identical 'ls' calls was broken, so the count restarts.
+  assert.equal(guard.check(a), undefined);
+  assert.equal(guard.check(a), undefined);
+  assert.match(guard.check(a), /repeat|loop/i);
+});
+
 test('deterministic guard denies only after the repeat threshold, no backend', () => {
   const guard = createLoopGuard({ threshold: 3 });
   const call = exec('bash', { command: 'ls' });
@@ -19,12 +31,12 @@ test('deterministic guard denies only after the repeat threshold, no backend', (
   assert.match(guard.check(call), /repeat|loop/i);
 });
 
-test('a different call resets nothing but is tracked independently per session', () => {
+test('runs are tracked independently per session', () => {
   const guard = createLoopGuard({ threshold: 2 });
   assert.equal(guard.check(exec('bash', { command: 'a' }, 's1')), undefined);
-  assert.equal(guard.check(exec('bash', { command: 'b' }, 's1')), undefined);
   assert.equal(guard.check(exec('bash', { command: 'a' }, 's2')), undefined);
   assert.match(guard.check(exec('bash', { command: 'a' }, 's1')), /repeat|loop/i);
+  assert.match(guard.check(exec('bash', { command: 'a' }, 's2')), /repeat|loop/i);
 });
 
 test('successful varied progress does not trip the guard', () => {
@@ -34,8 +46,9 @@ test('successful varied progress does not trip the guard', () => {
   }
 });
 
-test('per-session fingerprint memory is bounded', () => {
-  const guard = createLoopGuard({ threshold: 100, maxTracked: 8 });
-  for (let i = 0; i < 200; i++) guard.check(exec('bash', { command: `cmd-${i}` }));
-  assert.equal(guard.trackedSize('s1') <= 8, true);
+test('per-session run memory is bounded across many sessions', () => {
+  const guard = createLoopGuard({ threshold: 100, maxSessions: 8 });
+  for (let i = 0; i < 200; i++) guard.check(exec('bash', { command: 'x' }, `session-${i}`));
+  assert.equal(guard.runLength('session-0'), 0);
+  assert.equal(guard.runLength('session-199'), 1);
 });

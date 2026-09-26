@@ -9,35 +9,36 @@ export function fingerprintCall(exec) {
   return createHash('sha256').update(name).update('\0').update(args.slice(0, MAX_FINGERPRINT_INPUT)).digest('hex');
 }
 
-export function createLoopGuard({ threshold = 3, maxSessions = 1024, maxTracked = 256 } = {}) {
+// Deterministic, backend-free loop guard: it denies only a run of the SAME tool
+// call repeated consecutively past a threshold. Any different intervening call
+// resets the run, so a legitimate identical call reached again later is allowed.
+export function createLoopGuard({ threshold = 3, maxSessions = 1024 } = {}) {
   if (!Number.isSafeInteger(threshold) || threshold < 2) throw new Error('Invalid loop threshold');
-  const sessions = new Map();
-  const countsFor = id => {
-    let counts = sessions.get(id);
-    if (!counts) {
-      if (sessions.size >= maxSessions) sessions.delete(sessions.keys().next().value);
-      counts = new Map();
-      sessions.set(id, counts);
+  const runs = new Map();
+  const runFor = id => {
+    let run = runs.get(id);
+    if (!run) {
+      if (runs.size >= maxSessions) runs.delete(runs.keys().next().value);
+      run = { key: undefined, count: 0 };
+      runs.set(id, run);
     }
-    return counts;
+    return run;
   };
   return {
     check(exec) {
       const id = exec?.agent?.session?.id;
       if (typeof id !== 'string') return undefined;
-      const counts = countsFor(id);
+      const run = runFor(id);
       const key = fingerprintCall(exec);
-      const next = (counts.get(key) ?? 0) + 1;
-      counts.delete(key);
-      counts.set(key, next);
-      if (counts.size > maxTracked) counts.delete(counts.keys().next().value);
-      if (next >= threshold) {
-        return `Identical tool call repeated ${next} times; blocked to break a loop`;
+      run.count = key === run.key ? run.count + 1 : 1;
+      run.key = key;
+      if (run.count >= threshold) {
+        return `Identical tool call repeated ${run.count} times in a row; blocked to break a loop`;
       }
       return undefined;
     },
-    trackedSize(id) {
-      return sessions.get(id)?.size ?? 0;
+    runLength(id) {
+      return runs.get(id)?.count ?? 0;
     },
   };
 }
