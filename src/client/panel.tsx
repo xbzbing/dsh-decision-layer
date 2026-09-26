@@ -44,7 +44,6 @@ function SessionPanel({ sessionId, t }: Props) {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [status, setStatus] = useState<'idle' | 'checking' | 'ok' | 'down'>('idle');
-  const [endpoint, setEndpoint] = useState('');
   const [message, setMessage] = useState('');
 
   useEffect(() => {
@@ -60,7 +59,7 @@ function SessionPanel({ sessionId, t }: Props) {
   const checkStatus = (live: () => boolean) => {
     setStatus('checking');
     void request<Probe>('probe', { method: 'POST' })
-      .then(value => { if (!live()) return; setStatus(value.connected ? 'ok' : 'down'); if (value.effectiveUrl) setEndpoint(value.effectiveUrl); })
+      .then(value => { if (!live()) return; setStatus(value.connected ? 'ok' : 'down'); })
       .catch(() => { if (live()) setStatus('down'); });
   };
 
@@ -70,12 +69,9 @@ function SessionPanel({ sessionId, t }: Props) {
     if (!element) return;
     if (!element.open) element.showModal();
     let alive = true;
-    const live = () => alive;
     setMessage('');
     void request<Metrics>(`metrics?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) setMetrics(value); }).catch(() => {});
     void request<{ entries: LogEntry[] }>(`log?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) setLog(value.entries); }).catch(() => {});
-    void request<{ effectiveUrl: string }>('config').then(value => { if (alive) setEndpoint(value.effectiveUrl); }).catch(() => {});
-    checkStatus(live);
     return () => { alive = false; element.close(); };
   }, [open, t, sessionId]);
 
@@ -121,7 +117,7 @@ function SessionPanel({ sessionId, t }: Props) {
     return <>{t('logCheck')} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null}</>;
   };
 
-  const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : t('statusChecking');
+  const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : status === 'checking' ? t('statusChecking') : t('statusIdle');
 
   const attempts = metrics?.attempts ?? 0;
   const passed = (metrics?.gate?.allow ?? 0)
@@ -154,9 +150,7 @@ function SessionPanel({ sessionId, t }: Props) {
           <span className={`decision-status-dot decision-status-${status}`} aria-hidden="true" />
           <span className="decision-status-label">{t('backendStatus')}：{statusLabel}</span>
           <button type="button" className="decision-status-recheck" disabled={status === 'checking'} onClick={() => checkStatus(() => true)}>{t('recheck')}</button>
-        </div>
-        {endpoint && <p className="decision-muted decision-status-endpoint"><code>{endpoint}</code></p>}
-        <p className="decision-muted">{t('configHint')}</p></section>
+        </div></section>
       <section><h3>{t('metrics')}</h3>
         {!metrics?.gate && !metrics?.check ? <p className="decision-empty" role="status">{t('empty')}</p> : <div className="decision-cards">
           {metrics.gate && <article className="decision-card">

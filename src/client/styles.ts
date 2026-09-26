@@ -6,7 +6,7 @@ const css = `
 .decision-trigger-figure{flex:none;display:inline-flex;align-items:baseline;gap:4px}
 .decision-trigger-figure b{color:inherit;font-weight:500;font-variant-numeric:tabular-nums}
 .decision-trigger:focus-visible,.decision-dialog button:focus-visible,.decision-dialog input:focus-visible,.decision-config input:focus-visible,.decision-config button:focus-visible{outline:2px solid #1f5d50;outline-offset:2px}
-.decision-dialog{box-sizing:border-box;flex-direction:column;width:min(30rem,calc(100vw - 2rem));max-height:min(80vh,44rem);border:1px solid var(--dsw-alias-border-l2,#dce1e6);border-radius:14px;padding:0;overflow:hidden;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#202124);box-shadow:0 1rem 3rem rgba(0,0,0,.18);font:inherit}
+.decision-dialog{box-sizing:border-box;flex-direction:column;width:min(38rem,calc(100vw - 2rem));max-height:min(80vh,44rem);border:1px solid var(--dsw-alias-border-l2,#dce1e6);border-radius:14px;padding:0;overflow:hidden;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#202124);box-shadow:0 1rem 3rem rgba(0,0,0,.18);font:inherit}
 .decision-dialog[open]{display:flex}
 .decision-dialog::backdrop{background:rgba(0,0,0,.45)}
 .decision-head{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:.75rem;padding:1rem 1.25rem;border-bottom:1px solid var(--dsw-alias-border-l2,#eceff1)}
@@ -69,8 +69,6 @@ const css = `
 .decision-status-recheck{margin-left:auto;border:1px solid var(--dsw-alias-border-l2,#ccd3da);border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,#59636e);padding:.15rem .55rem;font:inherit;font-size:.76rem;cursor:pointer}
 .decision-status-recheck:hover:not(:disabled){background:var(--dsw-alias-bg-layer-1,#f2f4f6);color:var(--dsw-alias-label-primary,#202124)}
 .decision-status-recheck:disabled{opacity:.5;cursor:default}
-.decision-status-endpoint{margin:.3rem 0 0}
-.decision-status-endpoint code{font-size:.74rem;padding:.1rem .35rem;border-radius:5px;background:var(--dsw-alias-bg-layer-1,#f2f4f6);word-break:break-all}
 
 .decision-config{display:grid;gap:0;max-width:34rem;color:var(--dsw-alias-label-primary,#202124)}
 .decision-config section{margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--dsw-alias-border-l2,#eceff1)}
