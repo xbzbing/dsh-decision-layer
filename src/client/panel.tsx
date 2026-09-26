@@ -5,7 +5,7 @@ import type { TranslationKey } from './i18n.js';
 const api = '/plugins/dsh-decision-layer/api';
 interface GateMetrics { attempts: number; failures: number; ask: number; deny: number; allow: number; actual: { allow: number; deny: number; error: number } }
 interface CheckMetrics { attempts: number; failures: number; low: number }
-interface LogEntry { at: number; kind: 'gate' | 'check'; outcome: string; tool?: string; suggestion?: string; action?: string; reason?: string; score?: number }
+interface LogEntry { at: number; kind: 'gate' | 'check'; outcome: string; tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number }
 interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics }
 interface Session { enabled: boolean; capacityExceeded?: boolean }
 interface Probe { connected: boolean; model?: string; effectiveUrl?: string; reason?: string }
@@ -95,13 +95,18 @@ function SessionPanel({ sessionId, t }: Props) {
     : reason === 'capacity' ? t('reasonCapacity')
     : reason === 'config' ? t('reasonConfig') : reason;
   const actionText = (action?: string) => action === 'deny' ? t('actionDeny') : action === 'ask' ? t('actionAsk') : action;
+  const failDetail = (entry: LogEntry) => {
+    const reason = reasonText(entry.reason);
+    if (entry.reason === 'low-confidence' && typeof entry.confidence === 'number') return `${reason}（${t('logConfidence')} ${entry.confidence}）`;
+    return reason;
+  };
   const outcomeTag = (entry: LogEntry) => entry.outcome === 'deny' ? 'deny'
     : entry.outcome === 'error' ? 'error'
     : entry.outcome === 'low' ? 'warn' : 'ok';
 
   const renderGate = (entry: LogEntry) => {
     const tool = <code className="decision-log-tool">{entry.tool ?? '—'}</code>;
-    if (entry.outcome === 'error') return <>{t('logGate')} · {tool} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${reasonText(entry.reason)}` : ''}</span></>;
+    if (entry.outcome === 'error') return <>{t('logGate')} · {tool} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
     const verdict = entry.outcome === 'deny' ? t('actionDeny') : actionText(entry.action) ?? entry.outcome;
     const suggestion = entry.suggestion && entry.suggestion !== entry.action
       ? <span className="decision-log-detail"> · {t('logSuggested')} {actionText(entry.suggestion)}</span> : null;
@@ -109,7 +114,7 @@ function SessionPanel({ sessionId, t }: Props) {
   };
 
   const renderCheck = (entry: LogEntry) => {
-    if (entry.outcome === 'error') return <>{t('logCheck')} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${reasonText(entry.reason)}` : ''}</span></>;
+    if (entry.outcome === 'error') return <>{t('logCheck')} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
     const result = entry.outcome === 'low' ? t('checkResultLow') : t('checkResultOk');
     return <>{t('logCheck')} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail"> · {t('logScore')} {entry.score}/2</span> : null}</>;
   };

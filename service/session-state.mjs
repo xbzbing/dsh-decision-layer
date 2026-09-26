@@ -74,7 +74,8 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50 } = 
       if (typeof entry.suggestion === 'string' && entry.suggestion) record.suggestion = entry.suggestion.slice(0, 16);
       if (typeof entry.action === 'string' && entry.action) record.action = entry.action.slice(0, 16);
       if (typeof entry.reason === 'string' && entry.reason) record.reason = entry.reason.slice(0, 32);
-      if (Number.isSafeInteger(entry.score)) record.score = entry.score;
+      if (typeof entry.score === 'number' && Number.isFinite(entry.score)) record.score = Math.round(entry.score * 100) / 100;
+      if (typeof entry.confidence === 'number' && Number.isFinite(entry.confidence)) record.confidence = Math.round(entry.confidence * 100) / 100;
       const state = writable(id);
       state.log.push(record);
       if (state.log.length > maxLogEntries) state.log.splice(0, state.log.length - maxLogEntries);

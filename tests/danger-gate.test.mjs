@@ -99,6 +99,7 @@ test('gate logs distinct fallback reasons for invalid response and low confidenc
   const lowConf = createDangerGate({ sessions, evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 0.2, probabilities: { allow: 0, ask: 0.1, deny: 0.9 } } } }) });
   await lowConf.evaluate(exec('bash', { command: 'rm -rf /tmp/x' }));
   assert.equal(entries.at(-1).reason, 'low-confidence');
+  assert.equal(entries.at(-1).confidence, 0.2);
   const httpErr = createDangerGate({ sessions, evaluate: async () => { const e = new Error('http'); e.reason = 'http-error'; throw e; } });
   await httpErr.evaluate(exec('bash', { command: 'rm -rf /tmp/x' }));
   assert.equal(entries.at(-1).reason, 'http-error');

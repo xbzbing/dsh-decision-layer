@@ -57,7 +57,7 @@ function validateAnswer(value, question) {
     if (typeof value.choice !== 'string' || !keys.includes(value.choice)) throw backendError('invalid-response', 'Invalid response choice');
     return { ...common, choice: value.choice };
   }
-  if (!Number.isSafeInteger(value.score) || value.score < 0 || value.score > keys.length - 1) throw backendError('invalid-response', 'Invalid response score');
+  if (typeof value.score !== 'number' || !Number.isFinite(value.score) || value.score < 0 || value.score > keys.length - 1) throw backendError('invalid-response', 'Invalid response score');
   return { ...common, score: value.score };
 }
 

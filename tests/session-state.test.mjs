@@ -68,6 +68,10 @@ test('decision log keeps a bounded newest-last ring and validates entries', () =
   assert.equal(first[0].suggestion, 'deny');
   assert.ok(Number.isSafeInteger(first[0].at));
   assert.equal(first[1].score, 0);
+  sessions.log('one', { kind: 'check', outcome: 'low', score: 1.4266, confidence: 0.351 });
+  const withFraction = sessions.snapshot('one').log.at(-1);
+  assert.equal(withFraction.score, 1.43, 'fractional scores are kept and rounded to two decimals');
+  assert.equal(withFraction.confidence, 0.35, 'confidence is kept and rounded to two decimals');
   for (let i = 0; i < 5; i++) sessions.log('one', { kind: 'gate', outcome: 'ask', tool: `t${i}` });
   const bounded = sessions.snapshot('one').log;
   assert.equal(bounded.length, 3);

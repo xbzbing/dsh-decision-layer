@@ -65,12 +65,12 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
         const result = await evaluate(scoreQuestion(output, rubric), { signal: turn.signal });
         answer = result?.answers?.quality;
       } catch (error) { record(turn, 'error', { reason: typeof error?.reason === 'string' ? error.reason : 'unreachable' }); return { evaluated: false, lowScore: false, steered: false }; }
-      if (!answer || answer.type !== 'score' || !Number.isSafeInteger(answer.score)) {
+      if (!answer || answer.type !== 'score' || typeof answer.score !== 'number' || !Number.isFinite(answer.score)) {
         record(turn, 'error', { reason: 'invalid-response' });
         return { evaluated: false, lowScore: false, steered: false };
       }
       if (typeof answer.confidence !== 'number' || answer.confidence < minConfidence) {
-        record(turn, 'error', { reason: 'low-confidence' });
+        record(turn, 'error', { reason: 'low-confidence', ...(typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? { confidence: answer.confidence } : {}) });
         return { evaluated: false, lowScore: false, steered: false };
       }
       const lowScore = answer.score <= lowScoreThreshold;

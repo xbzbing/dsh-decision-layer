@@ -92,8 +92,8 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
     try { sessions.log(id, { kind: 'gate', outcome, tool: exec?.name, ...detail }); }
     catch { /* logging is best effort */ }
   };
-  const fallback = (exec, reason = 'unavailable') => {
-    record(exec, 'error', { action: 'ask', reason });
+  const fallback = (exec, reason = 'unavailable', detail = {}) => {
+    record(exec, 'error', { action: 'ask', reason, ...detail });
     if (exec && typeof exec === 'object') evaluatedCalls.add(exec);
     return { kind: 'ask', reason: 'Dangerous call requires host approval' };
   };
@@ -120,7 +120,7 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
       const answer = result?.answers?.verdict;
       const choice = answer?.choice;
       if (!['allow', 'ask', 'deny'].includes(choice)) return fallback(exec, 'invalid-response');
-      if (typeof answer.confidence !== 'number' || answer.confidence < minConfidence) return fallback(exec, 'low-confidence');
+      if (typeof answer.confidence !== 'number' || answer.confidence < minConfidence) return fallback(exec, 'low-confidence', typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? { confidence: answer.confidence } : {});
       if (choice === 'deny') { record(exec, 'deny', { suggestion: 'deny', action: 'deny' }); if (exec && typeof exec === 'object') deniedCalls.add(exec); return { kind: 'deny', reason: 'Dangerous call rejected by decision policy', modelSuggestion: choice }; }
       record(exec, choice, { suggestion: choice, action: 'ask' });
       return { kind: 'ask', reason: 'Dangerous call requires host approval', modelSuggestion: choice };

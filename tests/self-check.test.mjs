@@ -102,3 +102,16 @@ test('self-check logs score on evaluation and a reason on failure', async () => 
   await offline.review(turn('answer'));
   assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'error', reason: 'unreachable' });
 });
+
+test('fractional scores are accepted and low confidence logs the confidence value', async () => {
+  const entries = [];
+  const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
+  const fractional = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 1.43, confidence: 0.9, probabilities: { '0': 0, '1': 0.57, '2': 0.43 } } } }) });
+  const result = await fractional.review(turn('great answer'));
+  assert.equal(result.evaluated, true);
+  assert.equal(result.lowScore, false, 'a fractional score above the threshold is not low');
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 1.43 });
+  const lowConf = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 1.43, confidence: 0.35, probabilities: { '0': 0, '1': 0.57, '2': 0.43 } } } }) });
+  await lowConf.review(turn('answer'));
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'error', reason: 'low-confidence', confidence: 0.35 });
+});

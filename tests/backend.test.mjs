@@ -38,12 +38,18 @@ test('invalid requests fail before making a network call', async () => {
   assert.throws(() => validateRequest({ ...payload, state: 'x'.repeat(300_000) }), /large/i);
 });
 
-test('score answers must use discrete integer levels', async () => {
-  const backend = createBackend({ config: async () => ({ url: 'https://api.typesafe.ai', apiKey: 'secret', model: 'jev-latest' }),
+test('score answers accept fractional positions and reject out-of-range or non-numeric', async () => {
+  const fractional = createBackend({ config: async () => ({ url: 'https://api.typesafe.ai', apiKey: 'secret', model: 'jev-latest' }),
     fetcher: async () => new Response(JSON.stringify({ model: 'jev-latest', answers: { grade: {
       type: 'score', confidence: 1, probabilities: { '0': 0.5, '1': 0.5 }, score: 0.5,
     } } })) });
-  await assert.rejects(backend.evaluate({ state: 'test', questions: { grade: { type: 'score', instructions: 'Grade', criteria: ['low', 'high'] } } }), /score/i);
+  const value = await fractional.evaluate({ state: 'test', questions: { grade: { type: 'score', instructions: 'Grade', criteria: ['low', 'high'] } } });
+  assert.equal(value.answers.grade.score, 0.5);
+  const outOfRange = createBackend({ config: async () => ({ url: 'https://api.typesafe.ai', apiKey: 'secret', model: 'jev-latest' }),
+    fetcher: async () => new Response(JSON.stringify({ model: 'jev-latest', answers: { grade: {
+      type: 'score', confidence: 1, probabilities: { '0': 0, '1': 1 }, score: 2.5,
+    } } })) });
+  await assert.rejects(outOfRange.evaluate({ state: 'test', questions: { grade: { type: 'score', instructions: 'Grade', criteria: ['low', 'high'] } } }), /score/i);
 });
 
 test('special question IDs cannot disappear from answers', async () => {
