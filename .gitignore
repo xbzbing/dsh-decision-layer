@@ -1,6 +1,7 @@
 node_modules/
 dist/
-lib/
+lib/*
+!lib/client.js
 *.log
 .DS_Store
 *.tsbuildinfo
