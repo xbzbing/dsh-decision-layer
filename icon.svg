@@ -11,7 +11,7 @@
     <path d="M8 4 V32 M13 4 V32 M18 4 V32 M23 4 V32 M28 4 V32"/>
     <path d="M4 8 H32 M4 13 H32 M4 18 H32 M4 23 H32 M4 28 H32"/>
   </g>
-  <path d="M18 15 L20.4 19.2 L15.6 19.2 Z" fill="#E23B2E"/>
+  <path d="M18 13.2 L21.6 22.2 L18 19.4 L14.4 22.2 Z" fill="#E23B2E"/>
   <circle cx="24" cy="11" r="1.9" fill="#EAF7EF"/>
   <circle cx="12" cy="24" r="1.6" fill="#EAF7EF"/>
   <circle cx="25" cy="25" r="1.5" fill="#EAF7EF"/>
