@@ -1,27 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots';
 import type { TranslationKey } from './i18n.js';
+import { request, type Analysis, type LogEntry, type Rating } from './api.js';
+import { DecisionLogList } from './decision-log.js';
+import { useAnnotations } from './use-annotations.js';
 
 const api = '/plugins/dsh-decision-layer/api';
 interface GateMetrics { attempts: number; failures: number; ask: number; deny: number; allow: number; actual: { allow: number; deny: number; error: number } }
 interface CheckMetrics { attempts: number; failures: number; low: number; trend?: { run: number; severity: 'normal' | 'warn' | 'severe' } }
 interface NarrowMetrics { attempts: number; failures: number; applied: number; dropped: number }
 interface CompleteMetrics { attempts: number; failures: number; unsatisfied: number; satisfied: number; insufficient: number; steered: number }
-interface LogEntry { id?: string; at: number; kind: 'gate' | 'check' | 'narrow' | 'complete'; outcome: string; tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number; mode?: string; dropped?: number; kept?: number; candidates?: number; tools?: string[]; conditions?: number; satisfied?: number; unsatisfied?: number; insufficient?: number; steered?: boolean }
 interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics; narrow?: NarrowMetrics; complete?: CompleteMetrics }
-interface Analysis { totalDecisions: number; annotations: { rated: number; good: number; bad: number; unsure: number }; ratings: Record<string, 'good' | 'bad' | 'unsure'>; trendBacktest: { warnHits: number; severeHits: number; maxRun: number } }
-type Rating = 'good' | 'bad' | 'unsure';
 interface Session { enabled: boolean }
 interface Probe { connected: boolean; model?: string; effectiveUrl?: string; reason?: string }
-interface Envelope<T> { ok: boolean; value?: T; error?: string }
 interface Props { sessionId: string; t: Translate<TranslationKey> }
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${api}/${path}`, init);
-  const body = await response.json() as Envelope<T>;
-  if (!response.ok || !body.ok || body.value === undefined) throw new Error(body.error || 'Request failed');
-  return body.value;
-}
 
 export function DecisionPanel(props: Props) {
   return <SessionPanel key={props.sessionId} {...props} />;
@@ -47,9 +39,9 @@ function SessionPanel({ sessionId, t }: Props) {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [ratings, setRatings] = useState<Record<string, Rating>>({});
   const [status, setStatus] = useState<'idle' | 'checking' | 'ok' | 'down'>('idle');
   const [message, setMessage] = useState('');
+  const { ratings, seed, annotate } = useAnnotations(sessionId, () => setMessage(t('annotateFailed')));
 
   useEffect(() => {
     let live = true;
@@ -79,19 +71,9 @@ function SessionPanel({ sessionId, t }: Props) {
     void request<{ entries: LogEntry[] }>(`log?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) setLog(value.entries); }).catch(() => {});
     // The analysis over persisted logs powers the annotation ratings shown on
     // each decision row; it is best-effort and never blocks the panel.
-    void request<Analysis>(`logs?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) { setAnalysis(value); setRatings(value.ratings ?? {}); } }).catch(() => {});
+    void request<Analysis>(`logs?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) { setAnalysis(value); seed(value); } }).catch(() => {});
     return () => { alive = false; element.close(); };
-  }, [open, t, sessionId]);
-
-  // Append one annotation for a decision and reflect the new rating locally.
-  // Explicit user intent: a failed write surfaces as a message, not silence.
-  const annotate = async (id: string, rating: Rating) => {
-    setRatings(prev => ({ ...prev, [id]: rating }));
-    try {
-      await request<{ ok: boolean }>('annotate', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionId, target: id, rating }) });
-    } catch { setMessage(t('annotateFailed')); setRatings(prev => { const next = { ...prev }; delete next[id]; return next; }); }
-  };
+  }, [open, t, sessionId, seed]);
 
   const updateEnabled = async (next: boolean) => {
     setBusy(true);
@@ -104,88 +86,6 @@ function SessionPanel({ sessionId, t }: Props) {
   };
 
   const time = (at: number) => new Date(at).toLocaleTimeString();
-  const reasonText = (reason?: string) => reason === 'unavailable' || reason === 'unreachable' ? t('reasonUnavailable')
-    : reason === 'http-error' ? t('reasonHttpError')
-    : reason === 'invalid-response' ? t('reasonInvalidResponse')
-    : reason === 'low-confidence' ? t('reasonLowConfidence')
-    : reason === 'too-many-candidates' ? t('reasonTooMany')
-    : reason === 'low-keep' ? t('reasonLowKeep')
-    : reason === 'config' ? t('reasonConfig') : reason;
-  const actionText = (action?: string) => action === 'deny' ? t('actionDeny') : action === 'ask' ? t('actionAsk') : action === 'pass' ? t('actionPass') : action;
-  const failDetail = (entry: LogEntry) => {
-    const reason = reasonText(entry.reason);
-    if (entry.reason === 'low-confidence' && typeof entry.confidence === 'number') return `${reason}（${t('logConfidence')} ${entry.confidence}）`;
-    return reason;
-  };
-  const outcomeTag = (entry: LogEntry) => entry.outcome === 'deny' ? 'deny'
-    : entry.outcome === 'error' ? 'error'
-    : entry.outcome === 'low' ? 'warn' : 'ok';
-
-  const renderGate = (entry: LogEntry) => {
-    const tool = <code className="decision-log-tool">{entry.tool ?? '—'}</code>;
-    // error / invalid pass-throughs: the gate could not judge and did
-    // not intervene; the call proceeded on its original path.
-    if (entry.outcome === 'error') return <>{t('logGate')} · {tool} <span className="decision-log-detail">{t('gatePassThrough')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
-    if (entry.outcome === 'deny') {
-      const suggestion = entry.suggestion && entry.suggestion !== 'deny'
-        ? <span className="decision-log-detail"> · {t('logSuggested')} {actionText(entry.suggestion)}</span> : null;
-      return <>{t('logGate')} · {tool} <span className="decision-log-verdict">→ {t('actionDeny')}</span>{suggestion}</>;
-    }
-    // outcome 'allow' with action 'pass' = no intervention (allow/ask verdict, or
-    // a low-confidence verdict). Show it as pass-through with the model suggestion.
-    const suggestion = entry.suggestion ? <span className="decision-log-detail"> · {t('logSuggested')} {actionText(entry.suggestion)}</span> : null;
-    const lowConf = entry.reason === 'low-confidence' && typeof entry.confidence === 'number'
-      ? <span className="decision-log-detail"> · {t('reasonLowConfidence')} {entry.confidence}</span> : null;
-    return <>{t('logGate')} · {tool} <span className="decision-log-verdict">{t('gatePassThrough')}</span>{suggestion}{lowConf}</>;
-  };
-
-  const renderCheck = (entry: LogEntry) => {
-    const label = <span title={t('logCheckHint')}>{t('logCheck')}</span>;
-    if (entry.outcome === 'error') return <>{label} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
-    const result = entry.outcome === 'low' ? t('checkResultLow') : t('checkResultOk');
-    return <>{label} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null}{typeof entry.confidence === 'number' ? <span className="decision-log-detail"> · {t('logConfidence')} {entry.confidence}</span> : null}</>;
-  };
-
-  const renderNarrow = (entry: LogEntry) => {
-    const label = <span title={t('logNarrowHint')}>{t('logNarrow')}</span>;
-    if (entry.outcome === 'error') return <>{label} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
-    const dropped = entry.dropped ?? 0;
-    const kept = typeof entry.kept === 'number' ? entry.kept : undefined;
-    // The safeguard reason is a mid-line detail; the mode tag is the single final
-    // verdict at the end. The reason text no longer says "仅观察", so the two do
-    // not repeat. The too-many-candidates note carries its candidate count.
-    const guardText = entry.reason === 'too-many-candidates'
-      ? (typeof entry.candidates === 'number' ? t('reasonTooManyCount', { count: entry.candidates }) : t('reasonTooMany'))
-      : entry.reason === 'low-keep' ? t('reasonLowKeep') : undefined;
-    const guard = guardText ? <span className="decision-log-detail"> · {guardText}</span> : null;
-    const modeTag = <span className="decision-log-detail"> · {entry.mode === 'enforce' ? t('narrowEnforce') : t('narrowObserve')}</span>;
-    if (dropped === 0) {
-      return <>{label} · <span className="decision-log-verdict">{t('narrowKept')}</span>{kept !== undefined ? <span className="decision-log-detail"> · {t('narrowKeptCount')} {kept}</span> : null}{guard}{modeTag}</>;
-    }
-    const names = Array.isArray(entry.tools) && entry.tools.length > 0 ? entry.tools.join('、') : undefined;
-    // The stored name list is capped, so append "…等 N 个" when it is shorter than the dropped count.
-    const overflow = names && Array.isArray(entry.tools) && entry.tools.length < dropped ? t('narrowMore', { count: dropped }) : '';
-    return <>{label} · <span className="decision-log-verdict">{t('narrowDropped')} {dropped}{kept !== undefined ? ` / ${t('narrowKeptCount')} ${kept}` : ''}</span>{names ? <span className="decision-log-detail"> · {names}{overflow}</span> : null}{guard}{modeTag}</>;
-  };
-
-  const renderComplete = (entry: LogEntry) => {
-    const label = <span>{t('logComplete')}</span>;
-    if (entry.outcome === 'error') return <>{label} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
-    const result = entry.outcome === 'unsatisfied' ? t('completeResultUnsatisfied') : t('completeResultOk');
-    const parts: string[] = [];
-    if (typeof entry.satisfied === 'number') parts.push(`${t('completeSatisfied')} ${entry.satisfied}`);
-    if (typeof entry.unsatisfied === 'number' && entry.unsatisfied > 0) parts.push(`${t('completeUnsatisfied')} ${entry.unsatisfied}`);
-    if (typeof entry.insufficient === 'number' && entry.insufficient > 0) parts.push(`${t('completeInsufficient')} ${entry.insufficient}`);
-    const tally = parts.length > 0 ? <span className="decision-log-detail"> · {parts.join(' / ')}</span> : null;
-    const steer = entry.steered ? <span className="decision-log-detail"> · {t('completeSteered')}</span> : null;
-    return <>{label} · <span className="decision-log-verdict">{result}</span>{typeof entry.conditions === 'number' ? <span className="decision-log-detail"> · {t('completeConditions')} {entry.conditions}</span> : null}{tally}{steer}</>;
-  };
-
-  const outcomeTagOf = (entry: LogEntry) => entry.kind === 'narrow'
-    ? (entry.outcome === 'error' ? 'error' : entry.outcome === 'applied' ? 'ok' : 'ok')
-    : entry.kind === 'complete'
-    ? (entry.outcome === 'error' ? 'error' : entry.outcome === 'unsatisfied' ? 'warn' : 'ok')
-    : outcomeTag(entry);
 
   const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : status === 'checking' ? t('statusChecking') : t('statusIdle');
 
@@ -296,23 +196,8 @@ function SessionPanel({ sessionId, t }: Props) {
           </article>}
         </div>}</section>
       <section><h3>{t('log')}</h3>
-        {log.length === 0 ? <p className="decision-empty" role="status">{t('logEmpty')}</p> : <ol className="decision-log">
-          {log.slice().reverse().map((entry, index) => <li key={entry.id ?? `${entry.at}-${index}`} className={`decision-log-item decision-log-${outcomeTagOf(entry)}`}>
-            <span className="decision-log-time">{time(entry.at)}</span>
-            <span className="decision-log-body">{entry.kind === 'gate' ? renderGate(entry) : entry.kind === 'narrow' ? renderNarrow(entry) : entry.kind === 'complete' ? renderComplete(entry) : renderCheck(entry)}</span>
-            {entry.id && <span className="decision-rate" role="group" aria-label={t('rateGroup')}>
-              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'good' ? ' decision-rate-on decision-rate-good' : ''}`} aria-label={t('rateGood')} title={t('rateGood')} aria-pressed={ratings[entry.id] === 'good'} onClick={() => void annotate(entry.id!, 'good')}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 7.2 8.1 2.4c.6-.9 2-.5 2 .6V6h3.2c.9 0 1.5.8 1.3 1.6l-1.1 4.6c-.2.8-.9 1.3-1.7 1.3H5V7.2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M5 7.2H2.6v6.3H5" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
-              </button>
-              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'bad' ? ' decision-rate-on decision-rate-bad' : ''}`} aria-label={t('rateBad')} title={t('rateBad')} aria-pressed={ratings[entry.id] === 'bad'} onClick={() => void annotate(entry.id!, 'bad')}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11 8.8 7.9 13.6c-.6.9-2 .5-2-.6V10H2.7c-.9 0-1.5-.8-1.3-1.6l1.1-4.6C2.7 3 3.4 2.5 4.2 2.5H11v6.3Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M11 8.8h2.4V2.5H11" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
-              </button>
-              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'unsure' ? ' decision-rate-on decision-rate-unsure' : ''}`} aria-label={t('rateUnsure')} title={t('rateUnsure')} aria-pressed={ratings[entry.id] === 'unsure'} onClick={() => void annotate(entry.id!, 'unsure')}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.2"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7s1.7.7 1.7 1.6c0 1.3-1.6 1.4-1.7 2.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>
-              </button>
-            </span>}
-          </li>)}
-        </ol>}
+        {log.length === 0 ? <p className="decision-empty" role="status">{t('logEmpty')}</p>
+          : <DecisionLogList entries={log} ratings={ratings} onRate={(id, rating) => void annotate(id, rating)} t={t} />}
         {analysis && analysis.annotations.rated > 0 && <p className="decision-muted decision-rate-summary">{t('rateSummary', { rated: analysis.annotations.rated, good: analysis.annotations.good, bad: analysis.annotations.bad, unsure: analysis.annotations.unsure })}</p>}
       </section>
       {message && <p role="status" className="decision-message decision-message-warn">{message}</p>}

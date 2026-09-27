@@ -160,6 +160,22 @@ const css = `
 .decision-message{font-size:.82rem;margin:.2rem 0 0}
 .decision-message-ok{color:#1f6f57}
 .decision-message-warn{color:#9d4b1f}
+/* Conversation-view "Decision analysis" tab. It reuses the card / stat / log
+   primitives above; this block only supplies the scroll container and section
+   rhythm, since the tab is not inside the modal's .decision-body wrapper. */
+.decision-analysis{height:100%;overflow:auto;color:var(--dsw-alias-label-primary,#202124);font:inherit}
+.decision-analysis-inner{max-width:52rem;margin:0 auto;padding:1.4rem 1.5rem 3rem}
+.decision-analysis-title{font-size:1.15rem;margin:0 0 .3rem}
+.decision-analysis-intro{margin:0 0 .4rem}
+.decision-analysis-section{border-top:1px solid var(--dsw-alias-border-l2,#eceff1);margin-top:1.1rem;padding-top:1rem}
+.decision-analysis-section>h3{font-size:.92rem;margin:0 0 .6rem}
+.decision-analysis-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));gap:.7rem}
+.decision-analysis-cards .decision-card-stats{flex-wrap:wrap}
+.decision-analysis-trend{max-width:26rem}
+.decision-analysis-note{margin:.5rem 0 0}
+@media (prefers-color-scheme:dark){
+  .decision-analysis{color:var(--dsw-alias-label-primary,#e6eaee)}
+}
 `;
 
 export function installStyles(): () => void {

@@ -7,7 +7,7 @@ import React from 'react';
 let render, fireEvent, waitFor, cleanup;
 import { dictionaries } from '../src/client/i18n.ts';
 
-let Panel, ConfigForm;
+let Panel, ConfigForm, AnalysisView;
 let dom;
 const originalFetch = globalThis.fetch;
 const translate = (key, params) => {
@@ -31,6 +31,10 @@ before(async () => {
     external: ['react', 'react/jsx-runtime'], jsx: 'automatic', write: false });
   await writeFile('lib/config-form-test.mjs', form.outputFiles[0].text);
   ConfigForm = (await import('../lib/config-form-test.mjs')).ConfigForm;
+  const analysis = await build({ entryPoints: ['src/client/analysis-view.tsx'], platform: 'node', format: 'esm', bundle: true,
+    external: ['react', 'react/jsx-runtime'], jsx: 'automatic', write: false });
+  await writeFile('lib/analysis-view-test.mjs', analysis.outputFiles[0].text);
+  AnalysisView = (await import('../lib/analysis-view-test.mjs')).AnalysisView;
 });
 
 afterEach(() => cleanup());
@@ -344,4 +348,66 @@ test('delete key is not offered when no key is saved', async () => {
   const view = render(React.createElement(ConfigForm, { t: translate }));
   await view.findByLabelText('服务地址');
   assert.equal(view.queryByRole('button', { name: '删除' }), null);
+});
+
+test('analysis view renders the profile, trend backtest, and accuracy summary from /logs', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/logs?')) return envelope({ totalDecisions: 3,
+      annotations: { rated: 2, good: 1, bad: 1, unsure: 0 }, ratings: { 'a-1': 'good', 'a-2': 'bad' },
+      trendBacktest: { warnHits: 1, severeHits: 0, maxRun: 3 },
+      profile: {
+        gate: { attempts: 2, allow: 1, ask: 0, deny: 1, error: 0 },
+        check: { attempts: 1, ok: 0, low: 1, error: 0, scoreSum: 1, scoreCount: 1, confidence: {} },
+        narrow: { attempts: 0, applied: 0, error: 0, droppedSum: 0, tooManyCandidates: 0 },
+        complete: { attempts: 0, satisfied: 0, unsatisfied: 0, insufficient: 0, error: 0, steered: 0 },
+      } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { id: 'a-1', at: 1_700_000_020_000, kind: 'gate', outcome: 'deny', tool: 'bash', action: 'deny' },
+      { id: 'a-2', at: 1_700_000_021_000, kind: 'check', outcome: 'low', score: 0 },
+    ] });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(AnalysisView, { sessionId: 'an-1', t: translate }));
+  await view.findByText('过程画像');
+  // gate profile card shows the deny count; trend backtest shows the warn fires
+  const gateCard = (await view.findByText('危险门控')).closest('article');
+  assert.match(gateCard.textContent, /拒绝.*1/);
+  await view.findByText('质量趋势回测');
+  // accuracy summary reflects the annotation counts, and the decision rows render
+  await view.findByText(/已标注 2 条/);
+  const denyRow = (await view.findByText(/已拒绝/)).closest('li');
+  // the persisted rating pre-fills the deny row's "correct" button pressed state
+  await waitFor(() => assert.equal(denyRow.querySelector('.decision-rate-good').getAttribute('aria-pressed'), 'true'));
+});
+
+test('analysis view rates a decision row through the shared /annotate route', async () => {
+  let annotateBody;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/logs?')) return envelope({ totalDecisions: 1,
+      annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {},
+      trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 },
+      profile: { gate: { attempts: 1, allow: 0, ask: 0, deny: 1, error: 0 }, check: { attempts: 0, ok: 0, low: 0, error: 0, scoreSum: 0, scoreCount: 0, confidence: {} }, narrow: { attempts: 0, applied: 0, error: 0, droppedSum: 0, tooManyCandidates: 0 }, complete: { attempts: 0, satisfied: 0, unsatisfied: 0, insufficient: 0, error: 0, steered: 0 } } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { id: 'row-1', at: 1_700_000_030_000, kind: 'gate', outcome: 'deny', tool: 'bash', action: 'deny' },
+    ] });
+    if (String(url).endsWith('/annotate') && init?.method === 'POST') { annotateBody = JSON.parse(init.body); return envelope({ ok: true, target: annotateBody.target, rating: annotateBody.rating }); }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(AnalysisView, { sessionId: 'an-rate', t: translate }));
+  const bad = await view.findByRole('button', { name: '判错了' });
+  fireEvent.click(bad);
+  await waitFor(() => assert.equal(annotateBody?.rating, 'bad'));
+  assert.equal(annotateBody.target, 'row-1', 'the decision id is the annotation target');
+  assert.equal(annotateBody.sessionId, 'an-rate', 'the analysis tab posts the same session id');
+});
+
+test('analysis view shows the empty state when there are no decisions', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/logs?')) return envelope({ totalDecisions: 0, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [] });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(AnalysisView, { sessionId: 'an-empty', t: translate }));
+  await view.findByText('本会话尚无决策记录。');
+  assert.equal(view.queryByText('过程画像'), null, 'no profile section without decisions');
 });
