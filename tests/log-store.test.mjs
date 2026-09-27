@@ -68,3 +68,18 @@ test('retention prunes this port files older than the window on flush', async ()
   // the old 3080 file is pruned; the recent one stays; another port's file is untouched
   assert.deepEqual(names, ['decisions-3080-2026-09-27.jsonl', 'decisions-4000-2026-08-01.jsonl']);
 });
+
+test('appendAnnotation writes an annotation event immediately into the day file', async () => {
+  const base = await dir();
+  const at = Date.parse('2026-09-27T10:00:00Z');
+  const store = createLogStore({ port: 3080, dir: base, now: () => new Date(at) });
+  const record = await store.appendAnnotation({ kind: 'annotation', target: 'd1', rating: 'good', sessionId: 's1' });
+  assert.equal(record.at, at, 'a missing timestamp is filled in');
+  const lines = (await readFile(join(base, 'decisions-3080-2026-09-27.jsonl'), 'utf8')).trim().split('\n');
+  assert.equal(lines.length, 1);
+  const parsed = JSON.parse(lines[0]);
+  assert.equal(parsed.kind, 'annotation');
+  assert.equal(parsed.target, 'd1');
+  assert.equal(parsed.rating, 'good');
+  await assert.rejects(store.appendAnnotation(null), /annotation/i);
+});

@@ -37,7 +37,7 @@ async function readBody(req) {
   return value;
 }
 
-export function createManagerRoutes({ path, sessions, backend, env = process.env, bindHost = '127.0.0.1' }) {
+export function createManagerRoutes({ path, sessions, backend, logStore, analyze, env = process.env, bindHost = '127.0.0.1' }) {
   const route = (suffix, methods) => ({ kind: 'exact', path: `${API_PREFIX}/${suffix}`, handler: async (req, res) => {
     if (bindHost !== '127.0.0.1' || !authorizedBrowser(req)) return respond(res, 403, { ok: false, error: 'Local same-origin browser request required' });
     if (!Object.hasOwn(methods, req.method)) return respond(res, 405, { ok: false, error: 'Method not allowed' });
@@ -75,6 +75,31 @@ export function createManagerRoutes({ path, sessions, backend, env = process.env
     }),
     route('metrics', { GET: req => sessions.snapshot(sessionId(req)) }),
     route('log', { GET: req => ({ entries: sessions.snapshot(sessionId(req)).log ?? [] }) }),
+    // Read-only analysis over the persisted decision logs for one session. Returns
+    // only aggregates and annotation counts — never raw log rows — so gate command
+    // / path fragments are not echoed back to the browser.
+    route('logs', {
+      GET: async req => {
+        if (typeof analyze !== 'function') { const error = new Error('analysis unavailable'); error.code = 'BAD_REQUEST'; throw error; }
+        return analyze(sessionId(req));
+      },
+    }),
+    // Append one annotation event for a decision. Explicit user intent: validated
+    // and written immediately; a write failure surfaces as an error, not silence.
+    route('annotate', {
+      POST: async req => {
+        if (!logStore || typeof logStore.appendAnnotation !== 'function') { const error = new Error('annotation unavailable'); error.code = 'BAD_REQUEST'; throw error; }
+        const body = await readBody(req);
+        const target = typeof body.target === 'string' ? body.target.trim() : '';
+        const rating = body.rating;
+        const session = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
+        if (!target || target.length > 128 || !['good', 'bad', 'unsure'].includes(rating) || !session || session.length > 512) {
+          const error = new Error('Invalid annotation'); error.code = 'BAD_REQUEST'; throw error;
+        }
+        await logStore.appendAnnotation({ kind: 'annotation', target, rating, sessionId: session });
+        return { ok: true, target, rating };
+      },
+    }),
     route('session', {
       GET: req => sessions.snapshot(sessionId(req)),
       PUT: async req => {

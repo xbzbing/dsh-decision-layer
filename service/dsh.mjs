@@ -10,6 +10,7 @@ import { createNarrowing } from './narrowing.mjs';
 import { createTaskCompletion } from './task-completion.mjs';
 import { createLoopGuard } from './loop-guard.mjs';
 import { createLogStore } from './log-store.mjs';
+import { analyzeSessionLogs } from './log-analyze.mjs';
 
 export const name = 'dsh-decision-layer';
 export const inject = ['tools', 'skills'];
@@ -234,7 +235,12 @@ export async function apply(ctx, options = {}) {
 
   ctx.inject(['webServer'], web => {
     logStore = createLogStore({ port: web.webServer.port });
-    const unregister = createManagerRoutes({ path, sessions, backend, bindHost: web.webServer.host }).map(route => web.webServer.register(route));
+    const port = web.webServer.port;
+    const analyze = async sessionId => analyzeSessionLogs(sessionId, {
+      port,
+      trendConfig: (await resolveConfig({ path })).checkSettings,
+    });
+    const unregister = createManagerRoutes({ path, sessions, backend, logStore, analyze, bindHost: web.webServer.host }).map(route => web.webServer.register(route));
     return () => { unregister.forEach(dispose => dispose()); const store = logStore; logStore = undefined; void store?.dispose(); };
   });
 }

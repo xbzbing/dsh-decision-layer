@@ -11,7 +11,12 @@ const directory = await mkdtemp(join(tmpdir(), 'decision-http-'));
 after(() => rm(directory, { recursive: true, force: true }));
 const path = join(directory, 'config.json');
 const sessions = createSessionState();
-const routes = createManagerRoutes({ path, sessions, env: {}, backend: { evaluate: async () => ({ model: 'jev-latest', answers: {}, usage: {} }) } });
+const annotations = [];
+const analyzeCalls = [];
+const routes = createManagerRoutes({ path, sessions, env: {},
+  backend: { evaluate: async () => ({ model: 'jev-latest', answers: {}, usage: {} }) },
+  logStore: { appendAnnotation: async entry => { annotations.push(entry); return entry; } },
+  analyze: async sessionId => { analyzeCalls.push(sessionId); return { totalDecisions: 0, profile: {}, trendBacktest: {}, annotations: { rated: 0 } }; } });
 const server = createServer((req, res) => {
   const route = routes.find(route => route.path === new URL(req.url, 'http://localhost').pathname);
   if (!route) { res.writeHead(404).end(); return; }
@@ -67,4 +72,34 @@ test('save key, reject cross-origin and preserve manual zero counters', async ()
   const probe = await json(await fetch(`${base}/probe`, { method: 'POST', headers: { origin } }));
   assert.equal(probe.value.connected, true);
   assert.equal((await json(await fetch(`${base}/metrics?sessionId=s1`))).value.attempts, 0);
+});
+
+test('logs analysis route returns aggregates for the session, never raw rows', async () => {
+  const response = await json(await fetch(`${base}/logs?sessionId=s1`));
+  assert.equal(response.ok, true);
+  assert.equal(response.value.totalDecisions, 0);
+  assert.ok(response.value.profile);
+  assert.ok(response.value.annotations);
+  assert.deepEqual(analyzeCalls.at(-1), 's1', 'analyze is called with the session id');
+  // no sessionId is a bad request
+  assert.equal((await fetch(`${base}/logs`)).status, 400);
+});
+
+test('annotate appends a validated annotation and rejects bad input', async () => {
+  const ok = await fetch(`${base}/annotate`, { method: 'POST', headers: { origin, 'content-type': 'application/json' },
+    body: JSON.stringify({ target: 'decision-1', rating: 'good', sessionId: 's1' }) });
+  assert.equal(ok.status, 200);
+  assert.equal(annotations.at(-1).target, 'decision-1');
+  assert.equal(annotations.at(-1).rating, 'good');
+  assert.equal(annotations.at(-1).kind, 'annotation');
+  const badRating = await fetch(`${base}/annotate`, { method: 'POST', headers: { origin, 'content-type': 'application/json' },
+    body: JSON.stringify({ target: 'd', rating: 'meh', sessionId: 's1' }) });
+  assert.equal(badRating.status, 400);
+  const noTarget = await fetch(`${base}/annotate`, { method: 'POST', headers: { origin, 'content-type': 'application/json' },
+    body: JSON.stringify({ rating: 'good', sessionId: 's1' }) });
+  assert.equal(noTarget.status, 400);
+  // cross-origin annotate is rejected
+  const cross = await fetch(`${base}/annotate`, { method: 'POST', headers: { origin: 'https://attacker.test', 'content-type': 'application/json' },
+    body: JSON.stringify({ target: 'd', rating: 'good', sessionId: 's1' }) });
+  assert.equal(cross.status, 403);
 });

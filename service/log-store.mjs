@@ -61,6 +61,18 @@ export function createLogStore({ port, dir = logsDir(), flushIntervalMs = 5000,
       if (buffer.length >= maxBuffer) { void flush(); return; }
       if (!timer) timer = setTimeout(() => { timer = undefined; void flush(); }, flushIntervalMs);
     },
+    // An annotation is an explicit user action, not telemetry: write it
+    // immediately (not batched) and surface failure to the caller instead of
+    // dropping it. It lands in the same JSONL directory as a `kind:"annotation"`
+    // event and is pruned with the decision logs on the next flush.
+    async appendAnnotation(entry) {
+      if (entry === null || typeof entry !== 'object') throw new Error('Invalid annotation');
+      const at = Number.isFinite(entry.at) ? entry.at : now().getTime();
+      const record = { ...entry, at };
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      await appendFile(fileFor(new Date(at)), `${JSON.stringify(record)}\n`, { mode: 0o600 });
+      return record;
+    },
     flush,
     dispose() {
       if (timer) { clearTimeout(timer); timer = undefined; }
