@@ -4,16 +4,25 @@ const MAX_STATE = 8 * 1024;
 
 // Core tools an agent almost always needs. They are never judged for relevance
 // and never dropped, so narrowing cannot strip the agent's fundamental
-// capabilities (reading, editing, shell, search, task tracking).
+// capabilities. Beyond the filesystem/shell/search/todo basics, this includes
+// the DSH agent meta-abilities (ask the user, goals, skills, delivery, images,
+// background jobs, teammates, subagents): their relevance rarely shows in a
+// single turn's task text, so per-tool judging would keep pruning them.
 export const DEFAULT_CORE_TOOLS = Object.freeze([
   'read', 'write', 'edit', 'bash', 'glob', 'grep', 'ls', 'todo_write',
+  'ask_user_question', 'create_goal', 'update_goal', 'get_goal', 'exit_plan_mode',
+  'skill', 'present', 'read_image', 'workflow',
+  'job_list', 'job_output', 'job_kill',
+  'spawn_teammate', 'interrupt_agent', 'list_agents', 'wait_agent', 'send_message',
+  'subagent', 'subagent_fork',
 ]);
 
 // Tool-name prefixes that are always kept and never judged, on top of the core
 // tools. Memory/context tools like OpenViking are "keep resident, trigger on
 // demand": their relevance rarely shows in the literal task text, so per-tool
-// relevance judging would keep pruning them. Users can override this list.
-export const DEFAULT_KEEP_PREFIXES = Object.freeze(['mcp__openviking']);
+// relevance judging would keep pruning them. `team_task_` covers the shared
+// task-board tools as a group. Users can override this list.
+export const DEFAULT_KEEP_PREFIXES = Object.freeze(['mcp__openviking', 'team_task_']);
 
 // Intersect the host-allowed tool set with the model's relevance verdict. Only
 // removes tools; never adds. Any missing or invalid noul keeps the tool, and a

@@ -19,7 +19,7 @@ async function request<T>(path: string, fetchFn: typeof fetch, init?: RequestIni
 
 // The built-in default keep-prefix; shown when the config has none stored yet so
 // the effective set is always visible and editable.
-const DEFAULT_KEEP_PREFIXES = ['mcp__openviking'];
+const DEFAULT_KEEP_PREFIXES = ['mcp__openviking', 'team_task_'];
 // The built-in optional-candidate ceiling; above it, enforce downgrades to observe.
 const DEFAULT_MAX_CANDIDATES = 20;
 // Prefixes may be separated by newlines or English commas; blanks and duplicates

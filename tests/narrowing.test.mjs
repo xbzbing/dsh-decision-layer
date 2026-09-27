@@ -88,6 +88,25 @@ test('narrowing defaults to enforce when no mode is configured', async () => {
   assert.equal(result.applied, true);
 });
 
+test('default core tools and keep prefixes cover DSH agent meta-abilities and team_task_', async () => {
+  let asked;
+  // No coreTools/keepPrefixes overrides: exercise the shipped defaults.
+  const check = createNarrowing({ settings: { mode: 'enforce' }, minKeep: 1,
+    evaluate: async question => { asked = Object.keys(question.questions); return answers({ web_search: 0.9 }); } });
+  const result = await check.review(turn('do something', [
+    { name: 'ask_user_question', description: '' }, { name: 'create_goal', description: '' }, { name: 'subagent', description: '' },
+    { name: 'spawn_teammate', description: '' }, { name: 'workflow', description: '' }, { name: 'present', description: '' },
+    { name: 'team_task_create', description: '' }, { name: 'team_task_list', description: '' },
+    { name: 'mcp__openviking__find', description: '' },
+    { name: 'web_search', description: '' }, { name: 'web_fetch', description: '' },
+  ]));
+  // only genuinely optional tools reach the model; meta-abilities, team_task_*, and openviking do not
+  assert.deepEqual(asked.sort(), ['web_fetch', 'web_search']);
+  for (const kept of ['ask_user_question', 'create_goal', 'subagent', 'spawn_teammate', 'workflow', 'present', 'team_task_create', 'team_task_list', 'mcp__openviking__find']) {
+    assert.equal(result.keep.includes(kept), true, `${kept} must stay resident`);
+  }
+});
+
 test('core tools are always kept and never judged for relevance', async () => {
   let asked;
   const check = createNarrowing({ settings: { mode: 'enforce' }, minKeep: 1,
