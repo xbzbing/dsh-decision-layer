@@ -301,9 +301,15 @@ function SessionPanel({ sessionId, t }: Props) {
             <span className="decision-log-time">{time(entry.at)}</span>
             <span className="decision-log-body">{entry.kind === 'gate' ? renderGate(entry) : entry.kind === 'narrow' ? renderNarrow(entry) : entry.kind === 'complete' ? renderComplete(entry) : renderCheck(entry)}</span>
             {entry.id && <span className="decision-rate" role="group" aria-label={t('rateGroup')}>
-              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'good' ? ' decision-rate-on' : ''}`} aria-label={t('rateGood')} title={t('rateGood')} aria-pressed={ratings[entry.id] === 'good'} onClick={() => void annotate(entry.id!, 'good')}>👍</button>
-              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'bad' ? ' decision-rate-on' : ''}`} aria-label={t('rateBad')} title={t('rateBad')} aria-pressed={ratings[entry.id] === 'bad'} onClick={() => void annotate(entry.id!, 'bad')}>👎</button>
-              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'unsure' ? ' decision-rate-on' : ''}`} aria-label={t('rateUnsure')} title={t('rateUnsure')} aria-pressed={ratings[entry.id] === 'unsure'} onClick={() => void annotate(entry.id!, 'unsure')}>?</button>
+              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'good' ? ' decision-rate-on decision-rate-good' : ''}`} aria-label={t('rateGood')} title={t('rateGood')} aria-pressed={ratings[entry.id] === 'good'} onClick={() => void annotate(entry.id!, 'good')}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 7.2 8.1 2.4c.6-.9 2-.5 2 .6V6h3.2c.9 0 1.5.8 1.3 1.6l-1.1 4.6c-.2.8-.9 1.3-1.7 1.3H5V7.2Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M5 7.2H2.6v6.3H5" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+              </button>
+              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'bad' ? ' decision-rate-on decision-rate-bad' : ''}`} aria-label={t('rateBad')} title={t('rateBad')} aria-pressed={ratings[entry.id] === 'bad'} onClick={() => void annotate(entry.id!, 'bad')}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11 8.8 7.9 13.6c-.6.9-2 .5-2-.6V10H2.7c-.9 0-1.5-.8-1.3-1.6l1.1-4.6C2.7 3 3.4 2.5 4.2 2.5H11v6.3Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M11 8.8h2.4V2.5H11" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+              </button>
+              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'unsure' ? ' decision-rate-on decision-rate-unsure' : ''}`} aria-label={t('rateUnsure')} title={t('rateUnsure')} aria-pressed={ratings[entry.id] === 'unsure'} onClick={() => void annotate(entry.id!, 'unsure')}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.2"/><path d="M6.3 6.2c0-1 .8-1.7 1.7-1.7s1.7.7 1.7 1.6c0 1.3-1.6 1.4-1.7 2.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8" cy="11.4" r=".8" fill="currentColor"/></svg>
+              </button>
             </span>}
           </li>)}
         </ol>}
