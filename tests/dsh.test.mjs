@@ -40,7 +40,7 @@ test('v0.2 gate installs on pre-execute and denies model-rejected dangerous call
       return () => {};
     }, effect: setup => { disposers.push(setup()); }, inject: () => {} }, { configPath: path });
     assert.equal(listeners.length, 1);
-    assert.equal(disposers.length, 3);
+    assert.equal(disposers.length, 4);
     const exec = { name: 'shell', arguments: { command: 'rm -rf /tmp/build' }, callId: 'gate-call', token: Symbol('token'),
       signal: AbortSignal.timeout(1000), agent: { session: { id: 'gate-session' } } };
     const result = await listeners[0](exec, async () => ({ kind: 'allow' }));
@@ -65,9 +65,10 @@ test('v0.3 self-check installs on turn-stopping, observes by default, and steers
     await apply({ tools: { register: () => {}, guard: () => () => {} }, skills: { register: () => {} },
       on: (event, listener) => { if (event === 'agent/turn-stopping') turnListeners.push(listener); return () => {}; },
       effect: setup => setup(), inject: () => {} }, { configPath });
-    assert.equal(turnListeners.length, 1);
+    assert.equal(turnListeners.length, 2, 'self-check and task-completion both listen on turn-stopping');
     const agent = { steer: message => steered.push(message),
       session: { id: 'check-session', deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'final answer' }] }] } };
+    // The self-check is the first turn-stopping listener registered.
     await turnListeners[0]({ agent, turn: 1, signal: AbortSignal.timeout(1000) });
     return steered;
   };
@@ -155,7 +156,7 @@ test('narrowing in observe mode never restricts the agent tools', async () => {
 
 test('per-feature switch off skips a decision point entirely', async () => {
   const path = join(directory, 'features-off.json');
-  await saveConfig({ apiKey: 'local-test-key', features: { gate: false, check: false, narrow: false } }, path);
+  await saveConfig({ apiKey: 'local-test-key', features: { gate: false, check: false, narrow: false, complete: false } }, path);
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error('disabled features must not call the backend'); };
   const preExecute = [];
@@ -173,15 +174,46 @@ test('per-feature switch off skips a decision point entirely', async () => {
     // gate off: a dangerous call passes straight through next() without a backend call
     const exec = { name: 'shell', arguments: { command: 'rm -rf /tmp/build' }, callId: 'c', signal: AbortSignal.timeout(1000), agent: { session: { id: 'off-session' } } };
     assert.deepEqual(await preExecute[0](exec, async () => ({ kind: 'allow' })), { kind: 'allow' });
-    // check off: turn-stopping returns without scoring
-    const agent = { session: { id: 'off-session', deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'done' }] }] } };
-    await turnStopping[0]({ agent, turn: 1, signal: AbortSignal.timeout(1000) });
+    // check off + complete off: both turn-stopping listeners return without a backend call
+    const agent = { session: { id: 'off-session', deriveMessages: () => [
+      { role: 'user', content: [{ type: 'text', text: '1. 改配置\n2. 跑测试' }] },
+      { role: 'tool', name: 'bash', content: [{ type: 'text', text: 'ok' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+    ] } };
+    for (const listener of turnStopping) await listener({ agent, turn: 1, signal: AbortSignal.timeout(1000) });
     // narrow off: pre-step advances without restricting
     let advanced = false;
     const narrowAgent = { session: { id: 'off-session' }, ctx: { tools: { restrict: () => { throw new Error('must not restrict'); } } } };
     await preStep[0]({ agent: narrowAgent, turn: 1, step: 0, signal: AbortSignal.timeout(1000),
       messages: [{ role: 'user', content: [{ type: 'text', text: 'do work' }] }] }, async () => { advanced = true; return { kind: 'enter', messages: [] }; });
     assert.equal(advanced, true);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('v0.5 task-completion installs on turn-stopping and records a per-condition verdict', async () => {
+  const path = join(directory, 'complete-config.json');
+  await saveConfig({ apiKey: 'local-test-key' }, path);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ model: 'jev-latest', answers: {
+    c0: { type: 'choice', choice: 'satisfied', confidence: 0.9, probabilities: { satisfied: 1, unsatisfied: 0, insufficient_evidence: 0 } },
+    c1: { type: 'choice', choice: 'unsatisfied', confidence: 0.9, probabilities: { satisfied: 0, unsatisfied: 1, insufficient_evidence: 0 } },
+  } }));
+  const turnListeners = [];
+  try {
+    await apply({ tools: { register: () => {}, guard: () => () => {} }, skills: { register: () => {} },
+      on: (event, listener) => { if (event === 'agent/turn-stopping') turnListeners.push(listener); return () => {}; },
+      effect: setup => setup(), inject: () => {} }, { configPath: path });
+    assert.equal(turnListeners.length, 2, 'self-check and task-completion both listen');
+    const agent = { session: { id: 'complete-session', deriveMessages: () => [
+      { role: 'user', content: [{ type: 'text', text: '1. 改配置\n2. 跑测试' }] },
+      { role: 'tool', name: 'bash', content: [{ type: 'text', text: 'ok' }] },
+      { role: 'assistant', content: [{ type: 'text', text: '都做完了' }] },
+    ] } };
+    // The task-completion listener is the second turn-stopping listener registered.
+    const result = await turnListeners[1]({ agent, turn: 1, signal: AbortSignal.timeout(1000) });
+    assert.equal(result.evaluated, true);
+    assert.equal(result.satisfied, 1);
+    assert.equal(result.unsatisfied, 1);
   } finally { globalThis.fetch = realFetch; }
 });
 

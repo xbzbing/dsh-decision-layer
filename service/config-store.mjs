@@ -106,9 +106,27 @@ function validNarrow(value) {
   return narrow;
 }
 
-// Per-feature enable flags for the three decision points. Every flag defaults to
+// Per-feature enable flags for the decision points. Every flag defaults to
 // enabled; only an explicit `false` disables its decision point.
-export const FEATURE_KEYS = Object.freeze(['gate', 'check', 'narrow']);
+export const FEATURE_KEYS = Object.freeze(['gate', 'check', 'narrow', 'complete']);
+
+// Task-completion checking settings: observe-only by default; steer opts into a
+// single supplemental prompt on low completion. minConditions is the minimum
+// number of explicit conditions a turn must have for the check to run at all.
+function validComplete(value) {
+  if (!safeObject(value)) return undefined;
+  if (Object.keys(value).some(key => !['mode', 'minConditions'].includes(key))) throw new Error('Invalid task-completion settings');
+  const complete = {};
+  if (value.mode !== undefined) {
+    if (value.mode !== 'observe' && value.mode !== 'steer') throw new Error('Invalid task-completion settings');
+    complete.mode = value.mode;
+  }
+  if (value.minConditions !== undefined) {
+    if (!Number.isSafeInteger(value.minConditions) || value.minConditions < 2 || value.minConditions > 20) throw new Error('Invalid task-completion settings');
+    complete.minConditions = value.minConditions;
+  }
+  return complete;
+}
 
 function validFeatures(value) {
   if (!safeObject(value)) return undefined;
@@ -138,6 +156,7 @@ function view(stored) {
   if (stored.dangerRules !== undefined) result.dangerRules = validRules(stored.dangerRules);
   if (stored.checkSettings !== undefined) result.checkSettings = validCheck(stored.checkSettings);
   if (stored.narrowSettings !== undefined) result.narrowSettings = validNarrow(stored.narrowSettings);
+  if (stored.completeSettings !== undefined) result.completeSettings = validComplete(stored.completeSettings);
   if (stored.features !== undefined) result.features = validFeatures(stored.features);
   return result;
 }
@@ -158,12 +177,13 @@ export async function resolveConfig({ path = configPath(), env = process.env } =
   if (stored.dangerRules !== undefined) resolved.dangerRules = validRules(stored.dangerRules);
   if (stored.checkSettings !== undefined) resolved.checkSettings = validCheck(stored.checkSettings);
   if (stored.narrowSettings !== undefined) resolved.narrowSettings = validNarrow(stored.narrowSettings);
+  if (stored.completeSettings !== undefined) resolved.completeSettings = validComplete(stored.completeSettings);
   if (stored.features !== undefined) resolved.features = validFeatures(stored.features);
   return resolved;
 }
 
 export async function saveConfig(input, path = configPath()) {
-  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'checkSettings', 'narrowSettings', 'features'].includes(key))) {
+  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'checkSettings', 'narrowSettings', 'completeSettings', 'features'].includes(key))) {
     throw new Error('Invalid configuration fields');
   }
   for (const key of ['url', 'apiKey', 'model', 'confirmHttpUrl']) {
@@ -179,6 +199,7 @@ export async function saveConfig(input, path = configPath()) {
   const dangerRules = input.dangerRules === undefined ? previous.dangerRules : validRules(input.dangerRules);
   const checkSettings = input.checkSettings === undefined ? previous.checkSettings : validCheck(input.checkSettings);
   const narrowSettings = input.narrowSettings === undefined ? previous.narrowSettings : validNarrow(input.narrowSettings);
+  const completeSettings = input.completeSettings === undefined ? previous.completeSettings : validComplete(input.completeSettings);
   const features = input.features === undefined ? previous.features : validFeatures(input.features);
   const confirmed = url.startsWith('http://') && input.confirmHttpUrl !== undefined &&
     checkedUrl(safeText(input.confirmHttpUrl)) === url;
@@ -189,6 +210,7 @@ export async function saveConfig(input, path = configPath()) {
   if (dangerRules !== undefined) next.dangerRules = dangerRules;
   if (checkSettings !== undefined) next.checkSettings = checkSettings;
   if (narrowSettings !== undefined) next.narrowSettings = narrowSettings;
+  if (completeSettings !== undefined) next.completeSettings = completeSettings;
   if (features !== undefined) next.features = features;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;

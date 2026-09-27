@@ -94,16 +94,29 @@ test('narrowing maxCandidates is validated, persisted, and range-checked', async
   await assert.rejects(saveConfig({ narrowSettings: { maxCandidates: 12.5 } }, capFile), /narrowing/i);
 });
 
+test('task-completion settings are validated, persisted, and resolved', async () => {
+  const completeFile = join(temporary, 'complete.json');
+  const saved = await saveConfig({ apiKey: 'k', completeSettings: { mode: 'steer', minConditions: 3 } }, completeFile);
+  assert.deepEqual(saved.completeSettings, { mode: 'steer', minConditions: 3 });
+  assert.deepEqual((await resolveConfig({ path: completeFile, env: {} })).completeSettings, { mode: 'steer', minConditions: 3 });
+  await assert.rejects(saveConfig({ completeSettings: { mode: 'loud' } }, completeFile), /task-completion/i);
+  await assert.rejects(saveConfig({ completeSettings: { minConditions: 1 } }, completeFile), /task-completion/i);
+  await assert.rejects(saveConfig({ completeSettings: { minConditions: 21 } }, completeFile), /task-completion/i);
+  await assert.rejects(saveConfig({ completeSettings: { unknown: 1 } }, completeFile), /task-completion/i);
+  assert.deepEqual((await saveConfig({ completeSettings: {} }, completeFile)).completeSettings, {});
+});
+
 test('per-feature switches are validated, persisted, and default to enabled', async () => {
   const featureFile = join(temporary, 'features.json');
-  const saved = await saveConfig({ apiKey: 'k', features: { gate: false, check: true, narrow: false } }, featureFile);
-  assert.deepEqual(saved.features, { gate: false, check: true, narrow: false });
-  assert.deepEqual((await resolveConfig({ path: featureFile, env: {} })).features, { gate: false, check: true, narrow: false });
+  const saved = await saveConfig({ apiKey: 'k', features: { gate: false, check: true, narrow: false, complete: false } }, featureFile);
+  assert.deepEqual(saved.features, { gate: false, check: true, narrow: false, complete: false });
+  assert.deepEqual((await resolveConfig({ path: featureFile, env: {} })).features, { gate: false, check: true, narrow: false, complete: false });
   await assert.rejects(saveConfig({ features: { gate: 'yes' } }, featureFile), /feature/i);
   await assert.rejects(saveConfig({ features: { unknown: true } }, featureFile), /feature/i);
   assert.equal(featureEnabled(undefined, 'gate'), true, 'unset defaults to enabled');
   assert.equal(featureEnabled({ gate: false }, 'gate'), false);
   assert.equal(featureEnabled({ gate: false }, 'check'), true, 'other features stay enabled');
+  assert.equal(featureEnabled(undefined, 'complete'), true, 'completion defaults to enabled');
 });
 
 test('invalid URLs are rejected and missing config has a safe display view', async () => {

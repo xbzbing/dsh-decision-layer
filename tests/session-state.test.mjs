@@ -59,6 +59,30 @@ test('narrowing records applied passes and dropped tool counts separately from t
   assert.throws(() => sessions.recordNarrow('one', 'bogus'), /narrowing/i);
 });
 
+test('task completion records three-state tallies separately, error is a failure not unsatisfied', () => {
+  const sessions = createSessionState();
+  sessions.recordComplete('one', 'ok', { satisfied: 2, insufficient: 1 });
+  sessions.recordComplete('one', 'unsatisfied', { satisfied: 1, unsatisfied: 1, steered: true });
+  sessions.recordComplete('one', 'error');
+  const snapshot = sessions.snapshot('one');
+  assert.deepEqual(snapshot.complete, { attempts: 3, failures: 1, unsatisfied: 1, satisfied: 3, insufficient: 1, steered: 1 });
+  assert.equal(snapshot.gate, undefined);
+  assert.equal(snapshot.attempts, 3);
+  assert.equal(snapshot.failures, 1, 'only the error counts as a failure');
+  assert.throws(() => sessions.recordComplete('one', 'bogus'), /task-completion/i);
+});
+
+test('complete log entries keep condition counts and steer flag', () => {
+  const sessions = createSessionState();
+  sessions.log('one', { kind: 'complete', outcome: 'unsatisfied', conditions: 3, satisfied: 1, unsatisfied: 1, insufficient: 1, steered: true });
+  const entry = sessions.snapshot('one').log.at(-1);
+  assert.equal(entry.kind, 'complete');
+  assert.equal(entry.conditions, 3);
+  assert.equal(entry.unsatisfied, 1);
+  assert.equal(entry.insufficient, 1);
+  assert.equal(entry.steered, true);
+});
+
 test('narrow log entries keep mode and dropped count', () => {
   const sessions = createSessionState();
   sessions.log('one', { kind: 'narrow', outcome: 'applied', mode: 'enforce', dropped: 3 });
@@ -66,6 +90,20 @@ test('narrow log entries keep mode and dropped count', () => {
   assert.equal(entry.kind, 'narrow');
   assert.equal(entry.mode, 'enforce');
   assert.equal(entry.dropped, 3);
+});
+
+test('every decision record carries a stable unique id shared by panel and sink', () => {
+  const sunk = [];
+  const sessions = createSessionState({ onLog: entry => sunk.push(entry) });
+  sessions.log('one', { kind: 'gate', outcome: 'deny', tool: 'bash' });
+  sessions.log('one', { kind: 'check', outcome: 'low', score: 0 });
+  const log = sessions.snapshot('one').log;
+  assert.ok(typeof log[0].id === 'string' && log[0].id.length >= 8, 'first record has a string id');
+  assert.ok(typeof log[1].id === 'string' && log[1].id.length >= 8, 'second record has a string id');
+  assert.notEqual(log[0].id, log[1].id, 'ids are unique per record');
+  // The in-memory panel copy and the persisted sink record share the same id.
+  assert.equal(sunk[0].id, log[0].id, 'sink record id matches the panel record id');
+  assert.equal(sunk[1].id, log[1].id);
 });
 
 test('narrow log keeps the optional-candidate count for the too-many reason', () => {

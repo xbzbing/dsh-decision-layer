@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 function sessionKey(value) {
   if (typeof value !== 'string' || !value.trim() || value.length > 512) throw new Error('Invalid session ID');
   return value.trim();
@@ -7,7 +9,8 @@ function emptyState() {
   return { enabled: true, attempts: 0, failures: 0,
     gate: { attempts: 0, failures: 0, ask: 0, deny: 0, allow: 0, actual: { allow: 0, deny: 0, error: 0 } },
     check: { attempts: 0, failures: 0, low: 0 },
-    narrow: { attempts: 0, failures: 0, applied: 0, dropped: 0 }, log: [] };
+    narrow: { attempts: 0, failures: 0, applied: 0, dropped: 0 },
+    complete: { attempts: 0, failures: 0, unsatisfied: 0, satisfied: 0, insufficient: 0, steered: 0 }, log: [] };
 }
 
 function safeTool(value) {
@@ -45,6 +48,7 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       if (state.gate.attempts > 0) value.gate = { ...state.gate, actual: { ...state.gate.actual } };
       if (state.check.attempts > 0) value.check = { ...state.check };
       if (state.narrow.attempts > 0) value.narrow = { ...state.narrow };
+      if (state.complete.attempts > 0) value.complete = { ...state.complete };
       if (state.log.length > 0) value.log = state.log.map(entry => ({ ...entry }));
       return value;
     },
@@ -79,10 +83,27 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
         if (Number.isSafeInteger(dropped) && dropped > 0) state.narrow.dropped += dropped;
       }
     },
+    // Task-completion checking. `ok`/`unsatisfied` are real evaluations; `error`
+    // is an unevaluated failure counted as a failure, never as "unsatisfied".
+    // The per-condition three-state tallies come from `detail`.
+    recordComplete(id, outcome, detail = {}) {
+      if (!['ok', 'unsatisfied', 'error'].includes(outcome)) throw new Error('Invalid task-completion outcome');
+      const state = writable(id);
+      state.attempts++;
+      state.complete.attempts++;
+      if (outcome === 'error') { state.failures++; state.complete.failures++; return; }
+      if (Number.isSafeInteger(detail.satisfied) && detail.satisfied > 0) state.complete.satisfied += detail.satisfied;
+      if (Number.isSafeInteger(detail.unsatisfied) && detail.unsatisfied > 0) state.complete.unsatisfied += detail.unsatisfied;
+      if (Number.isSafeInteger(detail.insufficient) && detail.insufficient > 0) state.complete.insufficient += detail.insufficient;
+      if (detail.steered === true) state.complete.steered++;
+    },
     log(id, entry) {
       if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Invalid log entry');
-      if (!['gate', 'check', 'narrow'].includes(entry.kind)) throw new Error('Invalid log entry');
-      const record = { at: Date.now(), kind: entry.kind, outcome: typeof entry.outcome === 'string' ? entry.outcome.slice(0, 32) : '' };
+      if (!['gate', 'check', 'narrow', 'complete'].includes(entry.kind)) throw new Error('Invalid log entry');
+      // Every decision record carries a stable unique id, generated here so the
+      // in-memory panel copy and the persisted sink record share the same id.
+      // Later annotation events reference this id to attribute a rating to one decision.
+      const record = { id: randomUUID(), at: Date.now(), kind: entry.kind, outcome: typeof entry.outcome === 'string' ? entry.outcome.slice(0, 32) : '' };
       const tool = safeTool(entry.tool);
       if (tool) record.tool = tool;
       if (typeof entry.suggestion === 'string' && entry.suggestion) record.suggestion = entry.suggestion.slice(0, 16);
@@ -94,6 +115,11 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       if (Number.isSafeInteger(entry.dropped) && entry.dropped >= 0) record.dropped = entry.dropped;
       if (Number.isSafeInteger(entry.kept) && entry.kept >= 0) record.kept = entry.kept;
       if (Number.isSafeInteger(entry.candidates) && entry.candidates >= 0) record.candidates = entry.candidates;
+      if (Number.isSafeInteger(entry.conditions) && entry.conditions >= 0) record.conditions = entry.conditions;
+      if (Number.isSafeInteger(entry.satisfied) && entry.satisfied >= 0) record.satisfied = entry.satisfied;
+      if (Number.isSafeInteger(entry.unsatisfied) && entry.unsatisfied >= 0) record.unsatisfied = entry.unsatisfied;
+      if (Number.isSafeInteger(entry.insufficient) && entry.insufficient >= 0) record.insufficient = entry.insufficient;
+      if (entry.steered === true) record.steered = true;
       if (Array.isArray(entry.tools)) {
         const names = entry.tools.filter(name => typeof name === 'string' && name.trim()).slice(0, 12).map(name => name.trim().slice(0, 64));
         if (names.length > 0) record.tools = names;
