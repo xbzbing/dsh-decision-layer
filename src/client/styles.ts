@@ -2,6 +2,16 @@ const css = `
 .decision-trigger{position:relative;display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:14rem;border:none;border-radius:var(--dsw-radius-sm,6px);background:0 0;color:var(--dsw-alias-label-tertiary,#77818b);padding:1px 8px;font:inherit;font-size:calc(var(--dsh-content-font-size-secondary,13px) - 1px);font-weight:400;line-height:calc(20px + var(--dsh-content-font-delta-secondary,0px));font-variant-numeric:tabular-nums;white-space:nowrap;cursor:pointer}
 .decision-trigger:hover,.decision-trigger[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover,#eef1f3);color:var(--dsw-alias-label-secondary,#59636e)}
 .decision-trigger-icon{flex:none;color:inherit}
+/* Quality-trend severity on the radar-triangle icon. Only the icon is tinted, via
+   a CSS variable so light/dark are one pair of overrides. Multimodal: the tooltip
+   text and the icon shape carry the meaning too, not color alone. First version
+   is color-only; a pulse animation is added later behind prefers-reduced-motion. */
+.decision-trend-warn .decision-trigger-icon{color:var(--decision-trend-warn,#c98a1e)}
+.decision-trend-severe .decision-trigger-icon{color:var(--decision-trend-severe,#c0392b)}
+@media (prefers-color-scheme:dark){
+  .decision-trend-warn .decision-trigger-icon{color:var(--decision-trend-warn,#e0a83e)}
+  .decision-trend-severe .decision-trigger-icon{color:var(--decision-trend-severe,#f0645a)}
+}
 .decision-trigger-text{min-width:0;flex:0 1 auto;text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
 .decision-trigger-text b{color:inherit;font-weight:500;font-variant-numeric:tabular-nums}
 .decision-trigger:focus-visible,.decision-dialog button:focus-visible,.decision-dialog input:focus-visible,.decision-config input:focus-visible,.decision-config button:focus-visible{outline:2px solid #1f5d50;outline-offset:2px}

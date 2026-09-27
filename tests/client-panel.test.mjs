@@ -170,6 +170,35 @@ test('task-completion switch and steer post the chosen state on advanced save', 
   assert.equal(savedBody.features.complete, true, 'the completion feature stays on');
 });
 
+test('trigger icon carries the quality-trend severity class from the metrics', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 4, failures: 0,
+      check: { attempts: 4, failures: 0, low: 3, trend: { run: 5, severity: 'severe' } } });
+    if (String(url).includes('/log?')) return envelope({ entries: [] });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'trend', t: translate }));
+  const button = view.getByRole('button', { name: /决策层/ });
+  await waitFor(() => assert.ok(button.className.includes('decision-trend-severe'), 'severe trend tints the trigger'));
+  assert.ok(button.getAttribute('title'), 'a hover explanation is present in severe state');
+});
+
+test('trigger icon is normal severity when there is no trend data', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: false, attempts: 0, failures: 0 });
+    if (String(url).includes('/log?')) return envelope({ entries: [] });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'trend-normal', t: translate }));
+  const button = view.getByRole('button', { name: /决策层/ });
+  await waitFor(() => assert.ok(button.className.includes('decision-trend-normal')));
+  assert.equal(button.getAttribute('title'), null, 'normal state has no alarm tooltip');
+});
+
 test('completion log entry shows three-state tally and result', async () => {
   globalThis.fetch = async url => {
     if (String(url).includes('/session?')) return envelope({ enabled: true });

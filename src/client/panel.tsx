@@ -4,7 +4,7 @@ import type { TranslationKey } from './i18n.js';
 
 const api = '/plugins/dsh-decision-layer/api';
 interface GateMetrics { attempts: number; failures: number; ask: number; deny: number; allow: number; actual: { allow: number; deny: number; error: number } }
-interface CheckMetrics { attempts: number; failures: number; low: number }
+interface CheckMetrics { attempts: number; failures: number; low: number; trend?: { run: number; severity: 'normal' | 'warn' | 'severe' } }
 interface NarrowMetrics { attempts: number; failures: number; applied: number; dropped: number }
 interface CompleteMetrics { attempts: number; failures: number; unsatisfied: number; satisfied: number; insufficient: number; steered: number }
 interface LogEntry { at: number; kind: 'gate' | 'check' | 'narrow' | 'complete'; outcome: string; tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number; mode?: string; dropped?: number; kept?: number; candidates?: number; tools?: string[]; conditions?: number; satisfied?: number; unsatisfied?: number; insufficient?: number; steered?: boolean }
@@ -166,6 +166,10 @@ function SessionPanel({ sessionId, t }: Props) {
   const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : status === 'checking' ? t('statusChecking') : t('statusIdle');
 
   const attempts = metrics?.attempts ?? 0;
+  // Quality-trend severity from the self-check run; drives the radar-triangle
+  // icon color (normal grey → warn amber → severe red). Absent trend = normal.
+  const severity = metrics?.check?.trend?.severity ?? 'normal';
+  const trendTitle = severity === 'severe' ? t('trendSevereHint') : severity === 'warn' ? t('trendWarnHint') : undefined;
 
   // Per-card rates exclude fallback failures from the denominator, matching the
   // ROADMAP metric definitions: self-check pass rate = passed / valid results;
@@ -179,10 +183,10 @@ function SessionPanel({ sessionId, t }: Props) {
     ? Math.round((metrics.narrow.applied / narrowValid) * 100) : null;
 
   return <>
-    <button ref={trigger} className="decision-trigger" type="button" aria-haspopup="dialog" aria-expanded={open} aria-busy={enabled === null} aria-label={t('button')} onClick={() => setOpen(true)}>
-      <svg className="decision-trigger-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <path d="M8 1.5 2 4.2v3.6c0 3.3 2.3 5.6 6 6.7 3.7-1.1 6-3.4 6-6.7V4.2L8 1.5Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
-        <path d="m5.6 8 1.7 1.8L10.6 6.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <button ref={trigger} className={`decision-trigger decision-trend-${severity}`} type="button" aria-haspopup="dialog" aria-expanded={open} aria-busy={enabled === null} aria-label={t('button')} title={trendTitle} onClick={() => setOpen(true)}>
+      <svg className="decision-trigger-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3"/>
+        <path d="M8 4.6 11.3 11H4.7L8 4.6Z" fill="currentColor" stroke="none"/>
       </svg>
       <span className="decision-trigger-text">
         {t('triggerDecisions')} <b>{attempts}</b>
