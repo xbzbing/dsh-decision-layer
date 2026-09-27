@@ -4,11 +4,19 @@
 
 DeepSeek Harness（DSH）的结构化裁决插件。它把有明确判断标准的问题交给同协议的裁决后端，供 agent 在需要时使用，并在 agent loop 上接入危险门控、产出自检、工具收窄和防循环等自动介入。
 
-> v0.1–v0.4 都是内部里程碑，尚未发布 npm 包或 GitHub Release。功能和进度以 [ROADMAP.md](<ROADMAP.md>) 为准。
+> **0.4.0 是体验版。** 插件功能已可用，但裁决介入能带来多少实际价值仍在探索中——各决策点的阈值都是未经验证的启发式默认值，建议先以观察心态体验，别当成经过验证的效果保证。功能与后续进度以 [ROADMAP.md](<ROADMAP.md>) 为准。
 
 ## 安装
 
-尚无 npm 发布版本。仓库已包含构建产物 `lib/client.js`，可直接从 GitHub 安装（不带版本，跟随分支或 tag）：
+已发布到 npm 与 GitHub。
+
+从 npm 安装（补 `@latest`）：
+
+```sh
+dsh plugin --profile web add dsh-decision-layer@latest
+```
+
+或从 GitHub 安装（不带版本，跟随分支或 tag；仓库已含构建产物 `lib/client.js`）：
 
 ```sh
 dsh plugin --profile web add github:xbzbing/dsh-decision-layer
@@ -42,4 +50,4 @@ dsh plugin --profile web add file:/绝对路径/dsh-decision-layer
 
 ## 开发
 
-服务端使用 Node.js `>=20.11`（`.mjs`，无需构建）；客户端用 TypeScript + esbuild 构建。`npm test` 跑本地测试，`npm run build:client` 生成 `lib/client.js`。改动客户端后需重建并连同 `lib/client.js` 一起提交，否则 GitHub 安装拿到的是旧 bundle。首次公开发布的版本与范围另行确认。
+服务端使用 Node.js `>=20.11`（`.mjs`，无需构建）；客户端用 TypeScript + esbuild 构建。`npm test` 跑本地测试，`npm run build:client` 生成 `lib/client.js`。改动客户端后需重建并连同 `lib/client.js` 一起提交，否则 GitHub 安装拿到的是旧 bundle。0.4.0 为体验版：介入能力已可用，但实际价值与阈值仍在探索，欢迎反馈决策日志观察到的误判与体感。
