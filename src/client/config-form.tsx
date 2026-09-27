@@ -5,8 +5,9 @@ import type { TranslationKey } from './i18n.js';
 const api = '/plugins/dsh-decision-layer/api';
 interface CheckSettings { mode: 'observe' | 'steer'; lowScoreThreshold: number }
 interface NarrowSettings { mode: 'observe' | 'enforce'; threshold: number; keepPrefixes?: string[]; maxCandidates?: number }
-interface Features { gate?: boolean; check?: boolean; narrow?: boolean }
-interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string; checkSettings?: CheckSettings; narrowSettings?: NarrowSettings; features?: Features }
+interface CompleteSettings { mode: 'observe' | 'steer'; minConditions?: number }
+interface Features { gate?: boolean; check?: boolean; narrow?: boolean; complete?: boolean }
+interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string; checkSettings?: CheckSettings; narrowSettings?: NarrowSettings; completeSettings?: CompleteSettings; features?: Features }
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
 export interface ConfigFormProps { t: Translate<TranslationKey>; fetchFn?: typeof fetch }
 
@@ -82,6 +83,8 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   const [gateOn, setGateOn] = useState(true);
   const [checkOn, setCheckOn] = useState(true);
   const [narrowOn, setNarrowOn] = useState(true);
+  const [completeOn, setCompleteOn] = useState(true);
+  const [completeMode, setCompleteMode] = useState<'observe' | 'steer'>('observe');
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   // Two independent dirty flags: the advanced section (features + self-check +
@@ -98,6 +101,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     setGateOn(features?.gate !== false);
     setCheckOn(features?.check !== false);
     setNarrowOn(features?.narrow !== false);
+    setCompleteOn(features?.complete !== false);
   };
 
   // Reflect a saved config back into the form and clear both dirty flags.
@@ -105,6 +109,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     setConfig(value);
     setCheckMode(value.checkSettings?.mode ?? 'observe');
     setNarrowMode(value.narrowSettings?.mode ?? 'enforce');
+    setCompleteMode(value.completeSettings?.mode ?? 'observe');
     setKeepPrefixes(prefixesText(value.narrowSettings));
     setMaxCandidates(String(maxCandidatesOf(value.narrowSettings)));
     setThreshold(String(thresholdOf(value.narrowSettings)));
@@ -134,7 +139,8 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     try {
       const value = await request<Config>('config', fetchFn, { method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ checkSettings: { mode: checkMode }, narrowSettings: { mode: narrowMode, keepPrefixes: parsePrefixes(keepPrefixes), maxCandidates: cap, threshold: thresh },
-          features: { gate: gateOn, check: checkOn, narrow: narrowOn } }) });
+          completeSettings: { mode: completeMode },
+          features: { gate: gateOn, check: checkOn, narrow: narrowOn, complete: completeOn } }) });
       applyConfig(value); setAdvancedDirty(false); setMessage({ text: t('saved'), ok: true });
     } catch { setMessage({ text: t('error'), ok: false }); }
     finally { setBusy(false); }
@@ -192,6 +198,9 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
         <Toggle label={t('featureNarrow')} checked={narrowOn} disabled={!ready}
           onChange={next => { setNarrowOn(next); setAdvancedDirty(true); }} />
         <p className="decision-muted">{t('featureNarrowHint')}</p>
+        <Toggle label={t('featureComplete')} checked={completeOn} disabled={!ready}
+          onChange={next => { setCompleteOn(next); setAdvancedDirty(true); }} />
+        <p className="decision-muted">{t('featureCompleteHint')}</p>
       </div>
     </details>
     <details className="decision-collapse">
@@ -207,6 +216,9 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
             <Toggle label={t('narrowObserveLabel')} checked={narrowMode === 'observe'} disabled={!ready || !narrowOn}
               onChange={next => { setNarrowMode(next ? 'observe' : 'enforce'); setAdvancedDirty(true); }} />
             <p className="decision-muted">{t('narrowHint')}</p>
+            <Toggle label={t('completeSteer')} checked={completeMode === 'steer'} disabled={!ready || !completeOn}
+              onChange={next => { setCompleteMode(next ? 'steer' : 'observe'); setAdvancedDirty(true); }} />
+            <p className="decision-muted">{t('completeHint')}</p>
           </div>
           <div className="decision-field-block">
             <span className="decision-subhead">{t('advancedParams')}</span>

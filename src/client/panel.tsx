@@ -6,8 +6,9 @@ const api = '/plugins/dsh-decision-layer/api';
 interface GateMetrics { attempts: number; failures: number; ask: number; deny: number; allow: number; actual: { allow: number; deny: number; error: number } }
 interface CheckMetrics { attempts: number; failures: number; low: number }
 interface NarrowMetrics { attempts: number; failures: number; applied: number; dropped: number }
-interface LogEntry { at: number; kind: 'gate' | 'check' | 'narrow'; outcome: string; tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number; mode?: string; dropped?: number; kept?: number; candidates?: number; tools?: string[] }
-interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics; narrow?: NarrowMetrics }
+interface CompleteMetrics { attempts: number; failures: number; unsatisfied: number; satisfied: number; insufficient: number; steered: number }
+interface LogEntry { at: number; kind: 'gate' | 'check' | 'narrow' | 'complete'; outcome: string; tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number; mode?: string; dropped?: number; kept?: number; candidates?: number; tools?: string[]; conditions?: number; satisfied?: number; unsatisfied?: number; insufficient?: number; steered?: boolean }
+interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics; narrow?: NarrowMetrics; complete?: CompleteMetrics }
 interface Session { enabled: boolean; capacityExceeded?: boolean }
 interface Probe { connected: boolean; model?: string; effectiveUrl?: string; reason?: string }
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
@@ -143,8 +144,23 @@ function SessionPanel({ sessionId, t }: Props) {
     return <>{label} · <span className="decision-log-verdict">{t('narrowDropped')} {dropped}{kept !== undefined ? ` / ${t('narrowKeptCount')} ${kept}` : ''}</span>{names ? <span className="decision-log-detail"> · {names}{overflow}</span> : null}{guard}{modeTag}</>;
   };
 
+  const renderComplete = (entry: LogEntry) => {
+    const label = <span>{t('logComplete')}</span>;
+    if (entry.outcome === 'error') return <>{label} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
+    const result = entry.outcome === 'unsatisfied' ? t('completeResultUnsatisfied') : t('completeResultOk');
+    const parts: string[] = [];
+    if (typeof entry.satisfied === 'number') parts.push(`${t('completeSatisfied')} ${entry.satisfied}`);
+    if (typeof entry.unsatisfied === 'number' && entry.unsatisfied > 0) parts.push(`${t('completeUnsatisfied')} ${entry.unsatisfied}`);
+    if (typeof entry.insufficient === 'number' && entry.insufficient > 0) parts.push(`${t('completeInsufficient')} ${entry.insufficient}`);
+    const tally = parts.length > 0 ? <span className="decision-log-detail"> · {parts.join(' / ')}</span> : null;
+    const steer = entry.steered ? <span className="decision-log-detail"> · {t('completeSteered')}</span> : null;
+    return <>{label} · <span className="decision-log-verdict">{result}</span>{typeof entry.conditions === 'number' ? <span className="decision-log-detail"> · {t('completeConditions')} {entry.conditions}</span> : null}{tally}{steer}</>;
+  };
+
   const outcomeTagOf = (entry: LogEntry) => entry.kind === 'narrow'
     ? (entry.outcome === 'error' ? 'error' : entry.outcome === 'applied' ? 'ok' : 'ok')
+    : entry.kind === 'complete'
+    ? (entry.outcome === 'error' ? 'error' : entry.outcome === 'unsatisfied' ? 'warn' : 'ok')
     : outcomeTag(entry);
 
   const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : status === 'checking' ? t('statusChecking') : t('statusIdle');
@@ -192,7 +208,7 @@ function SessionPanel({ sessionId, t }: Props) {
           <button type="button" className="decision-status-recheck" disabled={status === 'checking'} onClick={() => checkStatus(() => true)}>{t('recheck')}</button>
         </div></section>
       <section><h3>{t('metrics')}</h3>
-        {!metrics?.gate && !metrics?.check && !metrics?.narrow ? <p className="decision-empty" role="status">{t('empty')}</p> : <div className="decision-cards">
+        {!metrics?.gate && !metrics?.check && !metrics?.narrow && !metrics?.complete ? <p className="decision-empty" role="status">{t('empty')}</p> : <div className="decision-cards">
           {metrics.gate && <article className="decision-card decision-card-wide">
             <header className="decision-card-head">
               <span className="decision-card-title">{t('cardGate')}</span>
@@ -237,12 +253,26 @@ function SessionPanel({ sessionId, t }: Props) {
               <span>{t('narrowApplyRate')}<b>{narrowApplyRate === null ? t('rateNa') : `${narrowApplyRate}%`}</b></span>
             </footer>
           </article>}
+          {metrics.complete && <article className="decision-card">
+            <header className="decision-card-head">
+              <span className="decision-card-title">{t('cardComplete')}</span>
+              <span className="decision-card-total">{metrics.complete.attempts}<small>{t('cardTimes')}</small></span>
+            </header>
+            <div className="decision-card-stats">
+              <div className="decision-stat"><span className="decision-stat-num">{metrics.complete.satisfied}</span><span className="decision-stat-label">{t('completeSatisfied')}</span></div>
+              <div className="decision-stat"><span className="decision-stat-num decision-stat-warn">{metrics.complete.unsatisfied}</span><span className="decision-stat-label">{t('completeUnsatisfied')}</span></div>
+              <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.complete.insufficient}</span><span className="decision-stat-label">{t('completeInsufficient')}</span></div>
+            </div>
+            <footer className="decision-card-foot decision-card-rate">
+              <span>{t('failures')}<b>{metrics.complete.failures}</b></span>
+            </footer>
+          </article>}
         </div>}</section>
       <section><h3>{t('log')}</h3>
         {log.length === 0 ? <p className="decision-empty" role="status">{t('logEmpty')}</p> : <ol className="decision-log">
           {log.slice().reverse().map((entry, index) => <li key={`${entry.at}-${index}`} className={`decision-log-item decision-log-${outcomeTagOf(entry)}`}>
             <span className="decision-log-time">{time(entry.at)}</span>
-            <span className="decision-log-body">{entry.kind === 'gate' ? renderGate(entry) : entry.kind === 'narrow' ? renderNarrow(entry) : renderCheck(entry)}</span>
+            <span className="decision-log-body">{entry.kind === 'gate' ? renderGate(entry) : entry.kind === 'narrow' ? renderNarrow(entry) : entry.kind === 'complete' ? renderComplete(entry) : renderCheck(entry)}</span>
           </li>)}
         </ol>}</section>
       {message && <p role="status" className="decision-message decision-message-warn">{message}</p>}

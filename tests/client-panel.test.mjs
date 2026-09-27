@@ -154,6 +154,42 @@ test('config form reflects steer mode and posts the chosen mode on save', async 
   assert.equal(savedBody.url, undefined, 'advanced save must not touch backend url');
 });
 
+test('task-completion switch and steer post the chosen state on advanced save', async () => {
+  let savedBody;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', completeSettings: { mode: savedBody.completeSettings.mode }, features: savedBody.features }); }
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', completeSettings: { mode: 'observe' }, features: { complete: true } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  const steer = await view.findByRole('checkbox', { name: '有未满足条件时自动补一轮' });
+  assert.equal(steer.checked, false, 'completion observe mode is unchecked by default');
+  fireEvent.click(steer);
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.equal(savedBody?.completeSettings?.mode, 'steer'));
+  assert.equal(savedBody.features.complete, true, 'the completion feature stays on');
+});
+
+test('completion log entry shows three-state tally and result', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
+      complete: { attempts: 1, failures: 0, satisfied: 1, unsatisfied: 1, insufficient: 0, steered: 0 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { at: 1_700_000_004_000, kind: 'complete', outcome: 'unsatisfied', conditions: 2, satisfied: 1, unsatisfied: 1, insufficient: 0 },
+    ] });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'complete-log', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  // the completion metric card renders (there is both a card title and a log label)
+  await view.findByText('满足');
+  const row = (await view.findByText(/有未满足/)).closest('li');
+  assert.match(row.textContent, /条件 2/);
+  assert.match(row.textContent, /未满足 1/);
+});
+
 test('advanced save posts keep prefixes split on commas or newlines and leaves the backend url alone', async () => {
   let savedBody;
   globalThis.fetch = async (url, init) => {
