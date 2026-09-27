@@ -204,8 +204,9 @@ test('completion log entry shows three-state tally and result', async () => {
     if (String(url).includes('/session?')) return envelope({ enabled: true });
     if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
       complete: { attempts: 1, failures: 0, satisfied: 1, unsatisfied: 1, insufficient: 0, steered: 0 } });
+    if (String(url).includes('/logs?')) return envelope({ totalDecisions: 1, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
     if (String(url).includes('/log?')) return envelope({ entries: [
-      { at: 1_700_000_004_000, kind: 'complete', outcome: 'unsatisfied', conditions: 2, satisfied: 1, unsatisfied: 1, insufficient: 0 },
+      { id: 'k1', at: 1_700_000_004_000, kind: 'complete', outcome: 'unsatisfied', conditions: 2, satisfied: 1, unsatisfied: 1, insufficient: 0 },
     ] });
     if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
     throw new Error(`Unexpected URL ${url}`);
@@ -217,6 +218,48 @@ test('completion log entry shows three-state tally and result', async () => {
   const row = (await view.findByText(/有未满足/)).closest('li');
   assert.match(row.textContent, /条件 2/);
   assert.match(row.textContent, /未满足 1/);
+});
+
+test('a decision log row can be rated and the rating posts to /annotate', async () => {
+  let annotateBody;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
+      gate: { attempts: 1, failures: 0, allow: 0, ask: 0, deny: 1, actual: { allow: 0, deny: 1, error: 0 } } });
+    if (String(url).includes('/logs?')) return envelope({ totalDecisions: 1, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { id: 'dec-1', at: 1_700_000_010_000, kind: 'gate', outcome: 'deny', tool: 'bash', action: 'deny' },
+    ] });
+    if (String(url).endsWith('/annotate') && init?.method === 'POST') { annotateBody = JSON.parse(init.body); return envelope({ ok: true, target: annotateBody.target, rating: annotateBody.rating }); }
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'rate-me', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  const good = await view.findByRole('button', { name: '判对了' });
+  fireEvent.click(good);
+  await waitFor(() => assert.equal(annotateBody?.rating, 'good'));
+  assert.equal(annotateBody.target, 'dec-1', 'the decision id is the annotation target');
+  assert.equal(annotateBody.sessionId, 'rate-me');
+  await waitFor(() => assert.equal(view.getByRole('button', { name: '判对了' }).getAttribute('aria-pressed'), 'true'));
+});
+
+test('persisted ratings from /logs pre-fill the rating state on open', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
+      gate: { attempts: 1, failures: 0, allow: 0, ask: 0, deny: 1, actual: { allow: 0, deny: 1, error: 0 } } });
+    if (String(url).includes('/logs?')) return envelope({ totalDecisions: 1, annotations: { rated: 1, good: 0, bad: 1, unsure: 0 }, ratings: { 'dec-9': 'bad' }, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { id: 'dec-9', at: 1_700_000_011_000, kind: 'gate', outcome: 'deny', tool: 'bash', action: 'deny' },
+    ] });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'prefilled', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  await waitFor(() => assert.equal(view.getByRole('button', { name: '判错了' }).getAttribute('aria-pressed'), 'true'));
+  await view.findByText(/已标注 1 条/);
 });
 
 test('advanced save posts keep prefixes split on commas or newlines and leaves the backend url alone', async () => {

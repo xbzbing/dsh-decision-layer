@@ -7,8 +7,10 @@ interface GateMetrics { attempts: number; failures: number; ask: number; deny: n
 interface CheckMetrics { attempts: number; failures: number; low: number; trend?: { run: number; severity: 'normal' | 'warn' | 'severe' } }
 interface NarrowMetrics { attempts: number; failures: number; applied: number; dropped: number }
 interface CompleteMetrics { attempts: number; failures: number; unsatisfied: number; satisfied: number; insufficient: number; steered: number }
-interface LogEntry { at: number; kind: 'gate' | 'check' | 'narrow' | 'complete'; outcome: string; tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number; mode?: string; dropped?: number; kept?: number; candidates?: number; tools?: string[]; conditions?: number; satisfied?: number; unsatisfied?: number; insufficient?: number; steered?: boolean }
+interface LogEntry { id?: string; at: number; kind: 'gate' | 'check' | 'narrow' | 'complete'; outcome: string; tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number; mode?: string; dropped?: number; kept?: number; candidates?: number; tools?: string[]; conditions?: number; satisfied?: number; unsatisfied?: number; insufficient?: number; steered?: boolean }
 interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics; narrow?: NarrowMetrics; complete?: CompleteMetrics }
+interface Analysis { totalDecisions: number; annotations: { rated: number; good: number; bad: number; unsure: number }; ratings: Record<string, 'good' | 'bad' | 'unsure'>; trendBacktest: { warnHits: number; severeHits: number; maxRun: number } }
+type Rating = 'good' | 'bad' | 'unsure';
 interface Session { enabled: boolean; capacityExceeded?: boolean }
 interface Probe { connected: boolean; model?: string; effectiveUrl?: string; reason?: string }
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
@@ -45,6 +47,8 @@ function SessionPanel({ sessionId, t }: Props) {
   const [busy, setBusy] = useState(false);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
+  const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [ratings, setRatings] = useState<Record<string, Rating>>({});
   const [status, setStatus] = useState<'idle' | 'checking' | 'ok' | 'down'>('idle');
   const [message, setMessage] = useState('');
 
@@ -74,8 +78,21 @@ function SessionPanel({ sessionId, t }: Props) {
     setMessage('');
     void request<Metrics>(`metrics?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) setMetrics(value); }).catch(() => {});
     void request<{ entries: LogEntry[] }>(`log?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) setLog(value.entries); }).catch(() => {});
+    // The analysis over persisted logs powers the annotation ratings shown on
+    // each decision row; it is best-effort and never blocks the panel.
+    void request<Analysis>(`logs?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) { setAnalysis(value); setRatings(value.ratings ?? {}); } }).catch(() => {});
     return () => { alive = false; element.close(); };
   }, [open, t, sessionId]);
+
+  // Append one annotation for a decision and reflect the new rating locally.
+  // Explicit user intent: a failed write surfaces as a message, not silence.
+  const annotate = async (id: string, rating: Rating) => {
+    setRatings(prev => ({ ...prev, [id]: rating }));
+    try {
+      await request<{ ok: boolean }>('annotate', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId, target: id, rating }) });
+    } catch { setMessage(t('annotateFailed')); setRatings(prev => { const next = { ...prev }; delete next[id]; return next; }); }
+  };
 
   const updateEnabled = async (next: boolean) => {
     setBusy(true);
@@ -274,11 +291,18 @@ function SessionPanel({ sessionId, t }: Props) {
         </div>}</section>
       <section><h3>{t('log')}</h3>
         {log.length === 0 ? <p className="decision-empty" role="status">{t('logEmpty')}</p> : <ol className="decision-log">
-          {log.slice().reverse().map((entry, index) => <li key={`${entry.at}-${index}`} className={`decision-log-item decision-log-${outcomeTagOf(entry)}`}>
+          {log.slice().reverse().map((entry, index) => <li key={entry.id ?? `${entry.at}-${index}`} className={`decision-log-item decision-log-${outcomeTagOf(entry)}`}>
             <span className="decision-log-time">{time(entry.at)}</span>
             <span className="decision-log-body">{entry.kind === 'gate' ? renderGate(entry) : entry.kind === 'narrow' ? renderNarrow(entry) : entry.kind === 'complete' ? renderComplete(entry) : renderCheck(entry)}</span>
+            {entry.id && <span className="decision-rate" role="group" aria-label={t('rateGroup')}>
+              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'good' ? ' decision-rate-on' : ''}`} aria-label={t('rateGood')} title={t('rateGood')} aria-pressed={ratings[entry.id] === 'good'} onClick={() => void annotate(entry.id!, 'good')}>👍</button>
+              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'bad' ? ' decision-rate-on' : ''}`} aria-label={t('rateBad')} title={t('rateBad')} aria-pressed={ratings[entry.id] === 'bad'} onClick={() => void annotate(entry.id!, 'bad')}>👎</button>
+              <button type="button" className={`decision-rate-btn${ratings[entry.id] === 'unsure' ? ' decision-rate-on' : ''}`} aria-label={t('rateUnsure')} title={t('rateUnsure')} aria-pressed={ratings[entry.id] === 'unsure'} onClick={() => void annotate(entry.id!, 'unsure')}>?</button>
+            </span>}
           </li>)}
-        </ol>}</section>
+        </ol>}
+        {analysis && analysis.annotations.rated > 0 && <p className="decision-muted decision-rate-summary">{t('rateSummary', { rated: analysis.annotations.rated, good: analysis.annotations.good, bad: analysis.annotations.bad, unsure: analysis.annotations.unsure })}</p>}
+      </section>
       {message && <p role="status" className="decision-message decision-message-warn">{message}</p>}
       </div>
     </dialog>

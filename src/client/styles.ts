@@ -63,6 +63,11 @@ const css = `
 .decision-log-item.decision-log-ok{border-left-color:#1f8a70}
 .decision-log-time{color:var(--dsw-alias-label-tertiary,#77818b);font-variant-numeric:tabular-nums;flex:0 0 auto}
 .decision-log-body{color:var(--dsw-alias-label-primary,#202124);flex:1 1 auto;min-width:0}
+.decision-rate{flex:0 0 auto;display:inline-flex;gap:2px;align-self:center}
+.decision-rate-btn{border:1px solid transparent;background:0 0;border-radius:6px;padding:0 4px;font-size:.8rem;line-height:1.6;cursor:pointer;opacity:.5;filter:grayscale(1)}
+.decision-rate-btn:hover{opacity:.85;filter:none;background:var(--dsw-alias-interactive-bg-hover,#eef1f3)}
+.decision-rate-btn.decision-rate-on{opacity:1;filter:none;border-color:var(--dsw-alias-border-l2,#dce1e6);background:var(--dsw-alias-interactive-bg-hover,#eef1f3)}
+.decision-rate-summary{margin-top:.5rem}
 .decision-log-tool{font-size:.76rem;padding:.05rem .35rem;border-radius:5px;background:var(--dsw-alias-bg-layer-1,#f2f4f6);color:var(--dsw-alias-label-primary,#202124)}
 .decision-log-verdict{font-weight:600}
 .decision-log-deny .decision-log-verdict{color:#c0392b}
