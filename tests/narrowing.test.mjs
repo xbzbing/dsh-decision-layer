@@ -78,6 +78,16 @@ test('createNarrowing in enforce mode reports the kept set for the caller to res
   assert.deepEqual(result.keep.sort(), ['web_fetch', 'web_search']);
 });
 
+test('narrowing defaults to enforce when no mode is configured', async () => {
+  const check = createNarrowing({ settings: {}, minKeep: 1, coreTools: [],
+    evaluate: async () => answers({ web_search: 0.9, image_gen: 0.05 }) });
+  const result = await check.review(turn('search the web', [
+    { name: 'web_search', description: '' }, { name: 'image_gen', description: '' },
+  ]));
+  assert.equal(result.mode, 'enforce', 'unset mode enforces by default');
+  assert.equal(result.applied, true);
+});
+
 test('core tools are always kept and never judged for relevance', async () => {
   let asked;
   const check = createNarrowing({ settings: { mode: 'enforce' }, minKeep: 1,

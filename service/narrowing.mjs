@@ -64,7 +64,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
   const resolveSettings = async () => {
     let raw = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
-    const mode = raw?.mode === 'enforce' ? 'enforce' : 'observe';
+    const mode = raw?.mode === 'observe' ? 'observe' : 'enforce';
     const threshold = typeof raw?.threshold === 'number' && Number.isFinite(raw.threshold) && raw.threshold >= 0 && raw.threshold <= 1 ? raw.threshold : 0.5;
     return { mode, threshold };
   };
