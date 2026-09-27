@@ -110,29 +110,34 @@ export function backtestTrend(checkRecords, { trendMinConfidence = 0.6, trendRun
   return { warnHits, severeHits, maxRun };
 }
 
-// Attach annotation summary: how many decisions carry a good/bad/unsure rating,
-// and (when both a rating and a decision outcome exist) a coarse accuracy view.
+// Attach annotation summary: how many decisions carry a good/bad/unsure rating.
+// Also returns a per-decision ratings map (id → rating) so a UI can show the
+// persisted annotation state on each decision, whichever surface renders it.
 export function annotationSummary(decisions, annotations) {
   const summary = { rated: 0, good: 0, bad: 0, unsure: 0 };
+  const ratings = Object.create(null);
   for (const [id] of decisions) {
     const annotation = annotations.get(id);
-    if (!annotation) continue;
+    if (!annotation || typeof annotation.rating !== 'string') continue;
     summary.rated++;
     if (annotation.rating === 'good') summary.good++;
     else if (annotation.rating === 'bad') summary.bad++;
     else if (annotation.rating === 'unsure') summary.unsure++;
+    ratings[id] = annotation.rating;
   }
-  return summary;
+  return { summary, ratings };
 }
 
 // One-call analysis over an iterable of records for a single session.
 export function analyzeSession(records, trendConfig) {
   const { decisions, annotations } = foldSession(records);
+  const annotation = annotationSummary(decisions, annotations);
   return {
     totalDecisions: decisions.size,
     profile: buildProfile(decisions),
     trendBacktest: backtestTrend([...decisions.values()], trendConfig),
-    annotations: annotationSummary(decisions, annotations),
+    annotations: annotation.summary,
+    ratings: annotation.ratings,
   };
 }
 

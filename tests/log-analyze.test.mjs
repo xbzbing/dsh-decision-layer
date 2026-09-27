@@ -58,9 +58,11 @@ test('annotationSummary counts ratings on decisions that carry one', () => {
     rec({ id: 'd2', kind: 'gate', outcome: 'allow' }),
     rec({ kind: 'annotation', target: 'd1', rating: 'good', at: 9 }),
   ]);
-  const summary = annotationSummary(decisions, annotations);
+  const { summary, ratings } = annotationSummary(decisions, annotations);
   assert.equal(summary.rated, 1);
   assert.equal(summary.good, 1);
+  assert.equal(ratings.d1, 'good', 'the per-decision ratings map carries the rating');
+  assert.equal(ratings.d2, undefined);
 });
 
 test('analyzeSession returns totals, profile, backtest, and annotation summary', () => {
