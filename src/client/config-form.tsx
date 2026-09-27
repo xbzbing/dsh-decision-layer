@@ -52,6 +52,9 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   const [backendDirty, setBackendDirty] = useState(false);
   const [ready, setReady] = useState(false);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+  // The connection-test result lives next to the Test button, not in the shared
+  // bottom message, so a probe verdict reads inline with the action.
+  const [probeResult, setProbeResult] = useState<{ text: string; ok: boolean } | null>(null);
 
   const applyFeatures = (features?: Features) => {
     setGateOn(features?.gate !== false);
@@ -109,11 +112,11 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   };
 
   const probe = async () => {
-    setBusy(true);
+    setBusy(true); setProbeResult(null);
     try {
       const value = await request<{ connected: boolean }>('probe', fetchFn, { method: 'POST' });
-      setMessage({ text: t(value.connected ? 'connected' : 'unavailable'), ok: value.connected });
-    } catch { setMessage({ text: t('error'), ok: false }); }
+      setProbeResult({ text: t(value.connected ? 'connected' : 'unavailable'), ok: value.connected });
+    } catch { setProbeResult({ text: t('error'), ok: false }); }
     finally { setBusy(false); }
   };
 
@@ -175,17 +178,18 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
       <form onSubmit={event => void saveBackend(event)}>
         <label className="decision-field">{t('url')}
           <input type="url" value={config.url} disabled={!ready} placeholder="https://api.typesafe.ai"
-            onChange={event => { setConfig({ ...config, url: event.target.value }); setBackendDirty(true); }} /></label>
+            onChange={event => { setConfig({ ...config, url: event.target.value }); setBackendDirty(true); setProbeResult(null); }} /></label>
         <label className="decision-field">{t('model')}
           <input value={config.model} disabled={!ready} placeholder="jev-latest"
-            onChange={event => { setConfig({ ...config, model: event.target.value }); setBackendDirty(true); }} /></label>
+            onChange={event => { setConfig({ ...config, model: event.target.value }); setBackendDirty(true); setProbeResult(null); }} /></label>
         <label className="decision-field">{t('key')}
           <input type="password" autoComplete="off" value={key} disabled={!ready}
-            placeholder={config.apiKeySet ? '••••••••' : ''} onChange={event => { setKey(event.target.value); setBackendDirty(true); }} />
+            placeholder={config.apiKeySet ? '••••••••' : ''} onChange={event => { setKey(event.target.value); setBackendDirty(true); setProbeResult(null); }} />
           <small className="decision-muted">{config.apiKeySet ? t('keyHintSaved') : t('keyHintEmpty')}</small></label>
         <div className="decision-actions">
           <button disabled={busy || !ready} type="submit">{t('save')}</button>
           <button className="decision-secondary" disabled={busy || !ready || backendDirty} type="button" onClick={() => void probe()}>{t('probe')}</button>
+          {probeResult && <span role="status" className={`decision-probe-result${probeResult.ok ? ' decision-message-ok' : ' decision-message-warn'}`}>{probeResult.text}</span>}
         </div>
       </form>
       {config.apiKeySet && <div className="decision-danger-row">

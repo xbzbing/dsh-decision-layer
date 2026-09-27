@@ -102,6 +102,20 @@ test('config form discloses HTTPS destination and clears password draft on unmou
   assert.equal(view.getByRole('button', { name: '测试连接' }).disabled, true);
 });
 
+test('connection-test result renders inline next to the test button', async () => {
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: true, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', checkSettings: { mode: 'observe', lowScoreThreshold: 1 } });
+    if (String(url).endsWith('/probe') && init?.method === 'POST') return envelope({ connected: true });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  const button = await view.findByRole('button', { name: '测试连接' });
+  fireEvent.click(button);
+  const result = await view.findByText('连接成功');
+  // the verdict sits in the same action row as the test button, not the shared footer
+  assert.equal(result.closest('.decision-actions'), button.closest('.decision-actions'));
+});
+
 test('config form reflects steer mode and posts the chosen mode on save', async () => {
   let savedBody;
   globalThis.fetch = async (url, init) => {
