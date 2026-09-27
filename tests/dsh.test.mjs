@@ -35,12 +35,12 @@ test('v0.2 gate installs on pre-execute and denies model-rejected dangerous call
   } }));
   try {
     await apply({ tools: { register: () => {}, guard: guard => { guards.push(guard); return () => {}; } }, skills: { register: () => {} }, on: (event, listener) => {
-      assert.ok(['tools/pre-execute', 'tools/post-execute', 'agent/turn-stopping'].includes(event));
+      assert.ok(['tools/pre-execute', 'tools/post-execute', 'agent/turn-stopping', 'agent/pre-step'].includes(event));
       if (event === 'tools/pre-execute') listeners.push(listener);
       return () => {};
     }, effect: setup => { disposers.push(setup()); }, inject: () => {} }, { configPath: path });
     assert.equal(listeners.length, 1);
-    assert.equal(disposers.length, 2);
+    assert.equal(disposers.length, 3);
     const exec = { name: 'shell', arguments: { command: 'rm -rf /tmp/build' }, callId: 'gate-call', token: Symbol('token'),
       signal: AbortSignal.timeout(1000), agent: { session: { id: 'gate-session' } } };
     const result = await listeners[0](exec, async () => ({ kind: 'allow' }));
@@ -95,6 +95,61 @@ test('v0.4 loop guard denies an identical repeated tool call without a backend c
     assert.equal(loopGuard(call), undefined);
     assert.equal(loopGuard(call), undefined);
     assert.match(loopGuard(call), /repeat|loop/i);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('v0.4b narrowing installs on pre-step and enforces a restriction only in enforce mode', async () => {
+  const path = join(directory, 'narrow-config.json');
+  await saveConfig({ apiKey: 'local-test-key', narrowSettings: { mode: 'enforce', threshold: 0.5 } }, path);
+  const realFetch = globalThis.fetch;
+  // Only optional (non-core) tools are judged; core tools (read/write/edit/bash…) are always kept.
+  globalThis.fetch = async () => new Response(JSON.stringify({ model: 'jev-latest', answers: {
+    web_search: { type: 'noul', noul: 0.9 }, web_fetch: { type: 'noul', noul: 0.8 }, image_gen: { type: 'noul', noul: 0.05 },
+  } }));
+  const preStep = [];
+  const restrictions = [];
+  const schemas = [
+    { name: 'read', description: 'read a file' }, { name: 'write', description: 'write a file' }, { name: 'edit', description: 'edit a file' }, { name: 'bash', description: 'run a shell command' },
+    { name: 'web_search', description: 'search the web' }, { name: 'web_fetch', description: 'fetch a url' }, { name: 'image_gen', description: 'generate an image' },
+  ];
+  try {
+    await apply({ tools: { register: () => {}, guard: () => () => {}, schemas: () => schemas },
+      skills: { register: () => {} },
+      on: (event, listener) => { if (event === 'agent/pre-step') preStep.push(listener); return () => {}; },
+      effect: setup => setup(), inject: () => {} }, { configPath: path });
+    assert.equal(preStep.length, 1);
+    const agent = { session: { id: 'narrow-session' }, ctx: { tools: { restrict: filter => { restrictions.push(filter); return () => {}; } } } };
+    let advanced = false;
+    await preStep[0]({ agent, turn: 1, step: 0, signal: AbortSignal.timeout(1000),
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'search the web and read a page' }] }] }, async () => { advanced = true; return { kind: 'enter', messages: [] }; });
+    assert.equal(advanced, true, 'the step always proceeds');
+    assert.equal(restrictions.length, 1, 'enforce mode restricts once');
+    // core tools survive; only the irrelevant optional tool (image_gen) is dropped
+    assert.deepEqual(restrictions[0].allow.sort(), ['bash', 'edit', 'read', 'web_fetch', 'web_search', 'write']);
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('narrowing in observe mode never restricts the agent tools', async () => {
+  const path = join(directory, 'narrow-observe.json');
+  await saveConfig({ apiKey: 'local-test-key', narrowSettings: { mode: 'observe' } }, path);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ model: 'jev-latest', answers: {
+    web_search: { type: 'noul', noul: 0.9 }, image_gen: { type: 'noul', noul: 0.05 },
+  } }));
+  const preStep = [];
+  const restrictions = [];
+  try {
+    await apply({ tools: { register: () => {}, guard: () => () => {}, schemas: () => [
+      { name: 'read', description: '' }, { name: 'write', description: '' }, { name: 'edit', description: '' }, { name: 'bash', description: '' },
+      { name: 'web_search', description: '' }, { name: 'image_gen', description: '' },
+    ] },
+      skills: { register: () => {} },
+      on: (event, listener) => { if (event === 'agent/pre-step') preStep.push(listener); return () => {}; },
+      effect: setup => setup(), inject: () => {} }, { configPath: path });
+    const agent = { session: { id: 'observe-session' }, ctx: { tools: { restrict: filter => { restrictions.push(filter); return () => {}; } } } };
+    await preStep[0]({ agent, turn: 1, step: 0, signal: AbortSignal.timeout(1000),
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'search the web' }] }] }, async () => ({ kind: 'enter', messages: [] }));
+    assert.equal(restrictions.length, 0, 'observe mode records but never restricts');
   } finally { globalThis.fetch = realFetch; }
 });
 

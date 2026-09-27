@@ -6,7 +6,8 @@ function sessionKey(value) {
 function emptyState() {
   return { enabled: true, attempts: 0, failures: 0,
     gate: { attempts: 0, failures: 0, ask: 0, deny: 0, allow: 0, actual: { allow: 0, deny: 0, error: 0 } },
-    check: { attempts: 0, failures: 0, low: 0 }, log: [] };
+    check: { attempts: 0, failures: 0, low: 0 },
+    narrow: { attempts: 0, failures: 0, applied: 0, dropped: 0 }, log: [] };
 }
 
 function safeTool(value) {
@@ -42,6 +43,7 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50 } = 
       if (overflow) value.capacityExceeded = true;
       if (state.gate.attempts > 0) value.gate = { ...state.gate, actual: { ...state.gate.actual } };
       if (state.check.attempts > 0) value.check = { ...state.check };
+      if (state.narrow.attempts > 0) value.narrow = { ...state.narrow };
       if (state.log.length > 0) value.log = state.log.map(entry => ({ ...entry }));
       return value;
     },
@@ -65,17 +67,35 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50 } = 
       if (outcome === 'error') { state.failures++; state.check.failures++; }
       else if (outcome === 'low') state.check.low++;
     },
+    recordNarrow(id, outcome, dropped = 0) {
+      if (!['ok', 'applied', 'error'].includes(outcome)) throw new Error('Invalid narrowing outcome');
+      const state = writable(id);
+      state.attempts++;
+      state.narrow.attempts++;
+      if (outcome === 'error') { state.failures++; state.narrow.failures++; }
+      else if (outcome === 'applied') {
+        state.narrow.applied++;
+        if (Number.isSafeInteger(dropped) && dropped > 0) state.narrow.dropped += dropped;
+      }
+    },
     log(id, entry) {
       if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Invalid log entry');
-      if (!['gate', 'check'].includes(entry.kind)) throw new Error('Invalid log entry');
+      if (!['gate', 'check', 'narrow'].includes(entry.kind)) throw new Error('Invalid log entry');
       const record = { at: Date.now(), kind: entry.kind, outcome: typeof entry.outcome === 'string' ? entry.outcome.slice(0, 32) : '' };
       const tool = safeTool(entry.tool);
       if (tool) record.tool = tool;
       if (typeof entry.suggestion === 'string' && entry.suggestion) record.suggestion = entry.suggestion.slice(0, 16);
       if (typeof entry.action === 'string' && entry.action) record.action = entry.action.slice(0, 16);
       if (typeof entry.reason === 'string' && entry.reason) record.reason = entry.reason.slice(0, 32);
+      if (typeof entry.mode === 'string' && entry.mode) record.mode = entry.mode.slice(0, 16);
       if (typeof entry.score === 'number' && Number.isFinite(entry.score)) record.score = Math.round(entry.score * 100) / 100;
       if (typeof entry.confidence === 'number' && Number.isFinite(entry.confidence)) record.confidence = Math.round(entry.confidence * 100) / 100;
+      if (Number.isSafeInteger(entry.dropped) && entry.dropped >= 0) record.dropped = entry.dropped;
+      if (Number.isSafeInteger(entry.kept) && entry.kept >= 0) record.kept = entry.kept;
+      if (Array.isArray(entry.tools)) {
+        const names = entry.tools.filter(name => typeof name === 'string' && name.trim()).slice(0, 12).map(name => name.trim().slice(0, 64));
+        if (names.length > 0) record.tools = names;
+      }
       const state = writable(id);
       state.log.push(record);
       if (state.log.length > maxLogEntries) state.log.splice(0, state.log.length - maxLogEntries);

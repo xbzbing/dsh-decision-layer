@@ -6,6 +6,7 @@ import { createManagerRoutes } from './manager-api.mjs';
 import { createSessionState } from './session-state.mjs';
 import { createDangerGate, normalizeDangerRules } from './danger-gate.mjs';
 import { createSelfCheck } from './self-check.mjs';
+import { createNarrowing } from './narrowing.mjs';
 import { createLoopGuard } from './loop-guard.mjs';
 
 export const name = 'dsh-decision-layer';
@@ -24,6 +25,29 @@ function lastAssistantText(agent) {
     }
     return '';
   } catch { return ''; }
+}
+
+// The task text a narrowing pass judges tools against: the user messages
+// entering this step. An unreachable shape yields '', which skips narrowing.
+function stepTaskText(messages) {
+  try {
+    if (!Array.isArray(messages)) return '';
+    return messages
+      .filter(message => message?.role === 'user' && Array.isArray(message.content))
+      .flatMap(message => message.content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text))
+      .join('\n').slice(0, 8 * 1024);
+  } catch { return ''; }
+}
+
+// Enumerate the tool names/descriptions visible to this agent scope, best-effort.
+function agentTools(ctx, agent) {
+  try {
+    const schemas = typeof ctx.tools?.schemas === 'function' ? ctx.tools.schemas(agent) : undefined;
+    if (!Array.isArray(schemas)) return [];
+    return schemas
+      .filter(schema => schema && typeof schema.name === 'string')
+      .map(schema => ({ name: schema.name, description: typeof schema.description === 'string' ? schema.description : '' }));
+  } catch { return []; }
 }
 
 export async function apply(ctx, options = {}) {
@@ -69,6 +93,42 @@ export async function apply(ctx, options = {}) {
     }));
     if (typeof ctx.effect === 'function') ctx.effect(installCheck);
     else installCheck();
+
+    const narrowing = createNarrowing({
+      evaluate: (input, request) => backend.evaluate(input, request),
+      sessions,
+      settings: async () => (await resolveConfig({ path })).narrowSettings,
+    });
+    // Narrow once per turn, on its first step, and only enforce a restriction in
+    // enforce mode. The restriction is agent-scoped and lifted before the next
+    // turn's pass so a later turn is judged against the full host-allowed set.
+    const narrowedTurns = new Map();
+    const installNarrowingHook = () => ctx.on('agent/pre-step', async (payload, next) => {
+      const agent = payload?.agent;
+      const id = agent?.session?.id;
+      const turn = payload?.turn;
+      if (typeof id === 'string' && Number.isInteger(turn)) {
+        const state = narrowedTurns.get(id);
+        if (!state || state.turn !== turn) {
+          state?.dispose?.();
+          const entry = { turn, dispose: undefined };
+          narrowedTurns.set(id, entry);
+          if (narrowedTurns.size > 1024) { const oldest = narrowedTurns.keys().next().value; if (oldest !== id) { narrowedTurns.get(oldest)?.dispose?.(); narrowedTurns.delete(oldest); } }
+          try {
+            const result = await narrowing.review({
+              agent, turn, signal: payload.signal,
+              state: stepTaskText(payload.messages), tools: agentTools(ctx, agent),
+            });
+            if (result.mode === 'enforce' && result.applied && typeof agent?.ctx?.tools?.restrict === 'function') {
+              entry.dispose = agent.ctx.tools.restrict({ allow: result.keep });
+            }
+          } catch { /* narrowing is best effort; never block the step */ }
+        }
+      }
+      return next();
+    });
+    if (typeof ctx.effect === 'function') ctx.effect(installNarrowingHook);
+    else installNarrowingHook();
   }
   const rawSkill = await readFile(new URL('../skills/decision-layer/SKILL.md', import.meta.url), 'utf8');
   const content = rawSkill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();

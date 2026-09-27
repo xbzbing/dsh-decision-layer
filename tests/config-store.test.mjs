@@ -62,6 +62,17 @@ test('self-check settings are validated, persisted, and resolved', async () => {
   await assert.rejects(saveConfig({ checkSettings: { unknown: 1 } }, checkFile), /self-check/i);
 });
 
+test('narrowing settings are validated, persisted, and resolved', async () => {
+  const narrowFile = join(temporary, 'narrow.json');
+  const saved = await saveConfig({ apiKey: 'k', narrowSettings: { mode: 'enforce', threshold: 0.4 } }, narrowFile);
+  assert.deepEqual(saved.narrowSettings, { mode: 'enforce', threshold: 0.4 });
+  assert.deepEqual((await resolveConfig({ path: narrowFile, env: {} })).narrowSettings, { mode: 'enforce', threshold: 0.4 });
+  await assert.rejects(saveConfig({ narrowSettings: { mode: 'hard' } }, narrowFile), /narrowing/i);
+  await assert.rejects(saveConfig({ narrowSettings: { threshold: 2 } }, narrowFile), /narrowing/i);
+  await assert.rejects(saveConfig({ narrowSettings: { unknown: 1 } }, narrowFile), /narrowing/i);
+  assert.deepEqual((await saveConfig({ narrowSettings: {} }, narrowFile)).narrowSettings, {});
+});
+
 test('invalid URLs are rejected and missing config has a safe display view', async () => {
   const missing = await loadConfig(join(temporary, 'missing.json'));
   assert.deepEqual(missing, { url: '', model: '', apiKeySet: false, httpApprovedUrl: '' });

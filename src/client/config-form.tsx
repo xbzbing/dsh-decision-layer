@@ -4,7 +4,8 @@ import type { TranslationKey } from './i18n.js';
 
 const api = '/plugins/dsh-decision-layer/api';
 interface CheckSettings { mode: 'observe' | 'steer'; lowScoreThreshold: number }
-interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string; checkSettings?: CheckSettings }
+interface NarrowSettings { mode: 'observe' | 'enforce'; threshold: number }
+interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string; checkSettings?: CheckSettings; narrowSettings?: NarrowSettings }
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
 export interface ConfigFormProps { t: Translate<TranslationKey>; fetchFn?: typeof fetch }
 
@@ -29,6 +30,7 @@ function Toggle({ label, checked, disabled, onChange }: { label: string; checked
 export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   const [config, setConfig] = useState<Config>({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
   const [checkMode, setCheckMode] = useState<'observe' | 'steer'>('observe');
+  const [narrowMode, setNarrowMode] = useState<'observe' | 'enforce'>('observe');
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -38,7 +40,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   useEffect(() => {
     let live = true;
     setMessage(null); setReady(false);
-    void request<Config>('config', fetchFn).then(value => { if (live) { setConfig(value); setCheckMode(value.checkSettings?.mode ?? 'observe'); setDirty(false); setReady(true); } })
+    void request<Config>('config', fetchFn).then(value => { if (live) { setConfig(value); setCheckMode(value.checkSettings?.mode ?? 'observe'); setNarrowMode(value.narrowSettings?.mode ?? 'observe'); setDirty(false); setReady(true); } })
       .catch(() => { if (live) setMessage({ text: t('error'), ok: false }); });
     return () => { live = false; };
   }, [t, fetchFn]);
@@ -51,10 +53,10 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     setBusy(true);
     try {
       const value = await request<Config>('config', fetchFn, { method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url, model: config.model, checkSettings: { mode: checkMode },
+        body: JSON.stringify({ url, model: config.model, checkSettings: { mode: checkMode }, narrowSettings: { mode: narrowMode },
           ...(key ? { apiKey: key } : {}),
           ...(needsHttpConsent ? { confirmHttpUrl: url } : {}) }) });
-      setConfig(value); setCheckMode(value.checkSettings?.mode ?? 'observe');
+      setConfig(value); setCheckMode(value.checkSettings?.mode ?? 'observe'); setNarrowMode(value.narrowSettings?.mode ?? 'observe');
       setKey(''); setDirty(false); setMessage({ text: t('saved'), ok: true });
     } catch { setMessage({ text: t('error'), ok: false }); }
     finally { setBusy(false); }
@@ -86,6 +88,12 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
       <Toggle label={t('selfCheckSteer')} checked={checkMode === 'steer'} disabled={!ready}
         onChange={next => { setCheckMode(next ? 'steer' : 'observe'); setDirty(true); }} />
       <p className="decision-muted">{t('selfCheckHint')}</p>
+    </section>
+    <section>
+      <h3>{t('narrow')}</h3>
+      <Toggle label={t('narrowEnforceLabel')} checked={narrowMode === 'enforce'} disabled={!ready}
+        onChange={next => { setNarrowMode(next ? 'enforce' : 'observe'); setDirty(true); }} />
+      <p className="decision-muted">{t('narrowHint')}</p>
     </section>
     <section>
       <h3>{t('backend')}</h3>

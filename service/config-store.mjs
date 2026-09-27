@@ -74,6 +74,21 @@ function validCheck(value) {
   return check;
 }
 
+function validNarrow(value) {
+  if (!safeObject(value)) return undefined;
+  if (Object.keys(value).some(key => !['mode', 'threshold'].includes(key))) throw new Error('Invalid narrowing settings');
+  const narrow = {};
+  if (value.mode !== undefined) {
+    if (value.mode !== 'observe' && value.mode !== 'enforce') throw new Error('Invalid narrowing settings');
+    narrow.mode = value.mode;
+  }
+  if (value.threshold !== undefined) {
+    if (typeof value.threshold !== 'number' || !Number.isFinite(value.threshold) || value.threshold < 0 || value.threshold > 1) throw new Error('Invalid narrowing settings');
+    narrow.threshold = value.threshold;
+  }
+  return narrow;
+}
+
 function view(stored) {
   const result = {
     url: safeText(stored.url),
@@ -83,6 +98,7 @@ function view(stored) {
   };
   if (stored.dangerRules !== undefined) result.dangerRules = validRules(stored.dangerRules);
   if (stored.checkSettings !== undefined) result.checkSettings = validCheck(stored.checkSettings);
+  if (stored.narrowSettings !== undefined) result.narrowSettings = validNarrow(stored.narrowSettings);
   return result;
 }
 
@@ -101,11 +117,12 @@ export async function resolveConfig({ path = configPath(), env = process.env } =
   };
   if (stored.dangerRules !== undefined) resolved.dangerRules = validRules(stored.dangerRules);
   if (stored.checkSettings !== undefined) resolved.checkSettings = validCheck(stored.checkSettings);
+  if (stored.narrowSettings !== undefined) resolved.narrowSettings = validNarrow(stored.narrowSettings);
   return resolved;
 }
 
 export async function saveConfig(input, path = configPath()) {
-  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'checkSettings'].includes(key))) {
+  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'checkSettings', 'narrowSettings'].includes(key))) {
     throw new Error('Invalid configuration fields');
   }
   for (const key of ['url', 'apiKey', 'model', 'confirmHttpUrl']) {
@@ -120,6 +137,7 @@ export async function saveConfig(input, path = configPath()) {
   }
   const dangerRules = input.dangerRules === undefined ? previous.dangerRules : validRules(input.dangerRules);
   const checkSettings = input.checkSettings === undefined ? previous.checkSettings : validCheck(input.checkSettings);
+  const narrowSettings = input.narrowSettings === undefined ? previous.narrowSettings : validNarrow(input.narrowSettings);
   const confirmed = url.startsWith('http://') && input.confirmHttpUrl !== undefined &&
     checkedUrl(safeText(input.confirmHttpUrl)) === url;
   if (url.startsWith('http://') && !confirmed && previous.httpApprovedUrl !== url) {
@@ -128,6 +146,7 @@ export async function saveConfig(input, path = configPath()) {
   const next = { url, apiKey, model, httpApprovedUrl: url.startsWith('http://') ? url : '' };
   if (dangerRules !== undefined) next.dangerRules = dangerRules;
   if (checkSettings !== undefined) next.checkSettings = checkSettings;
+  if (narrowSettings !== undefined) next.narrowSettings = narrowSettings;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {

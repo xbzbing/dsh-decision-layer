@@ -5,8 +5,9 @@ import type { TranslationKey } from './i18n.js';
 const api = '/plugins/dsh-decision-layer/api';
 interface GateMetrics { attempts: number; failures: number; ask: number; deny: number; allow: number; actual: { allow: number; deny: number; error: number } }
 interface CheckMetrics { attempts: number; failures: number; low: number }
-interface LogEntry { at: number; kind: 'gate' | 'check'; outcome: string; tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number }
-interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics }
+interface NarrowMetrics { attempts: number; failures: number; applied: number; dropped: number }
+interface LogEntry { at: number; kind: 'gate' | 'check' | 'narrow'; outcome: string; tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number; mode?: string; dropped?: number; kept?: number; tools?: string[] }
+interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics; narrow?: NarrowMetrics }
 interface Session { enabled: boolean; capacityExceeded?: boolean }
 interface Probe { connected: boolean; model?: string; effectiveUrl?: string; reason?: string }
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
@@ -91,6 +92,8 @@ function SessionPanel({ sessionId, t }: Props) {
     : reason === 'invalid-response' ? t('reasonInvalidResponse')
     : reason === 'low-confidence' ? t('reasonLowConfidence')
     : reason === 'capacity' ? t('reasonCapacity')
+    : reason === 'too-many-candidates' ? t('reasonTooMany')
+    : reason === 'low-keep' ? t('reasonLowKeep')
     : reason === 'config' ? t('reasonConfig') : reason;
   const actionText = (action?: string) => action === 'deny' ? t('actionDeny') : action === 'ask' ? t('actionAsk') : action;
   const failDetail = (entry: LogEntry) => {
@@ -117,6 +120,26 @@ function SessionPanel({ sessionId, t }: Props) {
     const result = entry.outcome === 'low' ? t('checkResultLow') : t('checkResultOk');
     return <>{label} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null}{typeof entry.confidence === 'number' ? <span className="decision-log-detail"> · {t('logConfidence')} {entry.confidence}</span> : null}</>;
   };
+
+  const renderNarrow = (entry: LogEntry) => {
+    const label = <span title={t('logNarrowHint')}>{t('logNarrow')}</span>;
+    if (entry.outcome === 'error') return <>{label} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
+    const dropped = entry.dropped ?? 0;
+    const modeTag = entry.mode === 'enforce' ? t('narrowEnforce') : t('narrowObserve');
+    const kept = typeof entry.kept === 'number' ? entry.kept : undefined;
+    // Advisory note when a safeguard prevented an enforce (too many candidates / too few kept).
+    const guard = entry.reason === 'too-many-candidates' ? <span className="decision-log-detail"> · {t('reasonTooMany')}</span>
+      : entry.reason === 'low-keep' ? <span className="decision-log-detail"> · {t('reasonLowKeep')}</span> : null;
+    if (dropped === 0) {
+      return <>{label} · <span className="decision-log-verdict">{t('narrowKept')}</span>{kept !== undefined ? <span className="decision-log-detail"> · {t('narrowKeptCount')} {kept}</span> : null}<span className="decision-log-detail"> · {modeTag}</span>{guard}</>;
+    }
+    const names = Array.isArray(entry.tools) && entry.tools.length > 0 ? entry.tools.join('、') : undefined;
+    return <>{label} · <span className="decision-log-verdict">{t('narrowDropped')} {dropped}{kept !== undefined ? ` / ${t('narrowKeptCount')} ${kept}` : ''}</span>{names ? <span className="decision-log-detail"> · {names}</span> : null}<span className="decision-log-detail"> · {modeTag}</span>{guard}</>;
+  };
+
+  const outcomeTagOf = (entry: LogEntry) => entry.kind === 'narrow'
+    ? (entry.outcome === 'error' ? 'error' : entry.outcome === 'applied' ? 'ok' : 'ok')
+    : outcomeTag(entry);
 
   const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : status === 'checking' ? t('statusChecking') : t('statusIdle');
 
@@ -157,7 +180,7 @@ function SessionPanel({ sessionId, t }: Props) {
           <button type="button" className="decision-status-recheck" disabled={status === 'checking'} onClick={() => checkStatus(() => true)}>{t('recheck')}</button>
         </div></section>
       <section><h3>{t('metrics')}</h3>
-        {!metrics?.gate && !metrics?.check ? <p className="decision-empty" role="status">{t('empty')}</p> : <div className="decision-cards">
+        {!metrics?.gate && !metrics?.check && !metrics?.narrow ? <p className="decision-empty" role="status">{t('empty')}</p> : <div className="decision-cards">
           {metrics.gate && <article className="decision-card">
             <header className="decision-card-head">
               <span className="decision-card-title">{t('cardGate')}</span>
@@ -185,12 +208,23 @@ function SessionPanel({ sessionId, t }: Props) {
               <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.check.failures}</span><span className="decision-stat-label">{t('failures')}</span></div>
             </div>
           </article>}
+          {metrics.narrow && <article className="decision-card">
+            <header className="decision-card-head">
+              <span className="decision-card-title">{t('cardNarrow')}</span>
+              <span className="decision-card-total">{metrics.narrow.attempts}<small>{t('cardTimes')}</small></span>
+            </header>
+            <div className="decision-card-stats">
+              <div className="decision-stat"><span className="decision-stat-num">{metrics.narrow.applied}</span><span className="decision-stat-label">{t('narrowAppliedLabel')}</span></div>
+              <div className="decision-stat"><span className="decision-stat-num">{metrics.narrow.dropped}</span><span className="decision-stat-label">{t('narrowDroppedLabel')}</span></div>
+              <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.narrow.failures}</span><span className="decision-stat-label">{t('failures')}</span></div>
+            </div>
+          </article>}
         </div>}</section>
       <section><h3>{t('log')}</h3>
         {log.length === 0 ? <p className="decision-empty" role="status">{t('logEmpty')}</p> : <ol className="decision-log">
-          {log.slice().reverse().map((entry, index) => <li key={`${entry.at}-${index}`} className={`decision-log-item decision-log-${outcomeTag(entry)}`}>
+          {log.slice().reverse().map((entry, index) => <li key={`${entry.at}-${index}`} className={`decision-log-item decision-log-${outcomeTagOf(entry)}`}>
             <span className="decision-log-time">{time(entry.at)}</span>
-            <span className="decision-log-body">{entry.kind === 'gate' ? renderGate(entry) : renderCheck(entry)}</span>
+            <span className="decision-log-body">{entry.kind === 'gate' ? renderGate(entry) : entry.kind === 'narrow' ? renderNarrow(entry) : renderCheck(entry)}</span>
           </li>)}
         </ol>}</section>
       {message && <p role="status" className="decision-message decision-message-warn">{message}</p>}

@@ -46,6 +46,28 @@ test('gate suggestions and actual outcomes remain separate', () => {
   assert.deepEqual(snapshot.gate.actual, { allow: 1, deny: 0, error: 0 });
 });
 
+test('narrowing records applied passes and dropped tool counts separately from the gate', () => {
+  const sessions = createSessionState();
+  sessions.recordNarrow('one', 'ok');
+  sessions.recordNarrow('one', 'applied', 2);
+  sessions.recordNarrow('one', 'error');
+  const snapshot = sessions.snapshot('one');
+  assert.deepEqual(snapshot.narrow, { attempts: 3, failures: 1, applied: 1, dropped: 2 });
+  assert.equal(snapshot.gate, undefined);
+  assert.equal(snapshot.attempts, 3);
+  assert.equal(snapshot.failures, 1);
+  assert.throws(() => sessions.recordNarrow('one', 'bogus'), /narrowing/i);
+});
+
+test('narrow log entries keep mode and dropped count', () => {
+  const sessions = createSessionState();
+  sessions.log('one', { kind: 'narrow', outcome: 'applied', mode: 'enforce', dropped: 3 });
+  const entry = sessions.snapshot('one').log.at(-1);
+  assert.equal(entry.kind, 'narrow');
+  assert.equal(entry.mode, 'enforce');
+  assert.equal(entry.dropped, 3);
+});
+
 test('each automatic attempt counts once and failure is separate', () => {
   const sessions = createSessionState();
   sessions.record('one', 'gate', 'error');
