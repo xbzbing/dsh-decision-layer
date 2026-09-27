@@ -13,7 +13,7 @@ test('matches dangerous commands by tool, command and target', () => {
 
 test('gate evaluator receives only bounded command/path metadata, never file content', async () => {
   let request;
-  const gate = createDangerGate({ evaluate: async input => { request = input; return { answers: { verdict: { type: 'choice', choice: 'ask', confidence: 1, probabilities: { allow: 0, ask: 1, deny: 0 } } } }; } });
+  const gate = createDangerGate({ evaluate: async input => { request = input; return { answers: { verdict: { type: 'choice', choice: 'deny', confidence: 1, probabilities: { allow: 0, ask: 0, deny: 1 } } } }; } });
   await gate.evaluate(exec('file_write', { path: '/tmp/config', content: 'password=secret-token', metadata: { token: 'secret-token' } }));
   const serialized = JSON.stringify(request);
   assert.match(serialized, /file_write/);
@@ -21,16 +21,24 @@ test('gate evaluator receives only bounded command/path metadata, never file con
   assert.doesNotMatch(serialized, /secret-token|password/);
 });
 
-test('backend choice allow never bypasses native permission policy', async () => {
+// Two-tier model: only a high-confidence deny intervenes. Everything else
+// (allow, ask, low-confidence, invalid, backend failure) does NOT intervene —
+// the call proceeds on its original path, so evaluate() returns undefined.
+
+test('high-confidence allow does not intervene (passes through)', async () => {
   const gate = createDangerGate({ evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'allow', confidence: 1, probabilities: { allow: 1, ask: 0, deny: 0 } } } }) });
-  const result = await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' }));
-  assert.deepEqual(result, { kind: 'ask', reason: 'Dangerous call requires host approval', modelSuggestion: 'allow' });
+  assert.equal(await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), undefined);
 });
 
-test('low-confidence model results fall back to native approval', async () => {
+test('high-confidence ask does not intervene — the gate no longer routes to host approval', async () => {
+  const gate = createDangerGate({ evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'ask', confidence: 1, probabilities: { allow: 0, ask: 1, deny: 0 } } } }) });
+  assert.equal(await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), undefined);
+});
+
+test('low-confidence results do not intervene, even a deny suggestion (no opinion → pass through)', async () => {
   const gate = createDangerGate({ evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 0.2,
     probabilities: { allow: 0, ask: 0.1, deny: 0.9 } } } }) });
-  assert.deepEqual(await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), { kind: 'ask', reason: 'Dangerous call requires host approval' });
+  assert.equal(await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), undefined);
 });
 
 test('custom rules add aliases and remove defaults without unsafe regexes', () => {
@@ -39,11 +47,11 @@ test('custom rules add aliases and remove defaults without unsafe regexes', () =
   assert.equal(classifyDangerous(exec('shell', { command: 'rm -rf /tmp/build' }), rules).dangerous, false);
 });
 
-test('backend deny becomes a monotonic deny, while unavailable falls back to ask', async () => {
+test('only a high-confidence deny becomes a monotonic deny; failures pass through', async () => {
   const deny = createDangerGate({ evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 1, probabilities: { allow: 0, ask: 0, deny: 1 } } } }) });
   assert.equal((await deny.evaluate(exec('shell', { command: 'rm -rf /tmp/build' }))).kind, 'deny');
   const unavailable = createDangerGate({ evaluate: async () => { throw new Error('offline'); } });
-  assert.deepEqual(await unavailable.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), { kind: 'ask', reason: 'Dangerous call requires host approval' });
+  assert.equal(await unavailable.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), undefined);
 });
 
 test('default rules cover the real DSH filesystem and shell tool names', () => {
@@ -54,11 +62,12 @@ test('default rules cover the real DSH filesystem and shell tool names', () => {
   assert.equal(classifyDangerous(exec('pwsh', { command: 'rm -rf /tmp/build' }), DEFAULT_DANGEROUS_RULES).dangerous, true);
 });
 
-test('capacity overflow must not fail-open the dangerous gate', async () => {
-  const gate = createDangerGate({ sessions: { snapshot: () => ({ enabled: false, capacityExceeded: true }), record: () => {} },
-    evaluate: async () => { throw new Error('backend unavailable'); } });
-  assert.deepEqual(await gate.preExecute(exec('shell', { command: 'rm -rf /tmp/build' }), async () => ({ kind: 'allow' })),
-    { kind: 'ask', reason: 'Dangerous call requires host approval' });
+test('a session whose store was evicted rebuilds empty and does not block on a rebuilt state', async () => {
+  // With FIFO eviction there is no capacity-exceeded state; a fresh/rebuilt
+  // session is simply enabled, so the gate evaluates normally (here: passes through).
+  const gate = createDangerGate({ sessions: { snapshot: () => ({ enabled: true }), record: () => {}, log: () => {} },
+    evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'allow', confidence: 1, probabilities: { allow: 1, ask: 0, deny: 0 } } } }) });
+  assert.deepEqual(await gate.preExecute(exec('shell', { command: 'rm -rf /tmp/build' }), async () => ({ kind: 'allow' })), { kind: 'allow' });
 });
 
 test('disabled sessions skip dangerous intervention without contacting backend', async () => {
@@ -69,9 +78,9 @@ test('disabled sessions skip dangerous intervention without contacting backend',
   assert.equal(calls, 0);
 });
 
-test('session lookup failures fail closed to host approval', async () => {
-  const gate = createDangerGate({ sessions: { snapshot: () => { throw new Error('state unavailable'); } }, evaluate: async () => { throw new Error('must not evaluate'); } });
-  assert.deepEqual(await gate.preExecute(exec('shell', { command: 'rm -rf /tmp/build' }), async () => ({ kind: 'allow' })), { kind: 'ask', reason: 'Dangerous call requires host approval' });
+test('session lookup failures do not block; the call proceeds on its original path', async () => {
+  const gate = createDangerGate({ sessions: { snapshot: () => { throw new Error('state unavailable'); }, record: () => {}, log: () => {} }, evaluate: async () => { throw new Error('must not evaluate'); } });
+  assert.deepEqual(await gate.preExecute(exec('shell', { command: 'rm -rf /tmp/build' }), async () => ({ kind: 'allow' })), { kind: 'allow' });
 });
 
 test('non-dangerous calls are passed to the next policy stage', async () => {
@@ -79,30 +88,38 @@ test('non-dangerous calls are passed to the next policy stage', async () => {
   assert.deepEqual(await gate.preExecute(exec('shell', { command: 'echo safe' }), async () => ({ kind: 'allow' })), { kind: 'allow' });
 });
 
-test('gate writes a structured decision log entry with tool, suggestion and action', async () => {
+test('a confident deny through preExecute returns the deny decision, not next()', async () => {
+  const gate = createDangerGate({ sessions: { snapshot: () => ({ enabled: true }), record: () => {}, log: () => {} },
+    evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 1, probabilities: { allow: 0, ask: 0, deny: 1 } } } }) });
+  const result = await gate.preExecute(exec('bash', { command: 'rm -rf /tmp/build' }), async () => ({ kind: 'allow' }));
+  assert.equal(result.kind, 'deny');
+});
+
+test('gate logs a deny with action deny; a pass-through records action pass', async () => {
   const entries = [];
   const sessions = { snapshot: () => ({ enabled: true }), record: () => {}, log: (_id, entry) => entries.push(entry) };
   const deny = createDangerGate({ sessions, evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 1, probabilities: { allow: 0, ask: 0, deny: 1 } } } }) });
   await deny.evaluate(exec('bash', { command: 'rm -rf /tmp/build' }));
   assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'deny', tool: 'bash', suggestion: 'deny', action: 'deny' });
+  // A backend failure is a pass-through (no intervention), logged as error/pass.
   const unavailable = createDangerGate({ sessions, evaluate: async () => { throw new Error('offline'); } });
   await unavailable.evaluate(exec('edit', { path: '/etc/passwd' }));
-  assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'error', tool: 'edit', action: 'ask', reason: 'unreachable' });
+  assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'error', tool: 'edit', action: 'pass', reason: 'unreachable' });
 });
 
-test('gate logs distinct fallback reasons for invalid response and low confidence', async () => {
+test('gate logs distinct pass-through reasons for invalid response and low confidence', async () => {
   const entries = [];
   const sessions = { snapshot: () => ({ enabled: true }), record: () => {}, log: (_id, entry) => entries.push(entry) };
   const invalid = createDangerGate({ sessions, evaluate: async () => ({ answers: { verdict: { type: 'choice' } } }) });
   await invalid.evaluate(exec('bash', { command: 'rm -rf /tmp/x' }));
   assert.equal(entries.at(-1).reason, 'invalid-response');
+  assert.equal(entries.at(-1).action, 'pass');
   const lowConf = createDangerGate({ sessions, evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 0.2, probabilities: { allow: 0, ask: 0.1, deny: 0.9 } } } }) });
   await lowConf.evaluate(exec('bash', { command: 'rm -rf /tmp/x' }));
   assert.equal(entries.at(-1).reason, 'low-confidence');
   assert.equal(entries.at(-1).confidence, 0.2);
-  const httpErr = createDangerGate({ sessions, evaluate: async () => { const e = new Error('http'); e.reason = 'http-error'; throw e; } });
-  await httpErr.evaluate(exec('bash', { command: 'rm -rf /tmp/x' }));
-  assert.equal(entries.at(-1).reason, 'http-error');
+  assert.equal(entries.at(-1).outcome, 'allow');
+  assert.equal(entries.at(-1).action, 'pass');
 });
 
 test('recognizes DSH file_path arguments for ordinary edit calls', () => {

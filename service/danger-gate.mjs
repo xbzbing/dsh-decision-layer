@@ -92,10 +92,19 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
     try { sessions.log(id, { kind: 'gate', outcome, tool: exec?.name, ...detail }); }
     catch { /* logging is best effort */ }
   };
-  const fallback = (exec, reason = 'unavailable', detail = {}) => {
-    record(exec, 'error', { action: 'ask', reason, ...detail });
+  // Two-tier model: the gate intervenes ONLY on a high-confidence `deny`
+  // (returned as kind:'deny', enforced monotonically through tools.guard,
+  // independent of the host approval policy). Every other outcome — a low-
+  // confidence verdict, a high-confidence allow/ask, an invalid response, or a
+  // backend failure — is NOT an intervention: the call proceeds on its original
+  // path (next()). The gate no longer emits `ask`, so it never routes through
+  // host approval and can no longer be mis-rendered as "the user rejected".
+  // `passThrough` records the non-intervention for observability and returns
+  // undefined so preExecute falls through to next().
+  const passThrough = (exec, outcome, detail = {}) => {
+    record(exec, outcome, { action: 'pass', ...detail });
     if (exec && typeof exec === 'object') evaluatedCalls.add(exec);
-    return { kind: 'ask', reason: 'Dangerous call requires host approval' };
+    return undefined;
   };
   return {
     classify: exec => classifyDangerous(exec, typeof rules === 'function' ? DEFAULT_DANGEROUS_RULES : rules),
@@ -112,18 +121,27 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
       evaluatedCalls.delete(exec);
     },
     async evaluate(exec) {
-      if (exec && typeof exec === 'object') evaluatedCalls.add(exec);
       let result;
       try {
         result = await evaluate(suggestionQuestion(exec), { signal: exec.signal });
-      } catch (error) { return fallback(exec, typeof error?.reason === 'string' ? error.reason : 'unreachable'); }
+      } catch (error) {
+        // Backend failure: no verdict, so do not intervene (pass through).
+        return passThrough(exec, 'error', { reason: typeof error?.reason === 'string' ? error.reason : 'unreachable' });
+      }
       const answer = result?.answers?.verdict;
       const choice = answer?.choice;
-      if (!['allow', 'ask', 'deny'].includes(choice)) return fallback(exec, 'invalid-response');
-      if (typeof answer.confidence !== 'number' || answer.confidence < minConfidence) return fallback(exec, 'low-confidence', typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? { confidence: answer.confidence } : {});
-      if (choice === 'deny') { record(exec, 'deny', { suggestion: 'deny', action: 'deny' }); if (exec && typeof exec === 'object') deniedCalls.add(exec); return { kind: 'deny', reason: 'Dangerous call rejected by decision policy', modelSuggestion: choice }; }
-      record(exec, choice, { suggestion: choice, action: 'ask' });
-      return { kind: 'ask', reason: 'Dangerous call requires host approval', modelSuggestion: choice };
+      if (!['allow', 'ask', 'deny'].includes(choice)) return passThrough(exec, 'error', { reason: 'invalid-response' });
+      const confident = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) && answer.confidence >= minConfidence;
+      // Only a high-confidence deny blocks the call.
+      if (choice === 'deny' && confident) {
+        record(exec, 'deny', { suggestion: 'deny', action: 'deny' });
+        if (exec && typeof exec === 'object') deniedCalls.add(exec);
+        return { kind: 'deny', reason: 'Dangerous call rejected by decision policy', modelSuggestion: choice };
+      }
+      // Uncertain (low confidence) or a non-deny verdict → do not intervene.
+      const detail = { suggestion: choice };
+      if (!confident) { detail.reason = 'low-confidence'; if (typeof answer.confidence === 'number' && Number.isFinite(answer.confidence)) detail.confidence = answer.confidence; }
+      return passThrough(exec, 'allow', detail);
     },
     async preExecute(exec, next) {
       const classification = classifyDangerous(exec, await resolveRules());
@@ -131,13 +149,12 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
       const id = exec?.agent?.session?.id;
       if (sessions && typeof id === 'string') {
         try {
-          const snapshot = sessions.snapshot(id);
-          // A deliberate user toggle bypasses the gate; involuntary capacity overflow must not fail-open.
-          if (snapshot.enabled === false && !snapshot.capacityExceeded) return next();
-          if (snapshot.capacityExceeded) return fallback(exec, 'capacity');
-        } catch { return fallback(exec, 'unreachable'); }
+          // A deliberate user toggle bypasses the gate entirely (no record).
+          if (sessions.snapshot(id).enabled === false) return next();
+        } catch { passThrough(exec, 'error', { reason: 'unreachable' }); return next(); }
       }
-      return this.evaluate(exec);
+      const decision = await this.evaluate(exec);
+      return decision ?? next();
     },
   };
 }

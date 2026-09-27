@@ -82,7 +82,7 @@ test('modal shows gate metrics and the decision log, not the backend form', asyn
   assert.match(gateCard.textContent, /实际结果.*1 \/ 2/);
   await view.findByText(/已拒绝/);
   await view.findByText(/得分偏低/);
-  await view.findByText(/评估失败/);
+  await view.findByText(/未干预/);
   await view.findByText(/后端不可达/);
   await view.findByText(/后端连接/);
   assert.equal(view.queryByLabelText('服务地址'), null, 'the backend form must not appear in the modal');

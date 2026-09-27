@@ -46,15 +46,11 @@ test('successful varied progress does not trip the guard', () => {
   }
 });
 
-test('the master switch pauses the loop guard, but capacity overflow still guards', () => {
+test('the master switch pauses the loop guard', () => {
   const off = createLoopGuard({ threshold: 2, sessions: { snapshot: () => ({ enabled: false }) } });
   const a = exec('bash', { command: 'ls' });
   assert.equal(off.check(a), undefined);
   assert.equal(off.check(a), undefined, 'a disabled session is not guarded');
-
-  const overflow = createLoopGuard({ threshold: 2, sessions: { snapshot: () => ({ enabled: false, capacityExceeded: true }) } });
-  assert.equal(overflow.check(a), undefined);
-  assert.match(overflow.check(a), /repeat|loop/i, 'capacity overflow keeps guarding');
 });
 
 test('per-session run memory is bounded across many sessions', () => {

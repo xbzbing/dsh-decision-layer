@@ -11,7 +11,7 @@ interface LogEntry { id?: string; at: number; kind: 'gate' | 'check' | 'narrow' 
 interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics; narrow?: NarrowMetrics; complete?: CompleteMetrics }
 interface Analysis { totalDecisions: number; annotations: { rated: number; good: number; bad: number; unsure: number }; ratings: Record<string, 'good' | 'bad' | 'unsure'>; trendBacktest: { warnHits: number; severeHits: number; maxRun: number } }
 type Rating = 'good' | 'bad' | 'unsure';
-interface Session { enabled: boolean; capacityExceeded?: boolean }
+interface Session { enabled: boolean }
 interface Probe { connected: boolean; model?: string; effectiveUrl?: string; reason?: string }
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
 interface Props { sessionId: string; t: Translate<TranslationKey> }
@@ -43,7 +43,6 @@ function SessionPanel({ sessionId, t }: Props) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [enabled, setEnabled] = useState<boolean | null>(null);
-  const [capacityExceeded, setCapacityExceeded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
@@ -55,7 +54,7 @@ function SessionPanel({ sessionId, t }: Props) {
   useEffect(() => {
     let live = true;
     void request<Session>(`session?sessionId=${encodeURIComponent(sessionId)}`)
-      .then(value => { if (live) { setEnabled(value.enabled); setCapacityExceeded(Boolean(value.capacityExceeded)); } })
+      .then(value => { if (live) setEnabled(value.enabled); })
       .catch(() => { if (live) setMessage(t('error')); });
     void request<Metrics>(`metrics?sessionId=${encodeURIComponent(sessionId)}`)
       .then(value => { if (live) setMetrics(value); }).catch(() => {});
@@ -99,7 +98,7 @@ function SessionPanel({ sessionId, t }: Props) {
     try {
       const value = await request<Session>('session', { method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ sessionId, enabled: next }) });
-      setEnabled(value.enabled); setCapacityExceeded(Boolean(value.capacityExceeded));
+      setEnabled(value.enabled);
     } catch { setMessage(t('error')); }
     finally { setBusy(false); }
   };
@@ -109,11 +108,10 @@ function SessionPanel({ sessionId, t }: Props) {
     : reason === 'http-error' ? t('reasonHttpError')
     : reason === 'invalid-response' ? t('reasonInvalidResponse')
     : reason === 'low-confidence' ? t('reasonLowConfidence')
-    : reason === 'capacity' ? t('reasonCapacity')
     : reason === 'too-many-candidates' ? t('reasonTooMany')
     : reason === 'low-keep' ? t('reasonLowKeep')
     : reason === 'config' ? t('reasonConfig') : reason;
-  const actionText = (action?: string) => action === 'deny' ? t('actionDeny') : action === 'ask' ? t('actionAsk') : action;
+  const actionText = (action?: string) => action === 'deny' ? t('actionDeny') : action === 'ask' ? t('actionAsk') : action === 'pass' ? t('actionPass') : action;
   const failDetail = (entry: LogEntry) => {
     const reason = reasonText(entry.reason);
     if (entry.reason === 'low-confidence' && typeof entry.confidence === 'number') return `${reason}（${t('logConfidence')} ${entry.confidence}）`;
@@ -125,11 +123,20 @@ function SessionPanel({ sessionId, t }: Props) {
 
   const renderGate = (entry: LogEntry) => {
     const tool = <code className="decision-log-tool">{entry.tool ?? '—'}</code>;
-    if (entry.outcome === 'error') return <>{t('logGate')} · {tool} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
-    const verdict = entry.outcome === 'deny' ? t('actionDeny') : actionText(entry.action) ?? entry.outcome;
-    const suggestion = entry.suggestion && entry.suggestion !== entry.action
-      ? <span className="decision-log-detail"> · {t('logSuggested')} {actionText(entry.suggestion)}</span> : null;
-    return <>{t('logGate')} · {tool} <span className="decision-log-verdict">→ {verdict}</span>{suggestion}</>;
+    // error / invalid pass-throughs: the gate could not judge and did
+    // not intervene; the call proceeded on its original path.
+    if (entry.outcome === 'error') return <>{t('logGate')} · {tool} <span className="decision-log-detail">{t('gatePassThrough')}{entry.reason ? ` · ${failDetail(entry)}` : ''}</span></>;
+    if (entry.outcome === 'deny') {
+      const suggestion = entry.suggestion && entry.suggestion !== 'deny'
+        ? <span className="decision-log-detail"> · {t('logSuggested')} {actionText(entry.suggestion)}</span> : null;
+      return <>{t('logGate')} · {tool} <span className="decision-log-verdict">→ {t('actionDeny')}</span>{suggestion}</>;
+    }
+    // outcome 'allow' with action 'pass' = no intervention (allow/ask verdict, or
+    // a low-confidence verdict). Show it as pass-through with the model suggestion.
+    const suggestion = entry.suggestion ? <span className="decision-log-detail"> · {t('logSuggested')} {actionText(entry.suggestion)}</span> : null;
+    const lowConf = entry.reason === 'low-confidence' && typeof entry.confidence === 'number'
+      ? <span className="decision-log-detail"> · {t('reasonLowConfidence')} {entry.confidence}</span> : null;
+    return <>{t('logGate')} · {tool} <span className="decision-log-verdict">{t('gatePassThrough')}</span>{suggestion}{lowConf}</>;
   };
 
   const renderCheck = (entry: LogEntry) => {
@@ -219,9 +226,8 @@ function SessionPanel({ sessionId, t }: Props) {
       <div className="decision-body">
       <section>
         {enabled === null && <p role="status">{t('loading')}</p>}
-        {capacityExceeded && <p role="alert">{t('capacity')}</p>}
         <label className="decision-toggle"><span className="decision-toggle-text">{t('enabled')}</span>
-          <span className="decision-toggle-box"><input className="decision-toggle-input" type="checkbox" checked={enabled === true} disabled={busy || enabled === null || capacityExceeded}
+          <span className="decision-toggle-box"><input className="decision-toggle-input" type="checkbox" checked={enabled === true} disabled={busy || enabled === null}
             onChange={event => void updateEnabled(event.target.checked)} /><span className="decision-toggle-track" aria-hidden="true" /></span></label>
         <div className="decision-status">
           <span className={`decision-status-dot decision-status-${status}`} aria-hidden="true" />

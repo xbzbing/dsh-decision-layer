@@ -11,17 +11,21 @@ test('session switch defaults on and counters stay empty for manual work', () =>
   assert.equal(sessions.snapshot('one').attempts, 0);
 });
 
-test('reading unknown sessions does not consume the bounded state budget', () => {
+test('reading unknown sessions does not allocate, and a full store evicts the oldest (FIFO)', () => {
   const sessions = createSessionState({ maxSessions: 2 });
+  // Reads never allocate, so 500 unseen ids do not consume the budget.
   for (let i = 0; i < 500; i++) assert.equal(sessions.snapshot(`read-${i}`).enabled, true);
   sessions.setEnabled('one', false);
   sessions.setEnabled('two', false);
+  // Admitting 'three' with the store full evicts the oldest ('one').
   sessions.setEnabled('three', false);
-  assert.equal(sessions.snapshot('one').enabled, false);
-  assert.equal(sessions.snapshot('three').enabled, false);
-  assert.equal(sessions.snapshot('three').capacityExceeded, true);
-  assert.throws(() => sessions.setEnabled('three', true), /limit/i);
-  assert.throws(() => sessions.record('three', 'gate', 'deny'), /limit/i);
+  assert.equal(sessions.snapshot('three').enabled, false, 'newest is kept');
+  assert.equal(sessions.snapshot('two').enabled, false, 'second-newest is kept');
+  assert.equal(sessions.snapshot('one').enabled, true, 'oldest was evicted and rebuilds as default enabled');
+  // No capacity-exceeded state exists anymore: writes never throw on a full store.
+  assert.equal(sessions.snapshot('three').capacityExceeded, undefined);
+  sessions.record('four', 'gate', 'deny');
+  assert.equal(sessions.snapshot('four').gate.deny, 1, 'a new session is admitted by evicting the oldest');
 });
 
 test('self-check records low scores and failures separately from the gate', () => {

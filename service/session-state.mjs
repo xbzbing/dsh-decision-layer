@@ -23,11 +23,17 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
   if (!Number.isSafeInteger(maxLogEntries) || maxLogEntries < 1) throw new Error('Invalid log limit');
   const sessions = new Map();
   const sink = typeof onLog === 'function' ? onLog : undefined;
+  // FIFO eviction: when the map is full, drop the oldest-inserted session before
+  // admitting a new one (Map preserves insertion order, so the first key is the
+  // oldest). This mirrors loop-guard / narrowing and means the store never
+  // "fills up" — there is no capacity-exceeded state. An evicted session's
+  // in-memory counters/log are gone, but the persisted JSONL log is unaffected;
+  // a later call rebuilds an empty state for it.
   const writable = id => {
     const key = sessionKey(id);
     let state = sessions.get(key);
     if (!state) {
-      if (sessions.size >= maxSessions) throw new Error('Session state limit reached');
+      if (sessions.size >= maxSessions) sessions.delete(sessions.keys().next().value);
       state = emptyState();
       sessions.set(key, state);
     }
@@ -36,16 +42,12 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
   return {
     setEnabled(id, enabled) {
       if (typeof enabled !== 'boolean') throw new Error('Invalid enabled value');
-      const key = sessionKey(id);
-      if (!sessions.has(key) && sessions.size >= maxSessions && !enabled) return;
-      writable(key).enabled = enabled;
+      writable(id).enabled = enabled;
     },
     snapshot(id) {
       const stored = sessions.get(sessionKey(id));
-      const overflow = !stored && sessions.size >= maxSessions;
       const state = stored ?? emptyState();
-      const value = { enabled: overflow ? false : state.enabled, hasAutomaticDecisions: state.attempts > 0, attempts: state.attempts, failures: state.failures };
-      if (overflow) value.capacityExceeded = true;
+      const value = { enabled: state.enabled, hasAutomaticDecisions: state.attempts > 0, attempts: state.attempts, failures: state.failures };
       if (state.gate.attempts > 0) value.gate = { ...state.gate, actual: { ...state.gate.actual } };
       if (state.check.attempts > 0) value.check = { attempts: state.check.attempts, failures: state.check.failures, low: state.check.low, trend: { run: state.check.run, severity: state.check.severity } };
       if (state.narrow.attempts > 0) value.narrow = { ...state.narrow };
