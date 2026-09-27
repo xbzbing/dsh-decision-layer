@@ -71,10 +71,14 @@ const css = `
 .decision-status-recheck:hover:not(:disabled){background:var(--dsw-alias-bg-layer-1,#f2f4f6);color:var(--dsw-alias-label-primary,#202124)}
 .decision-status-recheck:disabled{opacity:.5;cursor:default}
 
-.decision-config{display:grid;gap:0;max-width:34rem;color:var(--dsw-alias-label-primary,#202124)}
+.decision-config{display:grid;gap:0;color:var(--dsw-alias-label-primary,#202124);container-type:inline-size}
 .decision-config section{margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--dsw-alias-border-l2,#eceff1)}
 .decision-config section:first-child{margin-top:0;padding-top:0;border-top:0}
-.decision-config h3{font-size:1rem;font-weight:600;margin:0 0 .7rem}
+.decision-config h3{font-size:1rem;font-weight:600;margin:0 0 .7rem;display:flex;align-items:center;gap:.55rem}
+.decision-head-icon{flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;width:1.7rem;height:1.7rem;border-radius:8px}
+.decision-head-icon-features{color:#1f8a70;background:rgba(31,138,112,.14)}
+.decision-head-icon-advanced{color:#c98a1e;background:rgba(201,138,30,.16)}
+.decision-head-icon-backend{color:#5b6ee1;background:rgba(91,110,225,.15)}
 .decision-collapse{margin-top:1.25rem;padding-top:1.25rem;border-top:1px solid var(--dsw-alias-border-l2,#eceff1)}
 .decision-collapse-head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;list-style:none;cursor:pointer;border-radius:8px}
 .decision-collapse-head::-webkit-details-marker{display:none}
@@ -105,6 +109,9 @@ const css = `
 .decision-field-block{display:grid;gap:.35rem}
 .decision-field-block+.decision-field-block{margin-top:1.1rem}
 .decision-field-block .decision-muted{font-weight:400;margin:0}
+.decision-advanced-grid{display:grid;grid-template-columns:1fr;gap:1.1rem;align-items:start;justify-content:start}
+.decision-advanced-grid .decision-field-block+.decision-field-block{margin-top:0}
+@container (min-width:34rem){.decision-advanced-grid{grid-template-columns:repeat(2,minmax(0,28rem));column-gap:2rem}}
 .decision-subhead{font-size:.86rem;font-weight:600;color:var(--dsw-alias-label-secondary,#59636e)}
 .decision-toggle{display:flex;align-items:center;justify-content:space-between;gap:1rem;font-size:.86rem;font-weight:600;cursor:pointer}
 .decision-toggle-text{flex:1 1 auto}

@@ -32,6 +32,35 @@ const prefixesText = (settings?: NarrowSettings) => (settings?.keepPrefixes ?? D
 const maxCandidatesOf = (settings?: NarrowSettings) => settings?.maxCandidates ?? DEFAULT_MAX_CANDIDATES;
 const thresholdOf = (settings?: NarrowSettings) => settings?.threshold ?? DEFAULT_THRESHOLD;
 
+// Small section-heading glyphs in a shared 16-viewBox line style. Each sits in a
+// tinted rounded badge with its own accent color so the three sections are
+// visually distinct at a glance: features (brand green, the on/off switches),
+// advanced (amber, the tuning sliders), backend (indigo, the server stack).
+function HeadIcon({ name }: { name: 'features' | 'advanced' | 'backend' }) {
+  const glyphs = {
+    features: <>
+      <rect x="2" y="3" width="12" height="4.2" rx="2.1" stroke="currentColor" stroke-width="1.3" />
+      <circle cx="11.9" cy="5.1" r="1.25" fill="currentColor" />
+      <rect x="2" y="8.8" width="12" height="4.2" rx="2.1" stroke="currentColor" stroke-width="1.3" />
+      <circle cx="4.1" cy="10.9" r="1.25" fill="currentColor" />
+    </>,
+    advanced: <>
+      <path d="M2.5 5h11M2.5 11h11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+      <circle cx="10.5" cy="5" r="1.9" fill="var(--dsw-alias-bg-layer-2,#fff)" stroke="currentColor" stroke-width="1.3" />
+      <circle cx="5.5" cy="11" r="1.9" fill="var(--dsw-alias-bg-layer-2,#fff)" stroke="currentColor" stroke-width="1.3" />
+    </>,
+    backend: <>
+      <rect x="2.3" y="2.6" width="11.4" height="4.6" rx="1.1" stroke="currentColor" stroke-width="1.3" />
+      <rect x="2.3" y="8.8" width="11.4" height="4.6" rx="1.1" stroke="currentColor" stroke-width="1.3" />
+      <circle cx="5" cy="4.9" r=".7" fill="currentColor" />
+      <circle cx="5" cy="11.1" r=".7" fill="currentColor" />
+    </>,
+  };
+  return <span className={`decision-head-icon decision-head-icon-${name}`} aria-hidden="true">
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none">{glyphs[name]}</svg>
+  </span>;
+}
+
 function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: (next: boolean) => void }) {
   return <label className="decision-toggle">
     <span className="decision-toggle-text">{label}</span>
@@ -151,7 +180,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
 
   return <div className="decision-config">
     <details className="decision-collapse" open>
-      <summary className="decision-collapse-head"><h3>{t('basicFeatures')}</h3>
+      <summary className="decision-collapse-head"><h3><HeadIcon name="features" />{t('basicFeatures')}</h3>
         <span className="decision-collapse-icon" aria-hidden="true" /></summary>
       <div className="decision-collapse-body">
         <Toggle label={t('featureGate')} checked={gateOn} disabled={!ready}
@@ -166,32 +195,34 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
       </div>
     </details>
     <details className="decision-collapse">
-      <summary className="decision-collapse-head"><h3>{t('advancedConfig')}</h3>
+      <summary className="decision-collapse-head"><h3><HeadIcon name="advanced" />{t('advancedConfig')}</h3>
         <span className="decision-collapse-icon" aria-hidden="true" /></summary>
       <form className="decision-collapse-body" onSubmit={event => void saveAdvanced(event)}>
-        <div className="decision-field-block">
-          <span className="decision-subhead">{t('selfCheck')}</span>
-          <Toggle label={t('selfCheckSteer')} checked={checkMode === 'steer'} disabled={!ready || !checkOn}
-            onChange={next => { setCheckMode(next ? 'steer' : 'observe'); setAdvancedDirty(true); }} />
-          <p className="decision-muted">{t('selfCheckHint')}</p>
-        </div>
-        <div className="decision-field-block">
-          <span className="decision-subhead">{t('narrow')}</span>
-          <Toggle label={t('narrowObserveLabel')} checked={narrowMode === 'observe'} disabled={!ready || !narrowOn}
-            onChange={next => { setNarrowMode(next ? 'observe' : 'enforce'); setAdvancedDirty(true); }} />
-          <p className="decision-muted">{t('narrowHint')}</p>
-          <label className="decision-field decision-field-textarea">{t('narrowKeepLabel')}
-            <textarea className="decision-prefixes" rows={3} value={keepPrefixes} disabled={!ready || !narrowOn}
-              placeholder="mcp__openviking" onChange={event => { setKeepPrefixes(event.target.value); setAdvancedDirty(true); }} />
-            <small className="decision-muted">{t('narrowKeepHint')}</small></label>
-          <label className="decision-field decision-field-inline">{t('narrowMaxLabel')}
-            <input className="decision-narrow-cap" type="number" min={1} max={200} step={1} value={maxCandidates} disabled={!ready || !narrowOn}
-              placeholder="20" onChange={event => { setMaxCandidates(event.target.value); setAdvancedDirty(true); }} />
-            <small className="decision-muted">{t('narrowMaxHint')}</small></label>
-          <label className="decision-field decision-field-inline">{t('narrowThresholdLabel')}
-            <input className="decision-narrow-cap" type="number" min={0} max={1} step={0.05} value={threshold} disabled={!ready || !narrowOn}
-              placeholder="0.3" onChange={event => { setThreshold(event.target.value); setAdvancedDirty(true); }} />
-            <small className="decision-muted">{t('narrowThresholdHint')}</small></label>
+        <div className="decision-advanced-grid">
+          <div className="decision-field-block">
+            <span className="decision-subhead">{t('advancedSwitches')}</span>
+            <Toggle label={t('selfCheckSteer')} checked={checkMode === 'steer'} disabled={!ready || !checkOn}
+              onChange={next => { setCheckMode(next ? 'steer' : 'observe'); setAdvancedDirty(true); }} />
+            <p className="decision-muted">{t('selfCheckHint')}</p>
+            <Toggle label={t('narrowObserveLabel')} checked={narrowMode === 'observe'} disabled={!ready || !narrowOn}
+              onChange={next => { setNarrowMode(next ? 'observe' : 'enforce'); setAdvancedDirty(true); }} />
+            <p className="decision-muted">{t('narrowHint')}</p>
+          </div>
+          <div className="decision-field-block">
+            <span className="decision-subhead">{t('advancedParams')}</span>
+            <label className="decision-field">{t('narrowKeepLabel')}
+              <textarea className="decision-prefixes" rows={3} value={keepPrefixes} disabled={!ready || !narrowOn}
+                placeholder="mcp__openviking" onChange={event => { setKeepPrefixes(event.target.value); setAdvancedDirty(true); }} />
+              <small className="decision-muted">{t('narrowKeepHint')}</small></label>
+            <label className="decision-field decision-field-inline">{t('narrowMaxLabel')}
+              <input className="decision-narrow-cap" type="number" min={1} max={200} step={1} value={maxCandidates} disabled={!ready || !narrowOn}
+                placeholder="20" onChange={event => { setMaxCandidates(event.target.value); setAdvancedDirty(true); }} />
+              <small className="decision-muted">{t('narrowMaxHint')}</small></label>
+            <label className="decision-field decision-field-inline">{t('narrowThresholdLabel')}
+              <input className="decision-narrow-cap" type="number" min={0} max={1} step={0.05} value={threshold} disabled={!ready || !narrowOn}
+                placeholder="0.3" onChange={event => { setThreshold(event.target.value); setAdvancedDirty(true); }} />
+              <small className="decision-muted">{t('narrowThresholdHint')}</small></label>
+          </div>
         </div>
         <div className="decision-actions">
           <button disabled={busy || !ready || !advancedDirty} type="submit">{t('saveAdvanced')}</button>
@@ -199,7 +230,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
       </form>
     </details>
     <section>
-      <h3>{t('backend')}</h3>
+      <h3><HeadIcon name="backend" />{t('backend')}</h3>
       {ready && <p className="decision-muted decision-destination">{t('destination')}<code>{config.effectiveUrl}</code></p>}
       <form onSubmit={event => void saveBackend(event)}>
         <label className="decision-field">{t('url')}
