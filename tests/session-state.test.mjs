@@ -68,6 +68,18 @@ test('narrow log entries keep mode and dropped count', () => {
   assert.equal(entry.dropped, 3);
 });
 
+test('onLog sink receives the full untruncated record with session id', () => {
+  const sunk = [];
+  const sessions = createSessionState({ onLog: entry => sunk.push(entry) });
+  const many = Array.from({ length: 20 }, (_, i) => `tool_${i}`);
+  sessions.log('sess-1', { kind: 'narrow', outcome: 'applied', dropped: 20, kept: 2, mode: 'observe', tools: many });
+  assert.equal(sessions.snapshot('sess-1').log.at(-1).tools.length, 12, 'panel record stays capped at 12 names');
+  assert.equal(sunk.length, 1);
+  assert.equal(sunk[0].sessionId, 'sess-1');
+  assert.equal(sunk[0].tools.length, 20, 'sink gets every dropped tool name');
+  assert.equal(sunk[0].kind, 'narrow');
+});
+
 test('each automatic attempt counts once and failure is separate', () => {
   const sessions = createSessionState();
   sessions.record('one', 'gate', 'error');

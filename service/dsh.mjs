@@ -8,6 +8,7 @@ import { createDangerGate, normalizeDangerRules } from './danger-gate.mjs';
 import { createSelfCheck } from './self-check.mjs';
 import { createNarrowing } from './narrowing.mjs';
 import { createLoopGuard } from './loop-guard.mjs';
+import { createLogStore } from './log-store.mjs';
 
 export const name = 'dsh-decision-layer';
 export const inject = ['tools', 'skills'];
@@ -53,7 +54,10 @@ function agentTools(ctx, agent) {
 export async function apply(ctx, options = {}) {
   const path = options.configPath;
   const backend = createBackend({ config: () => resolveConfig({ path }) });
-  const sessions = createSessionState();
+  // The research log sink is attached once the web server reveals the instance
+  // port (used in the file name); until then decision logs stay in memory only.
+  let logStore;
+  const sessions = createSessionState({ onLog: entry => logStore?.append(entry) });
   const gate = createDangerGate({
     evaluate: (input, request) => backend.evaluate(input, request),
     sessions,
@@ -164,7 +168,8 @@ export async function apply(ctx, options = {}) {
   });
 
   ctx.inject(['webServer'], web => {
+    logStore = createLogStore({ port: web.webServer.port });
     const unregister = createManagerRoutes({ path, sessions, backend, bindHost: web.webServer.host }).map(route => web.webServer.register(route));
-    return () => unregister.forEach(dispose => dispose());
+    return () => { unregister.forEach(dispose => dispose()); const store = logStore; logStore = undefined; void store?.dispose(); };
   });
 }

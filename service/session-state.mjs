@@ -14,10 +14,11 @@ function safeTool(value) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 128) : undefined;
 }
 
-export function createSessionState({ maxSessions = 1024, maxLogEntries = 50 } = {}) {
+export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onLog } = {}) {
   if (!Number.isSafeInteger(maxSessions) || maxSessions < 1) throw new Error('Invalid session limit');
   if (!Number.isSafeInteger(maxLogEntries) || maxLogEntries < 1) throw new Error('Invalid log limit');
   const sessions = new Map();
+  const sink = typeof onLog === 'function' ? onLog : undefined;
   const writable = id => {
     const key = sessionKey(id);
     let state = sessions.get(key);
@@ -99,6 +100,16 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50 } = 
       const state = writable(id);
       state.log.push(record);
       if (state.log.length > maxLogEntries) state.log.splice(0, state.log.length - maxLogEntries);
+      // Full, untruncated record for the research log sink (all dropped tool
+      // names, keyed by session id). The in-memory panel record above stays capped.
+      if (sink) {
+        const full = { ...record, sessionId: sessionKey(id) };
+        if (Array.isArray(entry.tools)) {
+          const allNames = entry.tools.filter(name => typeof name === 'string' && name.trim()).map(name => name.trim());
+          if (allNames.length > 0) full.tools = allNames;
+        }
+        try { sink(full); } catch { /* persistence is best effort */ }
+      }
     },
   };
 }
