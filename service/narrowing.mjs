@@ -9,6 +9,12 @@ export const DEFAULT_CORE_TOOLS = Object.freeze([
   'read', 'write', 'edit', 'bash', 'glob', 'grep', 'ls', 'todo_write',
 ]);
 
+// Tool-name prefixes that are always kept and never judged, on top of the core
+// tools. Memory/context tools like OpenViking are "keep resident, trigger on
+// demand": their relevance rarely shows in the literal task text, so per-tool
+// relevance judging would keep pruning them. Users can override this list.
+export const DEFAULT_KEEP_PREFIXES = Object.freeze(['mcp__openviking']);
+
 // Intersect the host-allowed tool set with the model's relevance verdict. Only
 // removes tools; never adds. Any missing or invalid noul keeps the tool, and a
 // verdict that would strip everything is skipped so the agent is never disabled.
@@ -58,15 +64,20 @@ export function relevanceQuestions(state, tools) {
 //   C. if narrowing would leave fewer than `minKeep` tools total, the verdict is
 //      treated as untrustworthy and no restriction is applied.
 export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFAULT_CORE_TOOLS,
-  minCandidates = 2, maxCandidates = 20, minKeep = 5 } = {}) {
+  keepPrefixes = DEFAULT_KEEP_PREFIXES, minCandidates = 2, maxCandidates = 20, minKeep = 5 } = {}) {
   if (typeof evaluate !== 'function') throw new Error('Narrowing requires an evaluator');
   const core = new Set(Array.isArray(coreTools) ? coreTools.filter(name => typeof name === 'string') : []);
+  const defaultPrefixes = Array.isArray(keepPrefixes) ? keepPrefixes.filter(prefix => typeof prefix === 'string' && prefix) : [];
   const resolveSettings = async () => {
     let raw = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
     const mode = raw?.mode === 'observe' ? 'observe' : 'enforce';
     const threshold = typeof raw?.threshold === 'number' && Number.isFinite(raw.threshold) && raw.threshold >= 0 && raw.threshold <= 1 ? raw.threshold : 0.5;
-    return { mode, threshold };
+    // An explicit array in settings (including empty) overrides the default set.
+    const prefixes = Array.isArray(raw?.keepPrefixes)
+      ? raw.keepPrefixes.filter(prefix => typeof prefix === 'string' && prefix)
+      : defaultPrefixes;
+    return { mode, threshold, prefixes };
   };
   const record = (turn, outcome, detail = {}) => {
     const id = turn?.agent?.session?.id;
@@ -82,9 +93,12 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     async review(turn) {
       const tools = Array.isArray(turn?.tools) ? turn.tools.filter(tool => tool && typeof tool.name === 'string') : [];
       const names = tools.map(tool => tool.name);
-      // A: core tools are always kept and never sent to the model for judging.
-      const coreNames = names.filter(name => core.has(name));
-      const optional = tools.filter(tool => !core.has(tool.name));
+      const { mode, threshold, prefixes } = await resolveSettings();
+      // A: core tools and keep-prefix matches are always kept and never sent to
+      // the model for judging (e.g. mcp__openviking memory tools stay resident).
+      const alwaysKeep = name => core.has(name) || prefixes.some(prefix => name.startsWith(prefix));
+      const keptNames = names.filter(alwaysKeep);
+      const optional = tools.filter(tool => !alwaysKeep(tool.name));
       const optionalNames = optional.map(tool => tool.name);
       if (optional.length < minCandidates) return { ...skip, keep: names };
       const hasState = typeof turn?.state === 'string' ? turn.state.trim().length > 0
@@ -95,7 +109,6 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
         try { if (sessions.snapshot(id).enabled === false) return { ...skip, keep: names }; }
         catch { return { ...skip, keep: names }; }
       }
-      const { mode, threshold } = await resolveSettings();
       // B: a large optional surface must not be enforced — only observed.
       const overCap = optional.length > maxCandidates;
       const effectiveMode = overCap ? 'observe' : mode;
@@ -103,7 +116,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
       try { result = await evaluate(relevanceQuestions(turn.state, optional), { signal: turn.signal }); }
       catch (error) { record(turn, 'error', { reason: typeof error?.reason === 'string' ? error.reason : 'unreachable', mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
       const narrowed = narrowTools(optionalNames, result, { threshold });
-      const keep = [...coreNames, ...narrowed.keep];
+      const keep = [...keptNames, ...narrowed.keep];
       const drop = narrowed.drop;
       // C: too few tools left over is a sign the verdict over-pruned; do not apply.
       const trustworthy = keep.length >= minKeep;

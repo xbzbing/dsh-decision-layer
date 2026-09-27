@@ -73,6 +73,17 @@ test('narrowing settings are validated, persisted, and resolved', async () => {
   assert.deepEqual((await saveConfig({ narrowSettings: {} }, narrowFile)).narrowSettings, {});
 });
 
+test('narrowing keepPrefixes are validated, persisted, and resolved', async () => {
+  const keepFile = join(temporary, 'narrow-keep.json');
+  const saved = await saveConfig({ apiKey: 'k', narrowSettings: { mode: 'enforce', keepPrefixes: ['mcp__openviking', 'mcp__git'] } }, keepFile);
+  assert.deepEqual(saved.narrowSettings, { mode: 'enforce', keepPrefixes: ['mcp__openviking', 'mcp__git'] });
+  assert.deepEqual((await resolveConfig({ path: keepFile, env: {} })).narrowSettings.keepPrefixes, ['mcp__openviking', 'mcp__git']);
+  // an explicit empty list is preserved (clears the runtime default)
+  assert.deepEqual((await saveConfig({ narrowSettings: { keepPrefixes: [] } }, keepFile)).narrowSettings.keepPrefixes, []);
+  await assert.rejects(saveConfig({ narrowSettings: { keepPrefixes: ['ok', 123] } }, keepFile), /narrowing/i);
+  await assert.rejects(saveConfig({ narrowSettings: { keepPrefixes: 'mcp' } }, keepFile), /narrowing/i);
+});
+
 test('per-feature switches are validated, persisted, and default to enabled', async () => {
   const featureFile = join(temporary, 'features.json');
   const saved = await saveConfig({ apiKey: 'k', features: { gate: false, check: true, narrow: false } }, featureFile);

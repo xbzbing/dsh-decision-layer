@@ -102,6 +102,42 @@ test('core tools are always kept and never judged for relevance', async () => {
   assert.equal(result.keep.includes('bash'), true);
 });
 
+test('keep-prefix tools are always kept and never judged, on top of core tools', async () => {
+  let asked;
+  const check = createNarrowing({ settings: { mode: 'enforce', keepPrefixes: ['mcp__openviking'] }, minKeep: 1, coreTools: [],
+    evaluate: async question => { asked = Object.keys(question.questions); return answers({ web_search: 0.05 }); } });
+  const result = await check.review(turn('search the web', [
+    { name: 'mcp__openviking__find', description: '' }, { name: 'mcp__openviking__search', description: '' },
+    { name: 'web_search', description: '' }, { name: 'web_fetch', description: '' },
+  ]));
+  // openviking tools are never sent to the model, only the plain optional ones are
+  assert.deepEqual(asked.sort(), ['web_fetch', 'web_search']);
+  // even when the plain optional tools are all dropped, the prefixed ones survive
+  assert.equal(result.keep.includes('mcp__openviking__find'), true);
+  assert.equal(result.keep.includes('mcp__openviking__search'), true);
+});
+
+test('keep prefixes default to mcp__openviking when settings omit the field', async () => {
+  let asked;
+  const check = createNarrowing({ settings: { mode: 'enforce' }, minKeep: 1, coreTools: [],
+    evaluate: async question => { asked = Object.keys(question.questions); return answers({ web_search: 0.9 }); } });
+  const result = await check.review(turn('do work', [
+    { name: 'mcp__openviking__remember', description: '' }, { name: 'web_search', description: '' }, { name: 'web_fetch', description: '' },
+  ]));
+  assert.equal(asked.includes('mcp__openviking__remember'), false, 'default prefix keeps openviking out of judging');
+  assert.equal(result.keep.includes('mcp__openviking__remember'), true);
+});
+
+test('an explicit empty keepPrefixes clears the default so everything optional is judged', async () => {
+  let asked;
+  const check = createNarrowing({ settings: { mode: 'enforce', keepPrefixes: [] }, minKeep: 1, coreTools: [],
+    evaluate: async question => { asked = Object.keys(question.questions); return answers({ web_search: 0.9, mcp__openviking__find: 0.05 }); } });
+  await check.review(turn('do work', [
+    { name: 'mcp__openviking__find', description: '' }, { name: 'web_search', description: '' },
+  ]));
+  assert.equal(asked.includes('mcp__openviking__find'), true, 'cleared prefixes let openviking be judged');
+});
+
 test('B: a large optional surface downgrades enforce to observe and never restricts', async () => {
   const logs = [];
   const sessions = { snapshot: () => ({ enabled: true }), recordNarrow: () => {}, log: (_id, entry) => logs.push(entry) };

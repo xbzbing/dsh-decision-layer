@@ -76,7 +76,7 @@ function validCheck(value) {
 
 function validNarrow(value) {
   if (!safeObject(value)) return undefined;
-  if (Object.keys(value).some(key => !['mode', 'threshold'].includes(key))) throw new Error('Invalid narrowing settings');
+  if (Object.keys(value).some(key => !['mode', 'threshold', 'keepPrefixes'].includes(key))) throw new Error('Invalid narrowing settings');
   const narrow = {};
   if (value.mode !== undefined) {
     if (value.mode !== 'observe' && value.mode !== 'enforce') throw new Error('Invalid narrowing settings');
@@ -85,6 +85,16 @@ function validNarrow(value) {
   if (value.threshold !== undefined) {
     if (typeof value.threshold !== 'number' || !Number.isFinite(value.threshold) || value.threshold < 0 || value.threshold > 1) throw new Error('Invalid narrowing settings');
     narrow.threshold = value.threshold;
+  }
+  // Tool name prefixes that are always kept and never judged for relevance, on
+  // top of the built-in core tools. An explicit empty array clears the list; an
+  // absent field lets narrowing fall back to its own default (mcp__openviking).
+  if (value.keepPrefixes !== undefined) {
+    if (!Array.isArray(value.keepPrefixes) || value.keepPrefixes.length > 32 ||
+      value.keepPrefixes.some(item => typeof item !== 'string' || !item.trim() || item.length > 128)) {
+      throw new Error('Invalid narrowing settings');
+    }
+    narrow.keepPrefixes = value.keepPrefixes.map(item => item.trim());
   }
   return narrow;
 }
