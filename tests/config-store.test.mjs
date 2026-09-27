@@ -84,6 +84,16 @@ test('narrowing keepPrefixes are validated, persisted, and resolved', async () =
   await assert.rejects(saveConfig({ narrowSettings: { keepPrefixes: 'mcp' } }, keepFile), /narrowing/i);
 });
 
+test('narrowing maxCandidates is validated, persisted, and range-checked', async () => {
+  const capFile = join(temporary, 'narrow-cap.json');
+  const saved = await saveConfig({ apiKey: 'k', narrowSettings: { mode: 'enforce', maxCandidates: 40 } }, capFile);
+  assert.equal(saved.narrowSettings.maxCandidates, 40);
+  assert.equal((await resolveConfig({ path: capFile, env: {} })).narrowSettings.maxCandidates, 40);
+  await assert.rejects(saveConfig({ narrowSettings: { maxCandidates: 0 } }, capFile), /narrowing/i);
+  await assert.rejects(saveConfig({ narrowSettings: { maxCandidates: 201 } }, capFile), /narrowing/i);
+  await assert.rejects(saveConfig({ narrowSettings: { maxCandidates: 12.5 } }, capFile), /narrowing/i);
+});
+
 test('per-feature switches are validated, persisted, and default to enabled', async () => {
   const featureFile = join(temporary, 'features.json');
   const saved = await saveConfig({ apiKey: 'k', features: { gate: false, check: true, narrow: false } }, featureFile);

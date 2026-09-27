@@ -4,7 +4,7 @@ import type { TranslationKey } from './i18n.js';
 
 const api = '/plugins/dsh-decision-layer/api';
 interface CheckSettings { mode: 'observe' | 'steer'; lowScoreThreshold: number }
-interface NarrowSettings { mode: 'observe' | 'enforce'; threshold: number; keepPrefixes?: string[] }
+interface NarrowSettings { mode: 'observe' | 'enforce'; threshold: number; keepPrefixes?: string[]; maxCandidates?: number }
 interface Features { gate?: boolean; check?: boolean; narrow?: boolean }
 interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string; checkSettings?: CheckSettings; narrowSettings?: NarrowSettings; features?: Features }
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
@@ -20,10 +20,13 @@ async function request<T>(path: string, fetchFn: typeof fetch, init?: RequestIni
 // The built-in default keep-prefix; shown when the config has none stored yet so
 // the effective set is always visible and editable.
 const DEFAULT_KEEP_PREFIXES = ['mcp__openviking'];
+// The built-in optional-candidate ceiling; above it, enforce downgrades to observe.
+const DEFAULT_MAX_CANDIDATES = 20;
 // Prefixes may be separated by newlines or English commas; blanks and duplicates
 // are dropped so the stored list is clean regardless of how the user typed it.
 const parsePrefixes = (text: string) => Array.from(new Set(text.split(/[,\r\n]+/).map(line => line.trim()).filter(Boolean)));
 const prefixesText = (settings?: NarrowSettings) => (settings?.keepPrefixes ?? DEFAULT_KEEP_PREFIXES).join('\n');
+const maxCandidatesOf = (settings?: NarrowSettings) => settings?.maxCandidates ?? DEFAULT_MAX_CANDIDATES;
 
 function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: (next: boolean) => void }) {
   return <label className="decision-toggle">
@@ -41,6 +44,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   const [checkMode, setCheckMode] = useState<'observe' | 'steer'>('observe');
   const [narrowMode, setNarrowMode] = useState<'observe' | 'enforce'>('enforce');
   const [keepPrefixes, setKeepPrefixes] = useState(DEFAULT_KEEP_PREFIXES.join('\n'));
+  const [maxCandidates, setMaxCandidates] = useState(String(DEFAULT_MAX_CANDIDATES));
   const [gateOn, setGateOn] = useState(true);
   const [checkOn, setCheckOn] = useState(true);
   const [narrowOn, setNarrowOn] = useState(true);
@@ -68,6 +72,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     setCheckMode(value.checkSettings?.mode ?? 'observe');
     setNarrowMode(value.narrowSettings?.mode ?? 'enforce');
     setKeepPrefixes(prefixesText(value.narrowSettings));
+    setMaxCandidates(String(maxCandidatesOf(value.narrowSettings)));
     applyFeatures(value.features);
   };
 
@@ -83,10 +88,14 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   // backend url/model/key are left untouched by omitting them from the body.
   const saveAdvanced = async (event: React.FormEvent) => {
     event.preventDefault();
+    // Clamp the candidate ceiling to the backend's accepted range; a blank or
+    // unparseable value falls back to the default.
+    const parsedCap = Number.parseInt(maxCandidates, 10);
+    const cap = Number.isFinite(parsedCap) ? Math.min(200, Math.max(1, parsedCap)) : DEFAULT_MAX_CANDIDATES;
     setBusy(true);
     try {
       const value = await request<Config>('config', fetchFn, { method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ checkSettings: { mode: checkMode }, narrowSettings: { mode: narrowMode, keepPrefixes: parsePrefixes(keepPrefixes) },
+        body: JSON.stringify({ checkSettings: { mode: checkMode }, narrowSettings: { mode: narrowMode, keepPrefixes: parsePrefixes(keepPrefixes), maxCandidates: cap },
           features: { gate: gateOn, check: checkOn, narrow: narrowOn } }) });
       applyConfig(value); setAdvancedDirty(false); setMessage({ text: t('saved'), ok: true });
     } catch { setMessage({ text: t('error'), ok: false }); }
@@ -166,6 +175,10 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
             <textarea className="decision-prefixes" rows={3} value={keepPrefixes} disabled={!ready || !narrowOn}
               placeholder="mcp__openviking" onChange={event => { setKeepPrefixes(event.target.value); setAdvancedDirty(true); }} />
             <small className="decision-muted">{t('narrowKeepHint')}</small></label>
+          <label className="decision-field decision-field-inline">{t('narrowMaxLabel')}
+            <input className="decision-narrow-cap" type="number" min={1} max={200} step={1} value={maxCandidates} disabled={!ready || !narrowOn}
+              placeholder="20" onChange={event => { setMaxCandidates(event.target.value); setAdvancedDirty(true); }} />
+            <small className="decision-muted">{t('narrowMaxHint')}</small></label>
         </div>
         <div className="decision-actions">
           <button disabled={busy || !ready || !advancedDirty} type="submit">{t('saveAdvanced')}</button>

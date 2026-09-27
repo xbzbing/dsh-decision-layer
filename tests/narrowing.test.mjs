@@ -152,6 +152,23 @@ test('B: a large optional surface downgrades enforce to observe and never restri
   assert.equal(logs.at(-1).reason, 'too-many-candidates');
 });
 
+test('a configured maxCandidates overrides the constructor default', async () => {
+  // 6 optional tools with a configured cap of 5 -> over cap -> observe only.
+  const many = Object.fromEntries(Array.from({ length: 6 }, (_, i) => [`opt_${i}`, i < 2 ? 0.9 : 0.05]));
+  const tools = Object.keys(many).map(name => ({ name, description: '' }));
+  const overCapCheck = createNarrowing({ settings: { mode: 'enforce', maxCandidates: 5 }, maxCandidates: 20, minKeep: 1, coreTools: [],
+    evaluate: async () => answers(many) });
+  const over = await overCapCheck.review(turn('do something', tools));
+  assert.equal(over.overCap, true, 'a lower configured cap trips the guard');
+  assert.equal(over.applied, false);
+  // Raising the configured cap to 50 lets the same surface enforce.
+  const bigCheck = createNarrowing({ settings: { mode: 'enforce', maxCandidates: 50 }, maxCandidates: 20, minKeep: 1, coreTools: [],
+    evaluate: async () => answers(many) });
+  const big = await bigCheck.review(turn('do something', tools));
+  assert.equal(big.overCap, false, 'a higher configured cap admits more candidates');
+  assert.equal(big.applied, true);
+});
+
 test('C: too few tools left over is treated as untrustworthy and not enforced', async () => {
   const check = createNarrowing({ settings: { mode: 'enforce' }, minKeep: 5, coreTools: [],
     evaluate: async () => answers({ a: 0.9, b: 0.1, c: 0.1, d: 0.1, e: 0.1 }) });

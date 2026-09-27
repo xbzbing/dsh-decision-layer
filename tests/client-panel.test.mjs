@@ -148,6 +148,20 @@ test('advanced save posts keep prefixes split on commas or newlines and leaves t
   assert.equal(savedBody.apiKey, undefined, 'advanced save must omit the api key');
 });
 
+test('advanced save posts the configured candidate cap', async () => {
+  let savedBody;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', narrowSettings: { mode: 'enforce', maxCandidates: savedBody.narrowSettings.maxCandidates } }); }
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', narrowSettings: { mode: 'enforce', maxCandidates: 20 } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  const cap = await view.findByPlaceholderText('20');
+  fireEvent.change(cap, { target: { value: '50' } });
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.equal(savedBody?.narrowSettings?.maxCandidates, 50, 'the configured cap is posted'));
+});
+
 test('advanced save button is disabled until an advanced field changes', async () => {
   globalThis.fetch = async url => {
     if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', narrowSettings: { mode: 'enforce', keepPrefixes: ['mcp__openviking'] } });

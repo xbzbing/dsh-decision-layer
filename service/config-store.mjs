@@ -76,7 +76,7 @@ function validCheck(value) {
 
 function validNarrow(value) {
   if (!safeObject(value)) return undefined;
-  if (Object.keys(value).some(key => !['mode', 'threshold', 'keepPrefixes'].includes(key))) throw new Error('Invalid narrowing settings');
+  if (Object.keys(value).some(key => !['mode', 'threshold', 'keepPrefixes', 'maxCandidates'].includes(key))) throw new Error('Invalid narrowing settings');
   const narrow = {};
   if (value.mode !== undefined) {
     if (value.mode !== 'observe' && value.mode !== 'enforce') throw new Error('Invalid narrowing settings');
@@ -95,6 +95,13 @@ function validNarrow(value) {
       throw new Error('Invalid narrowing settings');
     }
     narrow.keepPrefixes = value.keepPrefixes.map(item => item.trim());
+  }
+  // Optional-candidate ceiling: above this count, enforce is downgraded to
+  // observe so a large tool surface is never mass-pruned. 1–200; unset uses the
+  // narrowing default (20).
+  if (value.maxCandidates !== undefined) {
+    if (!Number.isSafeInteger(value.maxCandidates) || value.maxCandidates < 1 || value.maxCandidates > 200) throw new Error('Invalid narrowing settings');
+    narrow.maxCandidates = value.maxCandidates;
   }
   return narrow;
 }

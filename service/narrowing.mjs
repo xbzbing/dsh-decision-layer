@@ -77,7 +77,9 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     const prefixes = Array.isArray(raw?.keepPrefixes)
       ? raw.keepPrefixes.filter(prefix => typeof prefix === 'string' && prefix)
       : defaultPrefixes;
-    return { mode, threshold, prefixes };
+    // A configured optional-candidate ceiling overrides the constructor default.
+    const cap = Number.isSafeInteger(raw?.maxCandidates) && raw.maxCandidates >= 1 ? raw.maxCandidates : maxCandidates;
+    return { mode, threshold, prefixes, cap };
   };
   const record = (turn, outcome, detail = {}) => {
     const id = turn?.agent?.session?.id;
@@ -93,7 +95,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     async review(turn) {
       const tools = Array.isArray(turn?.tools) ? turn.tools.filter(tool => tool && typeof tool.name === 'string') : [];
       const names = tools.map(tool => tool.name);
-      const { mode, threshold, prefixes } = await resolveSettings();
+      const { mode, threshold, prefixes, cap } = await resolveSettings();
       // A: core tools and keep-prefix matches are always kept and never sent to
       // the model for judging (e.g. mcp__openviking memory tools stay resident).
       const alwaysKeep = name => core.has(name) || prefixes.some(prefix => name.startsWith(prefix));
@@ -110,7 +112,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
         catch { return { ...skip, keep: names }; }
       }
       // B: a large optional surface must not be enforced — only observed.
-      const overCap = optional.length > maxCandidates;
+      const overCap = optional.length > cap;
       const effectiveMode = overCap ? 'observe' : mode;
       let result;
       try { result = await evaluate(relevanceQuestions(turn.state, optional), { signal: turn.signal }); }
