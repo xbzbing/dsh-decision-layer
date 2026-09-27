@@ -38,7 +38,6 @@ function SessionPanel({ sessionId, t }: Props) {
   const [busy, setBusy] = useState(false);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
-  const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [status, setStatus] = useState<'idle' | 'checking' | 'ok' | 'down'>('idle');
   const [message, setMessage] = useState('');
   const { ratings, seed, annotate } = useAnnotations(sessionId, () => setMessage(t('annotateFailed')));
@@ -69,9 +68,10 @@ function SessionPanel({ sessionId, t }: Props) {
     setMessage('');
     void request<Metrics>(`metrics?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) setMetrics(value); }).catch(() => {});
     void request<{ entries: LogEntry[] }>(`log?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) setLog(value.entries); }).catch(() => {});
-    // The analysis over persisted logs powers the annotation ratings shown on
-    // each decision row; it is best-effort and never blocks the panel.
-    void request<Analysis>(`logs?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) { setAnalysis(value); seed(value); } }).catch(() => {});
+    // The analysis over persisted logs seeds the annotation ratings shown on
+    // each decision row; it is best-effort and never blocks the panel. The
+    // rated-count summary lives in the "Decision analysis" tab, not here.
+    void request<Analysis>(`logs?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) seed(value); }).catch(() => {});
     return () => { alive = false; element.close(); };
   }, [open, t, sessionId, seed]);
 
@@ -155,50 +155,49 @@ function SessionPanel({ sessionId, t }: Props) {
           {metrics.check && <article className="decision-card">
             <header className="decision-card-head">
               <span className="decision-card-title">{t('cardCheck')}</span>
-              <span className="decision-card-total">{metrics.check.attempts}<small>{t('cardTimes')}</small></span>
+              <span className="decision-card-head-metrics">
+                <span className="decision-card-rate-inline">{t('checkPassRate')} <b>{checkPassRate === null ? t('rateNa') : `${checkPassRate}%`}</b></span>
+                <span className="decision-card-total">{metrics.check.attempts}<small>{t('cardTimes')}</small></span>
+              </span>
             </header>
             <div className="decision-card-stats">
               <div className="decision-stat"><span className="decision-stat-num decision-stat-warn">{metrics.check.low}</span><span className="decision-stat-label">{t('checkLow')}</span></div>
               <div className="decision-stat"><span className="decision-stat-num">{metrics.check.attempts - metrics.check.low - metrics.check.failures}</span><span className="decision-stat-label">{t('checkOk')}</span></div>
               <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.check.failures}</span><span className="decision-stat-label">{t('failures')}</span></div>
             </div>
-            <footer className="decision-card-foot decision-card-rate">
-              <span>{t('checkPassRate')}<b>{checkPassRate === null ? t('rateNa') : `${checkPassRate}%`}</b></span>
-            </footer>
           </article>}
           {metrics.narrow && <article className="decision-card">
             <header className="decision-card-head">
               <span className="decision-card-title">{t('cardNarrow')}</span>
-              <span className="decision-card-total">{metrics.narrow.attempts}<small>{t('cardTimes')}</small></span>
+              <span className="decision-card-head-metrics">
+                <span className="decision-card-rate-inline">{t('narrowApplyRate')} <b>{narrowApplyRate === null ? t('rateNa') : `${narrowApplyRate}%`}</b></span>
+                <span className="decision-card-total">{metrics.narrow.attempts}<small>{t('cardTimes')}</small></span>
+              </span>
             </header>
             <div className="decision-card-stats">
               <div className="decision-stat"><span className="decision-stat-num">{metrics.narrow.applied}</span><span className="decision-stat-label">{t('narrowAppliedLabel')}</span></div>
               <div className="decision-stat"><span className="decision-stat-num">{metrics.narrow.dropped}</span><span className="decision-stat-label">{t('narrowDroppedLabel')}</span></div>
               <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.narrow.failures}</span><span className="decision-stat-label">{t('failures')}</span></div>
             </div>
-            <footer className="decision-card-foot decision-card-rate">
-              <span>{t('narrowApplyRate')}<b>{narrowApplyRate === null ? t('rateNa') : `${narrowApplyRate}%`}</b></span>
-            </footer>
           </article>}
           {metrics.complete && <article className="decision-card">
             <header className="decision-card-head">
               <span className="decision-card-title">{t('cardComplete')}</span>
-              <span className="decision-card-total">{metrics.complete.attempts}<small>{t('cardTimes')}</small></span>
+              <span className="decision-card-head-metrics">
+                <span className="decision-card-rate-inline">{t('failures')} <b>{metrics.complete.failures}</b></span>
+                <span className="decision-card-total">{metrics.complete.attempts}<small>{t('cardTimes')}</small></span>
+              </span>
             </header>
             <div className="decision-card-stats">
               <div className="decision-stat"><span className="decision-stat-num">{metrics.complete.satisfied}</span><span className="decision-stat-label">{t('completeSatisfied')}</span></div>
               <div className="decision-stat"><span className="decision-stat-num decision-stat-warn">{metrics.complete.unsatisfied}</span><span className="decision-stat-label">{t('completeUnsatisfied')}</span></div>
               <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.complete.insufficient}</span><span className="decision-stat-label">{t('completeInsufficient')}</span></div>
             </div>
-            <footer className="decision-card-foot decision-card-rate">
-              <span>{t('failures')}<b>{metrics.complete.failures}</b></span>
-            </footer>
           </article>}
         </div>}</section>
       <section><h3>{t('log')}</h3>
         {log.length === 0 ? <p className="decision-empty" role="status">{t('logEmpty')}</p>
           : <DecisionLogList entries={log} ratings={ratings} onRate={(id, rating) => void annotate(id, rating)} t={t} />}
-        {analysis && analysis.annotations.rated > 0 && <p className="decision-muted decision-rate-summary">{t('rateSummary', { rated: analysis.annotations.rated, good: analysis.annotations.good, bad: analysis.annotations.bad, unsure: analysis.annotations.unsure })}</p>}
       </section>
       {message && <p role="status" className="decision-message decision-message-warn">{message}</p>}
       </div>

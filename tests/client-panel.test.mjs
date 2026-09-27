@@ -51,14 +51,14 @@ test('switching session does not show stale enabled state or accept a late updat
   };
   const view = render(React.createElement(Panel, { sessionId: 'one', t: translate }));
   fireEvent.click(view.getByRole('button', { name: /决策层/ }));
-  const toggle = await view.findByRole('checkbox', { name: '启用自动介入' });
+  const toggle = await view.findByRole('checkbox', { name: '本会话内启用自动介入' });
   await waitFor(() => assert.equal(toggle.checked, true));
   fireEvent.click(toggle);
   view.rerender(React.createElement(Panel, { sessionId: 'two', t: translate }));
   fireEvent.click(view.getByRole('button', { name: /决策层/ }));
-  await waitFor(() => assert.equal(view.getByRole('checkbox', { name: '启用自动介入' }).checked, false));
+  await waitFor(() => assert.equal(view.getByRole('checkbox', { name: '本会话内启用自动介入' }).checked, false));
   resolveWrite(envelope({ enabled: false }));
-  await waitFor(() => assert.equal(view.getByRole('checkbox', { name: '启用自动介入' }).checked, false));
+  await waitFor(() => assert.equal(view.getByRole('checkbox', { name: '本会话内启用自动介入' }).checked, false));
 });
 
 test('modal shows gate metrics and the decision log, not the backend form', async () => {
@@ -263,7 +263,8 @@ test('persisted ratings from /logs pre-fill the rating state on open', async () 
   const view = render(React.createElement(Panel, { sessionId: 'prefilled', t: translate }));
   fireEvent.click(view.getByRole('button', { name: /决策层/ }));
   await waitFor(() => assert.equal(view.getByRole('button', { name: '判错了' }).getAttribute('aria-pressed'), 'true'));
-  await view.findByText(/已标注 1 条/);
+  // the rated-count summary lives in the analysis tab, not the dock modal
+  assert.equal(view.queryByText(/已标注/), null, 'the modal no longer shows the annotation summary');
 });
 
 test('advanced save posts keep prefixes split on commas or newlines and leaves the backend url alone', async () => {
@@ -369,9 +370,10 @@ test('analysis view renders the profile, trend backtest, and accuracy summary fr
   };
   const view = render(React.createElement(AnalysisView, { sessionId: 'an-1', t: translate }));
   await view.findByText('过程画像');
-  // gate profile card shows the deny count; trend backtest shows the warn fires
+  // gate profile card shows the deny count and its share of the total (1/2 = 50%)
   const gateCard = (await view.findByText('危险门控')).closest('article');
   assert.match(gateCard.textContent, /拒绝.*1/);
+  assert.match(gateCard.textContent, /50%/);
   await view.findByText('质量趋势回测');
   // accuracy summary reflects the annotation counts, and the decision rows render
   await view.findByText(/已标注 2 条/);

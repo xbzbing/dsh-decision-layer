@@ -13,13 +13,19 @@ import { useAnnotations } from './use-annotations.js';
 // it never touches the agent loop.
 interface Props { sessionId: string; t: Translate<TranslationKey> }
 
-// A single labelled number in the profile grid.
-function Stat({ label, value, tone }: { label: string; value: number | string; tone?: 'warn' | 'muted' }) {
+// A single labelled number in the profile grid, with an optional share-of-total
+// percentage shown beneath it for at-a-glance comparison. `pct` is null when the
+// denominator is 0 (nothing to compare) so the row stays a bare count.
+function Stat({ label, value, pct, tone }: { label: string; value: number | string; pct?: number | null; tone?: 'warn' | 'muted' }) {
   return <div className="decision-stat">
     <span className={`decision-stat-num${tone ? ` decision-stat-${tone}` : ''}`}>{value}</span>
+    {typeof pct === 'number' && <span className="decision-stat-pct">{pct}%</span>}
     <span className="decision-stat-label">{label}</span>
   </div>;
 }
+
+// Share of a total as a rounded whole percent, or null when there is no total.
+const share = (n: number, total: number) => total > 0 ? Math.round((n / total) * 100) : null;
 
 export function AnalysisView({ sessionId, t }: Props) {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -45,6 +51,9 @@ export function AnalysisView({ sessionId, t }: Props) {
   // Mean self-check score across evaluated turns, to one decimal.
   const meanScore = profile && profile.check.scoreCount > 0
     ? Math.round((profile.check.scoreSum / profile.check.scoreCount) * 10) / 10 : null;
+  // Task-completion tallies are per-condition, so their percentages compare
+  // against the total conditions judged, not against the evaluation count.
+  const completeTotal = profile ? profile.complete.satisfied + profile.complete.unsatisfied + profile.complete.insufficient : 0;
 
   return <div className="decision-analysis" role="region" aria-label={t('analysisTitle')}>
     <div className="decision-analysis-inner">
@@ -61,38 +70,38 @@ export function AnalysisView({ sessionId, t }: Props) {
                 <header className="decision-card-head"><span className="decision-card-title">{t('cardGate')}</span>
                   <span className="decision-card-total">{profile.gate.attempts}<small>{t('cardTimes')}</small></span></header>
                 <div className="decision-card-stats">
-                  <Stat label={t('deny')} value={profile.gate.deny} tone="warn" />
-                  <Stat label={t('allow')} value={profile.gate.allow} />
-                  <Stat label={t('ask')} value={profile.gate.ask} />
-                  <Stat label={t('failures')} value={profile.gate.error} tone="muted" />
+                  <Stat label={t('deny')} value={profile.gate.deny} pct={share(profile.gate.deny, profile.gate.attempts)} tone="warn" />
+                  <Stat label={t('allow')} value={profile.gate.allow} pct={share(profile.gate.allow, profile.gate.attempts)} />
+                  <Stat label={t('ask')} value={profile.gate.ask} pct={share(profile.gate.ask, profile.gate.attempts)} />
+                  <Stat label={t('failures')} value={profile.gate.error} pct={share(profile.gate.error, profile.gate.attempts)} tone="muted" />
                 </div>
               </article>}
               {profile.check.attempts > 0 && <article className="decision-card">
                 <header className="decision-card-head"><span className="decision-card-title">{t('cardCheck')}</span>
                   <span className="decision-card-total">{profile.check.attempts}<small>{t('cardTimes')}</small></span></header>
                 <div className="decision-card-stats">
-                  <Stat label={t('checkLow')} value={profile.check.low} tone="warn" />
-                  <Stat label={t('checkOk')} value={profile.check.ok} />
+                  <Stat label={t('checkLow')} value={profile.check.low} pct={share(profile.check.low, profile.check.attempts)} tone="warn" />
+                  <Stat label={t('checkOk')} value={profile.check.ok} pct={share(profile.check.ok, profile.check.attempts)} />
                   <Stat label={t('analysisMeanScore')} value={meanScore === null ? t('rateNa') : `${meanScore}/2`} />
-                  <Stat label={t('failures')} value={profile.check.error} tone="muted" />
+                  <Stat label={t('failures')} value={profile.check.error} pct={share(profile.check.error, profile.check.attempts)} tone="muted" />
                 </div>
               </article>}
               {profile.narrow.attempts > 0 && <article className="decision-card">
                 <header className="decision-card-head"><span className="decision-card-title">{t('cardNarrow')}</span>
                   <span className="decision-card-total">{profile.narrow.attempts}<small>{t('cardTimes')}</small></span></header>
                 <div className="decision-card-stats">
-                  <Stat label={t('narrowAppliedLabel')} value={profile.narrow.applied} />
+                  <Stat label={t('narrowAppliedLabel')} value={profile.narrow.applied} pct={share(profile.narrow.applied, profile.narrow.attempts)} />
                   <Stat label={t('narrowDroppedLabel')} value={profile.narrow.droppedSum} />
-                  <Stat label={t('failures')} value={profile.narrow.error} tone="muted" />
+                  <Stat label={t('failures')} value={profile.narrow.error} pct={share(profile.narrow.error, profile.narrow.attempts)} tone="muted" />
                 </div>
               </article>}
               {profile.complete.attempts > 0 && <article className="decision-card">
                 <header className="decision-card-head"><span className="decision-card-title">{t('cardComplete')}</span>
                   <span className="decision-card-total">{profile.complete.attempts}<small>{t('cardTimes')}</small></span></header>
                 <div className="decision-card-stats">
-                  <Stat label={t('completeSatisfied')} value={profile.complete.satisfied} />
-                  <Stat label={t('completeUnsatisfied')} value={profile.complete.unsatisfied} tone="warn" />
-                  <Stat label={t('completeInsufficient')} value={profile.complete.insufficient} tone="muted" />
+                  <Stat label={t('completeSatisfied')} value={profile.complete.satisfied} pct={share(profile.complete.satisfied, completeTotal)} />
+                  <Stat label={t('completeUnsatisfied')} value={profile.complete.unsatisfied} pct={share(profile.complete.unsatisfied, completeTotal)} tone="warn" />
+                  <Stat label={t('completeInsufficient')} value={profile.complete.insufficient} pct={share(profile.complete.insufficient, completeTotal)} tone="muted" />
                 </div>
               </article>}
             </div>
