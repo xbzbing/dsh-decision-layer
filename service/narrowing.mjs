@@ -27,7 +27,11 @@ export const DEFAULT_KEEP_PREFIXES = Object.freeze(['mcp__openviking', 'team_tas
 // Intersect the host-allowed tool set with the model's relevance verdict. Only
 // removes tools; never adds. Any missing or invalid noul keeps the tool, and a
 // verdict that would strip everything is skipped so the agent is never disabled.
-export function narrowTools(allowed, result, { threshold = 0.5 } = {}) {
+// Drop threshold: a tool is dropped only when the model is fairly confident it
+// is not needed (noul < threshold). Default 0.3 is deliberately conservative —
+// a noul near 0.5 means the model is unsure, and dropping there is the most
+// likely to strip a still-useful tool, so uncertain tools are kept.
+export function narrowTools(allowed, result, { threshold = 0.3 } = {}) {
   const tools = Array.isArray(allowed) ? allowed.filter(name => typeof name === 'string') : [];
   const answers = isObject(result?.answers) ? result.answers : undefined;
   if (tools.length === 0 || !answers) return { applied: false, keep: [...tools], drop: [] };
@@ -81,7 +85,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     let raw = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
     const mode = raw?.mode === 'observe' ? 'observe' : 'enforce';
-    const threshold = typeof raw?.threshold === 'number' && Number.isFinite(raw.threshold) && raw.threshold >= 0 && raw.threshold <= 1 ? raw.threshold : 0.5;
+    const threshold = typeof raw?.threshold === 'number' && Number.isFinite(raw.threshold) && raw.threshold >= 0 && raw.threshold <= 1 ? raw.threshold : 0.3;
     // An explicit array in settings (including empty) overrides the default set.
     const prefixes = Array.isArray(raw?.keepPrefixes)
       ? raw.keepPrefixes.filter(prefix => typeof prefix === 'string' && prefix)

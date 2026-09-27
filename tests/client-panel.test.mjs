@@ -184,6 +184,20 @@ test('advanced save posts the configured candidate cap', async () => {
   await waitFor(() => assert.equal(savedBody?.narrowSettings?.maxCandidates, 50, 'the configured cap is posted'));
 });
 
+test('advanced save posts the configured drop threshold clamped to [0,1]', async () => {
+  let savedBody;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', narrowSettings: { mode: 'enforce', threshold: savedBody.narrowSettings.threshold } }); }
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', narrowSettings: { mode: 'enforce', threshold: 0.3 } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  const box = await view.findByPlaceholderText('0.3');
+  fireEvent.change(box, { target: { value: '0.2' } });
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.equal(savedBody?.narrowSettings?.threshold, 0.2, 'the configured threshold is posted'));
+});
+
 test('advanced save button is disabled until an advanced field changes', async () => {
   globalThis.fetch = async url => {
     if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', narrowSettings: { mode: 'enforce', keepPrefixes: ['mcp__openviking'] } });

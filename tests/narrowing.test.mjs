@@ -36,6 +36,14 @@ test('a tool missing from the answers is conservatively kept', () => {
   assert.deepEqual(result.drop, ['bash']);
 });
 
+test('the default drop threshold is a conservative 0.3', () => {
+  // With the default threshold, a tool the model is unsure about (0.4, near 0.5)
+  // is kept; only a clearly-irrelevant tool (0.1, below 0.3) is dropped.
+  const result = narrowTools(['a', 'b', 'unsure'], answers({ a: 0.9, b: 0.1, unsure: 0.4 }));
+  assert.deepEqual(result.keep.sort(), ['a', 'unsure']);
+  assert.deepEqual(result.drop, ['b']);
+});
+
 test('relevanceQuestions builds one noul per tool referencing the tool by name', () => {
   const built = relevanceQuestions('fix the failing test', [
     { name: 'read', description: 'read a file' },

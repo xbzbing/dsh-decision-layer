@@ -22,11 +22,15 @@ async function request<T>(path: string, fetchFn: typeof fetch, init?: RequestIni
 const DEFAULT_KEEP_PREFIXES = ['mcp__openviking', 'team_task_'];
 // The built-in optional-candidate ceiling; above it, enforce downgrades to observe.
 const DEFAULT_MAX_CANDIDATES = 20;
+// The built-in drop threshold: a tool is dropped only when its relevance
+// probability is below this; conservative by default so uncertain tools stay.
+const DEFAULT_THRESHOLD = 0.3;
 // Prefixes may be separated by newlines or English commas; blanks and duplicates
 // are dropped so the stored list is clean regardless of how the user typed it.
 const parsePrefixes = (text: string) => Array.from(new Set(text.split(/[,\r\n]+/).map(line => line.trim()).filter(Boolean)));
 const prefixesText = (settings?: NarrowSettings) => (settings?.keepPrefixes ?? DEFAULT_KEEP_PREFIXES).join('\n');
 const maxCandidatesOf = (settings?: NarrowSettings) => settings?.maxCandidates ?? DEFAULT_MAX_CANDIDATES;
+const thresholdOf = (settings?: NarrowSettings) => settings?.threshold ?? DEFAULT_THRESHOLD;
 
 function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: (next: boolean) => void }) {
   return <label className="decision-toggle">
@@ -45,6 +49,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   const [narrowMode, setNarrowMode] = useState<'observe' | 'enforce'>('enforce');
   const [keepPrefixes, setKeepPrefixes] = useState(DEFAULT_KEEP_PREFIXES.join('\n'));
   const [maxCandidates, setMaxCandidates] = useState(String(DEFAULT_MAX_CANDIDATES));
+  const [threshold, setThreshold] = useState(String(DEFAULT_THRESHOLD));
   const [gateOn, setGateOn] = useState(true);
   const [checkOn, setCheckOn] = useState(true);
   const [narrowOn, setNarrowOn] = useState(true);
@@ -73,6 +78,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     setNarrowMode(value.narrowSettings?.mode ?? 'enforce');
     setKeepPrefixes(prefixesText(value.narrowSettings));
     setMaxCandidates(String(maxCandidatesOf(value.narrowSettings)));
+    setThreshold(String(thresholdOf(value.narrowSettings)));
     applyFeatures(value.features);
   };
 
@@ -92,10 +98,13 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     // unparseable value falls back to the default.
     const parsedCap = Number.parseInt(maxCandidates, 10);
     const cap = Number.isFinite(parsedCap) ? Math.min(200, Math.max(1, parsedCap)) : DEFAULT_MAX_CANDIDATES;
+    // Clamp the drop threshold to [0, 1]; a blank or unparseable value falls back.
+    const parsedThreshold = Number.parseFloat(threshold);
+    const thresh = Number.isFinite(parsedThreshold) ? Math.min(1, Math.max(0, parsedThreshold)) : DEFAULT_THRESHOLD;
     setBusy(true);
     try {
       const value = await request<Config>('config', fetchFn, { method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ checkSettings: { mode: checkMode }, narrowSettings: { mode: narrowMode, keepPrefixes: parsePrefixes(keepPrefixes), maxCandidates: cap },
+        body: JSON.stringify({ checkSettings: { mode: checkMode }, narrowSettings: { mode: narrowMode, keepPrefixes: parsePrefixes(keepPrefixes), maxCandidates: cap, threshold: thresh },
           features: { gate: gateOn, check: checkOn, narrow: narrowOn } }) });
       applyConfig(value); setAdvancedDirty(false); setMessage({ text: t('saved'), ok: true });
     } catch { setMessage({ text: t('error'), ok: false }); }
@@ -179,6 +188,10 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
             <input className="decision-narrow-cap" type="number" min={1} max={200} step={1} value={maxCandidates} disabled={!ready || !narrowOn}
               placeholder="20" onChange={event => { setMaxCandidates(event.target.value); setAdvancedDirty(true); }} />
             <small className="decision-muted">{t('narrowMaxHint')}</small></label>
+          <label className="decision-field decision-field-inline">{t('narrowThresholdLabel')}
+            <input className="decision-narrow-cap" type="number" min={0} max={1} step={0.05} value={threshold} disabled={!ready || !narrowOn}
+              placeholder="0.3" onChange={event => { setThreshold(event.target.value); setAdvancedDirty(true); }} />
+            <small className="decision-muted">{t('narrowThresholdHint')}</small></label>
         </div>
         <div className="decision-actions">
           <button disabled={busy || !ready || !advancedDirty} type="submit">{t('saveAdvanced')}</button>
