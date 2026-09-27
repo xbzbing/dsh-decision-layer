@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { rm } from 'node:fs/promises';
-import { loadConfig, saveConfig, resolveConfig, configPath } from '../service/config-store.mjs';
+import { loadConfig, saveConfig, resolveConfig, configPath, featureEnabled } from '../service/config-store.mjs';
 
 const temporary = await mkdtemp(join(tmpdir(), 'decision-layer-test-'));
 after(() => rm(temporary, { recursive: true, force: true }));
@@ -71,6 +71,18 @@ test('narrowing settings are validated, persisted, and resolved', async () => {
   await assert.rejects(saveConfig({ narrowSettings: { threshold: 2 } }, narrowFile), /narrowing/i);
   await assert.rejects(saveConfig({ narrowSettings: { unknown: 1 } }, narrowFile), /narrowing/i);
   assert.deepEqual((await saveConfig({ narrowSettings: {} }, narrowFile)).narrowSettings, {});
+});
+
+test('per-feature switches are validated, persisted, and default to enabled', async () => {
+  const featureFile = join(temporary, 'features.json');
+  const saved = await saveConfig({ apiKey: 'k', features: { gate: false, check: true, narrow: false } }, featureFile);
+  assert.deepEqual(saved.features, { gate: false, check: true, narrow: false });
+  assert.deepEqual((await resolveConfig({ path: featureFile, env: {} })).features, { gate: false, check: true, narrow: false });
+  await assert.rejects(saveConfig({ features: { gate: 'yes' } }, featureFile), /feature/i);
+  await assert.rejects(saveConfig({ features: { unknown: true } }, featureFile), /feature/i);
+  assert.equal(featureEnabled(undefined, 'gate'), true, 'unset defaults to enabled');
+  assert.equal(featureEnabled({ gate: false }, 'gate'), false);
+  assert.equal(featureEnabled({ gate: false }, 'check'), true, 'other features stay enabled');
 });
 
 test('invalid URLs are rejected and missing config has a safe display view', async () => {

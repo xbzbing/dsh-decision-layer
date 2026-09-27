@@ -153,6 +153,38 @@ test('narrowing in observe mode never restricts the agent tools', async () => {
   } finally { globalThis.fetch = realFetch; }
 });
 
+test('per-feature switch off skips a decision point entirely', async () => {
+  const path = join(directory, 'features-off.json');
+  await saveConfig({ apiKey: 'local-test-key', features: { gate: false, check: false, narrow: false } }, path);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('disabled features must not call the backend'); };
+  const preExecute = [];
+  const turnStopping = [];
+  const preStep = [];
+  try {
+    await apply({ tools: { register: () => {}, guard: () => () => {}, schemas: () => [{ name: 'web_search', description: '' }, { name: 'web_fetch', description: '' }] },
+      skills: { register: () => {} },
+      on: (event, listener) => {
+        if (event === 'tools/pre-execute') preExecute.push(listener);
+        if (event === 'agent/turn-stopping') turnStopping.push(listener);
+        if (event === 'agent/pre-step') preStep.push(listener);
+        return () => {};
+      }, effect: setup => setup(), inject: () => {} }, { configPath: path });
+    // gate off: a dangerous call passes straight through next() without a backend call
+    const exec = { name: 'shell', arguments: { command: 'rm -rf /tmp/build' }, callId: 'c', signal: AbortSignal.timeout(1000), agent: { session: { id: 'off-session' } } };
+    assert.deepEqual(await preExecute[0](exec, async () => ({ kind: 'allow' })), { kind: 'allow' });
+    // check off: turn-stopping returns without scoring
+    const agent = { session: { id: 'off-session', deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'done' }] }] } };
+    await turnStopping[0]({ agent, turn: 1, signal: AbortSignal.timeout(1000) });
+    // narrow off: pre-step advances without restricting
+    let advanced = false;
+    const narrowAgent = { session: { id: 'off-session' }, ctx: { tools: { restrict: () => { throw new Error('must not restrict'); } } } };
+    await preStep[0]({ agent: narrowAgent, turn: 1, step: 0, signal: AbortSignal.timeout(1000),
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'do work' }] }] }, async () => { advanced = true; return { kind: 'enter', messages: [] }; });
+    assert.equal(advanced, true);
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test('manual evaluation through registered tool does not increment automatic metrics', async () => {
   const path = join(directory, 'manual-config.json');
   await saveConfig({ apiKey: 'local-test-key' }, path);

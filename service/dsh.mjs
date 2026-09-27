@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
-import { resolveConfig } from './config-store.mjs';
+import { resolveConfig, featureEnabled } from './config-store.mjs';
 import { createBackend } from './backend.mjs';
 import { createManagerRoutes } from './manager-api.mjs';
 import { createSessionState } from './session-state.mjs';
@@ -60,6 +60,8 @@ export async function apply(ctx, options = {}) {
     rules: async () => normalizeDangerRules((await resolveConfig({ path })).dangerRules),
   });
   const loopGuard = createLoopGuard({ sessions });
+  // Live per-feature enablement; every decision point defaults to enabled.
+  const featureOn = async key => featureEnabled((await resolveConfig({ path })).features, key);
   if (typeof ctx.on === 'function') {
     if (typeof ctx.tools.guard === 'function') {
       // Deterministic loop guard runs with no backend; then the dangerous-gate
@@ -68,7 +70,10 @@ export async function apply(ctx, options = {}) {
       ctx.tools.guard(exec => gate.guardReason(exec));
     }
     const install = () => {
-      const disposePre = ctx.on('tools/pre-execute', async (exec, next) => gate.preExecute(exec, next));
+      const disposePre = ctx.on('tools/pre-execute', async (exec, next) => {
+        if (!(await featureOn('gate'))) return next();
+        return gate.preExecute(exec, next);
+      });
       const disposePost = ctx.on('tools/post-execute', async (exec, result, next) => {
         gate.observeResult(exec, result);
         return next();
@@ -87,10 +92,13 @@ export async function apply(ctx, options = {}) {
         source: { kind: 'user' },
       })),
     });
-    const installCheck = () => ctx.on('agent/turn-stopping', payload => selfCheck.review({
-      agent: payload.agent, turn: payload.turn, signal: payload.signal,
-      output: lastAssistantText(payload.agent),
-    }));
+    const installCheck = () => ctx.on('agent/turn-stopping', async payload => {
+      if (!(await featureOn('check'))) return;
+      return selfCheck.review({
+        agent: payload.agent, turn: payload.turn, signal: payload.signal,
+        output: lastAssistantText(payload.agent),
+      });
+    });
     if (typeof ctx.effect === 'function') ctx.effect(installCheck);
     else installCheck();
 
@@ -107,7 +115,7 @@ export async function apply(ctx, options = {}) {
       const agent = payload?.agent;
       const id = agent?.session?.id;
       const turn = payload?.turn;
-      if (typeof id === 'string' && Number.isInteger(turn)) {
+      if (typeof id === 'string' && Number.isInteger(turn) && await featureOn('narrow')) {
         const state = narrowedTurns.get(id);
         if (!state || state.turn !== turn) {
           state?.dispose?.();

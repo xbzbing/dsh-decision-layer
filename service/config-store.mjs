@@ -89,6 +89,28 @@ function validNarrow(value) {
   return narrow;
 }
 
+// Per-feature enable flags for the three decision points. Every flag defaults to
+// enabled; only an explicit `false` disables its decision point.
+export const FEATURE_KEYS = Object.freeze(['gate', 'check', 'narrow']);
+
+function validFeatures(value) {
+  if (!safeObject(value)) return undefined;
+  if (Object.keys(value).some(key => !FEATURE_KEYS.includes(key))) throw new Error('Invalid feature settings');
+  const features = {};
+  for (const key of FEATURE_KEYS) {
+    if (value[key] !== undefined) {
+      if (typeof value[key] !== 'boolean') throw new Error('Invalid feature settings');
+      features[key] = value[key];
+    }
+  }
+  return features;
+}
+
+// Resolve one decision point's enablement, defaulting to enabled when unset.
+export function featureEnabled(features, key) {
+  return !(safeObject(features) && features[key] === false);
+}
+
 function view(stored) {
   const result = {
     url: safeText(stored.url),
@@ -99,6 +121,7 @@ function view(stored) {
   if (stored.dangerRules !== undefined) result.dangerRules = validRules(stored.dangerRules);
   if (stored.checkSettings !== undefined) result.checkSettings = validCheck(stored.checkSettings);
   if (stored.narrowSettings !== undefined) result.narrowSettings = validNarrow(stored.narrowSettings);
+  if (stored.features !== undefined) result.features = validFeatures(stored.features);
   return result;
 }
 
@@ -118,11 +141,12 @@ export async function resolveConfig({ path = configPath(), env = process.env } =
   if (stored.dangerRules !== undefined) resolved.dangerRules = validRules(stored.dangerRules);
   if (stored.checkSettings !== undefined) resolved.checkSettings = validCheck(stored.checkSettings);
   if (stored.narrowSettings !== undefined) resolved.narrowSettings = validNarrow(stored.narrowSettings);
+  if (stored.features !== undefined) resolved.features = validFeatures(stored.features);
   return resolved;
 }
 
 export async function saveConfig(input, path = configPath()) {
-  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'checkSettings', 'narrowSettings'].includes(key))) {
+  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'checkSettings', 'narrowSettings', 'features'].includes(key))) {
     throw new Error('Invalid configuration fields');
   }
   for (const key of ['url', 'apiKey', 'model', 'confirmHttpUrl']) {
@@ -138,6 +162,7 @@ export async function saveConfig(input, path = configPath()) {
   const dangerRules = input.dangerRules === undefined ? previous.dangerRules : validRules(input.dangerRules);
   const checkSettings = input.checkSettings === undefined ? previous.checkSettings : validCheck(input.checkSettings);
   const narrowSettings = input.narrowSettings === undefined ? previous.narrowSettings : validNarrow(input.narrowSettings);
+  const features = input.features === undefined ? previous.features : validFeatures(input.features);
   const confirmed = url.startsWith('http://') && input.confirmHttpUrl !== undefined &&
     checkedUrl(safeText(input.confirmHttpUrl)) === url;
   if (url.startsWith('http://') && !confirmed && previous.httpApprovedUrl !== url) {
@@ -147,6 +172,7 @@ export async function saveConfig(input, path = configPath()) {
   if (dangerRules !== undefined) next.dangerRules = dangerRules;
   if (checkSettings !== undefined) next.checkSettings = checkSettings;
   if (narrowSettings !== undefined) next.narrowSettings = narrowSettings;
+  if (features !== undefined) next.features = features;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;
   try {
