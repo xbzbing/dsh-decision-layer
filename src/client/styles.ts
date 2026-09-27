@@ -95,6 +95,10 @@ const css = `
 .decision-field .decision-muted{font-weight:400;margin:.1rem 0 0}
 .decision-config input:not([type=checkbox]){box-sizing:border-box;width:100%;min-height:2.4rem;border:1px solid var(--dsw-alias-border-l2,#ccd3da);border-radius:8px;padding:.4rem .7rem;background:var(--dsw-alias-bg-layer-2,#fff);color:inherit;font:inherit;font-weight:400}
 .decision-config input:not([type=checkbox]):disabled{background:var(--dsw-alias-bg-layer-1,#f6f8fa);opacity:.7}
+.decision-config textarea{box-sizing:border-box;width:100%;border:1px solid var(--dsw-alias-border-l2,#ccd3da);border-radius:8px;padding:.4rem .7rem;background:var(--dsw-alias-bg-layer-2,#fff);color:inherit;font:inherit;font-weight:400;resize:vertical;min-height:3.4rem}
+.decision-config textarea:disabled{background:var(--dsw-alias-bg-layer-1,#f6f8fa);opacity:.7}
+.decision-field-textarea{margin-top:.7rem}
+.decision-prefixes{font-family:var(--dsw-alias-font-mono,ui-monospace,SFMono-Regular,Menlo,monospace)!important;line-height:1.5}
 
 .decision-field-block{display:grid;gap:.35rem}
 .decision-field-block+.decision-field-block{margin-top:1.1rem}

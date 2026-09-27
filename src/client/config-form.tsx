@@ -4,7 +4,7 @@ import type { TranslationKey } from './i18n.js';
 
 const api = '/plugins/dsh-decision-layer/api';
 interface CheckSettings { mode: 'observe' | 'steer'; lowScoreThreshold: number }
-interface NarrowSettings { mode: 'observe' | 'enforce'; threshold: number }
+interface NarrowSettings { mode: 'observe' | 'enforce'; threshold: number; keepPrefixes?: string[] }
 interface Features { gate?: boolean; check?: boolean; narrow?: boolean }
 interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string; checkSettings?: CheckSettings; narrowSettings?: NarrowSettings; features?: Features }
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
@@ -16,6 +16,12 @@ async function request<T>(path: string, fetchFn: typeof fetch, init?: RequestIni
   if (!response.ok || !body.ok || body.value === undefined) throw new Error(body.error || 'Request failed');
   return body.value;
 }
+
+// The built-in default keep-prefix; shown when the config has none stored yet so
+// the effective set is always visible and editable.
+const DEFAULT_KEEP_PREFIXES = ['mcp__openviking'];
+const parsePrefixes = (text: string) => text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+const prefixesText = (settings?: NarrowSettings) => (settings?.keepPrefixes ?? DEFAULT_KEEP_PREFIXES).join('\n');
 
 function Toggle({ label, checked, disabled, onChange }: { label: string; checked: boolean; disabled: boolean; onChange: (next: boolean) => void }) {
   return <label className="decision-toggle">
@@ -32,6 +38,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   const [config, setConfig] = useState<Config>({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
   const [checkMode, setCheckMode] = useState<'observe' | 'steer'>('observe');
   const [narrowMode, setNarrowMode] = useState<'observe' | 'enforce'>('enforce');
+  const [keepPrefixes, setKeepPrefixes] = useState(DEFAULT_KEEP_PREFIXES.join('\n'));
   const [gateOn, setGateOn] = useState(true);
   const [checkOn, setCheckOn] = useState(true);
   const [narrowOn, setNarrowOn] = useState(true);
@@ -50,7 +57,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   useEffect(() => {
     let live = true;
     setMessage(null); setReady(false);
-    void request<Config>('config', fetchFn).then(value => { if (live) { setConfig(value); setCheckMode(value.checkSettings?.mode ?? 'observe'); setNarrowMode(value.narrowSettings?.mode ?? 'enforce'); applyFeatures(value.features); setDirty(false); setReady(true); } })
+    void request<Config>('config', fetchFn).then(value => { if (live) { setConfig(value); setCheckMode(value.checkSettings?.mode ?? 'observe'); setNarrowMode(value.narrowSettings?.mode ?? 'enforce'); setKeepPrefixes(prefixesText(value.narrowSettings)); applyFeatures(value.features); setDirty(false); setReady(true); } })
       .catch(() => { if (live) setMessage({ text: t('error'), ok: false }); });
     return () => { live = false; };
   }, [t, fetchFn]);
@@ -63,11 +70,11 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     setBusy(true);
     try {
       const value = await request<Config>('config', fetchFn, { method: 'PUT', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ url, model: config.model, checkSettings: { mode: checkMode }, narrowSettings: { mode: narrowMode },
+        body: JSON.stringify({ url, model: config.model, checkSettings: { mode: checkMode }, narrowSettings: { mode: narrowMode, keepPrefixes: parsePrefixes(keepPrefixes) },
           features: { gate: gateOn, check: checkOn, narrow: narrowOn },
           ...(key ? { apiKey: key } : {}),
           ...(needsHttpConsent ? { confirmHttpUrl: url } : {}) }) });
-      setConfig(value); setCheckMode(value.checkSettings?.mode ?? 'observe'); setNarrowMode(value.narrowSettings?.mode ?? 'enforce'); applyFeatures(value.features);
+      setConfig(value); setCheckMode(value.checkSettings?.mode ?? 'observe'); setNarrowMode(value.narrowSettings?.mode ?? 'enforce'); setKeepPrefixes(prefixesText(value.narrowSettings)); applyFeatures(value.features);
       setKey(''); setDirty(false); setMessage({ text: t('saved'), ok: true });
     } catch { setMessage({ text: t('error'), ok: false }); }
     finally { setBusy(false); }
@@ -124,6 +131,10 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
           <Toggle label={t('narrowObserveLabel')} checked={narrowMode === 'observe'} disabled={!ready || !narrowOn}
             onChange={next => { setNarrowMode(next ? 'observe' : 'enforce'); setDirty(true); }} />
           <p className="decision-muted">{t('narrowHint')}</p>
+          <label className="decision-field decision-field-textarea">{t('narrowKeepLabel')}
+            <textarea className="decision-prefixes" rows={3} value={keepPrefixes} disabled={!ready || !narrowOn}
+              placeholder="mcp__openviking" onChange={event => { setKeepPrefixes(event.target.value); setDirty(true); }} />
+            <small className="decision-muted">{t('narrowKeepHint')}</small></label>
         </div>
       </div>
     </details>
