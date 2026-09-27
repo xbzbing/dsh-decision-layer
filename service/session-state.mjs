@@ -93,6 +93,7 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       if (typeof entry.confidence === 'number' && Number.isFinite(entry.confidence)) record.confidence = Math.round(entry.confidence * 100) / 100;
       if (Number.isSafeInteger(entry.dropped) && entry.dropped >= 0) record.dropped = entry.dropped;
       if (Number.isSafeInteger(entry.kept) && entry.kept >= 0) record.kept = entry.kept;
+      if (Number.isSafeInteger(entry.candidates) && entry.candidates >= 0) record.candidates = entry.candidates;
       if (Array.isArray(entry.tools)) {
         const names = entry.tools.filter(name => typeof name === 'string' && name.trim()).slice(0, 12).map(name => name.trim().slice(0, 64));
         if (names.length > 0) record.tools = names;

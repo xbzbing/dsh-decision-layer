@@ -68,6 +68,14 @@ test('narrow log entries keep mode and dropped count', () => {
   assert.equal(entry.dropped, 3);
 });
 
+test('narrow log keeps the optional-candidate count for the too-many reason', () => {
+  const sessions = createSessionState();
+  sessions.log('c', { kind: 'narrow', outcome: 'ok', mode: 'observe', dropped: 0, kept: 53, reason: 'too-many-candidates', candidates: 40 });
+  const entry = sessions.snapshot('c').log.at(-1);
+  assert.equal(entry.candidates, 40);
+  assert.equal(entry.reason, 'too-many-candidates');
+});
+
 test('onLog sink receives the full untruncated record with session id', () => {
   const sunk = [];
   const sessions = createSessionState({ onLog: entry => sunk.push(entry) });

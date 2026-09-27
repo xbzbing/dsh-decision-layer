@@ -125,7 +125,9 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
       const applied = narrowed.applied && trustworthy && !overCap && mode === 'enforce';
       const dropped = drop.length;
       const detail = { dropped, kept: keep.length, mode: effectiveMode, tools: drop };
-      if (overCap) detail.reason = 'too-many-candidates';
+      // The optional-candidate count (excludes core tools and keep-prefix matches),
+      // recorded so the "too many candidates" reason shows the number that tripped it.
+      if (overCap) { detail.reason = 'too-many-candidates'; detail.candidates = optional.length; }
       else if (dropped > 0 && !trustworthy) detail.reason = 'low-keep';
       record(turn, dropped > 0 ? 'applied' : 'ok', detail);
       return { evaluated: true, applied, keep, drop, mode: effectiveMode, overCap, trustworthy };

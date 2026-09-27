@@ -10,7 +10,10 @@ import { dictionaries } from '../src/client/i18n.ts';
 let Panel, ConfigForm;
 let dom;
 const originalFetch = globalThis.fetch;
-const translate = key => dictionaries.zh[key];
+const translate = (key, params) => {
+  const template = dictionaries.zh[key];
+  return params && typeof template === 'string' ? template.replace(/\{(\w+)\}/g, (_, name) => String(params[name] ?? `{${name}}`)) : template;
+};
 const envelope = value => new Response(JSON.stringify({ ok: true, value }), { headers: { 'content-type': 'application/json' } });
 
 before(async () => {
@@ -83,6 +86,25 @@ test('modal shows gate metrics and the decision log, not the backend form', asyn
   await view.findByText(/后端不可达/);
   await view.findByText(/后端连接/);
   assert.equal(view.queryByLabelText('服务地址'), null, 'the backend form must not appear in the modal');
+});
+
+test('narrow log with too-many-candidates shows the count once and no duplicate observe tag', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
+      narrow: { attempts: 1, failures: 0, applied: 0, dropped: 0 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { at: 1_700_000_003_000, kind: 'narrow', outcome: 'ok', mode: 'observe', dropped: 0, kept: 53, reason: 'too-many-candidates', candidates: 40 },
+    ] });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'narrow-log', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  const row = (await view.findByText(/候选 40 个偏多/)).closest('li') ?? (await view.findByText(/候选 40 个偏多/)).parentElement;
+  // the candidate count appears mid-line, and "仅观察" appears exactly once as the final verdict
+  assert.match(row.textContent, /候选 40 个偏多/);
+  assert.equal((row.textContent.match(/仅观察/g) ?? []).length, 1, 'the final mode tag shows observe once');
 });
 
 test('config form discloses HTTPS destination and clears password draft on unmount', async () => {
