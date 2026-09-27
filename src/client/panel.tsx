@@ -134,7 +134,9 @@ function SessionPanel({ sessionId, t }: Props) {
       return <>{label} · <span className="decision-log-verdict">{t('narrowKept')}</span>{kept !== undefined ? <span className="decision-log-detail"> · {t('narrowKeptCount')} {kept}</span> : null}<span className="decision-log-detail"> · {modeTag}</span>{guard}</>;
     }
     const names = Array.isArray(entry.tools) && entry.tools.length > 0 ? entry.tools.join('、') : undefined;
-    return <>{label} · <span className="decision-log-verdict">{t('narrowDropped')} {dropped}{kept !== undefined ? ` / ${t('narrowKeptCount')} ${kept}` : ''}</span>{names ? <span className="decision-log-detail"> · {names}</span> : null}<span className="decision-log-detail"> · {modeTag}</span>{guard}</>;
+    // The stored name list is capped, so append "…等 N 个" when it is shorter than the dropped count.
+    const overflow = names && Array.isArray(entry.tools) && entry.tools.length < dropped ? t('narrowMore', { count: dropped }) : '';
+    return <>{label} · <span className="decision-log-verdict">{t('narrowDropped')} {dropped}{kept !== undefined ? ` / ${t('narrowKeptCount')} ${kept}` : ''}</span>{names ? <span className="decision-log-detail"> · {names}{overflow}</span> : null}<span className="decision-log-detail"> · {modeTag}</span>{guard}</>;
   };
 
   const outcomeTagOf = (entry: LogEntry) => entry.kind === 'narrow'
@@ -181,7 +183,7 @@ function SessionPanel({ sessionId, t }: Props) {
         </div></section>
       <section><h3>{t('metrics')}</h3>
         {!metrics?.gate && !metrics?.check && !metrics?.narrow ? <p className="decision-empty" role="status">{t('empty')}</p> : <div className="decision-cards">
-          {metrics.gate && <article className="decision-card">
+          {metrics.gate && <article className="decision-card decision-card-wide">
             <header className="decision-card-head">
               <span className="decision-card-title">{t('cardGate')}</span>
               <span className="decision-card-total">{metrics.gate.attempts}<small>{t('cardTimes')}</small></span>
