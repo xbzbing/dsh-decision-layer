@@ -154,6 +154,16 @@ function SessionPanel({ sessionId, t }: Props) {
     + (metrics?.check ? metrics.check.attempts - metrics.check.low - metrics.check.failures : 0);
   const passRate = attempts > 0 ? Math.round((passed / attempts) * 100) : null;
 
+  // Per-card rates exclude fallback failures from the denominator, matching the
+  // ROADMAP metric definitions: self-check pass rate = passed / valid results;
+  // narrow rate = passes that dropped a tool / valid narrowing evaluations.
+  const checkValid = metrics?.check ? metrics.check.attempts - metrics.check.failures : 0;
+  const checkPassRate = metrics?.check && checkValid > 0
+    ? Math.round(((checkValid - metrics.check.low) / checkValid) * 100) : null;
+  const narrowValid = metrics?.narrow ? metrics.narrow.attempts - metrics.narrow.failures : 0;
+  const narrowApplyRate = metrics?.narrow && narrowValid > 0
+    ? Math.round((metrics.narrow.applied / narrowValid) * 100) : null;
+
   return <>
     <button ref={trigger} className="decision-trigger" type="button" aria-haspopup="dialog" aria-expanded={open} aria-busy={enabled === null} aria-label={t('button')} onClick={() => setOpen(true)}>
       <svg className="decision-trigger-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -213,6 +223,9 @@ function SessionPanel({ sessionId, t }: Props) {
               <div className="decision-stat"><span className="decision-stat-num">{metrics.check.attempts - metrics.check.low - metrics.check.failures}</span><span className="decision-stat-label">{t('checkOk')}</span></div>
               <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.check.failures}</span><span className="decision-stat-label">{t('failures')}</span></div>
             </div>
+            <footer className="decision-card-foot decision-card-rate">
+              <span>{t('checkPassRate')}<b>{checkPassRate === null ? t('rateNa') : `${checkPassRate}%`}</b></span>
+            </footer>
           </article>}
           {metrics.narrow && <article className="decision-card">
             <header className="decision-card-head">
@@ -224,6 +237,9 @@ function SessionPanel({ sessionId, t }: Props) {
               <div className="decision-stat"><span className="decision-stat-num">{metrics.narrow.dropped}</span><span className="decision-stat-label">{t('narrowDroppedLabel')}</span></div>
               <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.narrow.failures}</span><span className="decision-stat-label">{t('failures')}</span></div>
             </div>
+            <footer className="decision-card-foot decision-card-rate">
+              <span>{t('narrowApplyRate')}<b>{narrowApplyRate === null ? t('rateNa') : `${narrowApplyRate}%`}</b></span>
+            </footer>
           </article>}
         </div>}</section>
       <section><h3>{t('log')}</h3>
