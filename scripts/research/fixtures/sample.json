@@ -1,0 +1,43 @@
+{
+  "compactionId": "compact-sample-0001",
+  "shadowedRange": { "start": 12, "end": 48 },
+  "shadowedSeqs": [12, 15, 18, 23, 31, 40, 48],
+  "summary": "用户与助手确定了收窄摘除阈值定为 0.3、候选上限 20；修复了 danger-gate 的 PATH_KEYS 未覆盖 file_path 的问题；约定 README 中英双语、中文在前。测试当时 111 项通过。",
+  "facts": [
+    {
+      "id": "f0",
+      "text": "用户确认收窄摘除阈值定为 0.3",
+      "source_seq": 15,
+      "must_keep": true,
+      "human_preserved": true
+    },
+    {
+      "id": "f1",
+      "text": "候选工具上限约定为 20",
+      "source_seq": 18,
+      "must_keep": true,
+      "human_preserved": true
+    },
+    {
+      "id": "f2",
+      "text": "danger-gate 的 PATH_KEYS 需覆盖 file_path 等真实参数键，否则 edit 路径提取不到被误判",
+      "source_seq": 23,
+      "must_keep": true,
+      "human_preserved": false
+    },
+    {
+      "id": "f3",
+      "text": "README 采用中英双语、中文在前、中文过 humanizer-zh 优化",
+      "source_seq": 31,
+      "must_keep": false,
+      "human_preserved": true
+    },
+    {
+      "id": "f4",
+      "text": "决策日志按运行实例端口和日期滚动切分，保留 30 天",
+      "source_seq": 40,
+      "must_keep": true,
+      "human_preserved": false
+    }
+  ]
+}
