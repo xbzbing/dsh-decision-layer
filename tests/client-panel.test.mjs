@@ -113,8 +113,37 @@ test('config form reflects steer mode and posts the chosen mode on save', async 
   const toggle = await view.findByRole('checkbox', { name: '得分偏低时自动补一轮' });
   assert.equal(toggle.checked, false, 'observe mode is unchecked by default');
   fireEvent.click(toggle);
-  fireEvent.click(view.getByRole('button', { name: '保存配置' }));
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
   await waitFor(() => assert.equal(savedBody?.checkSettings?.mode, 'steer'));
+  assert.equal(savedBody.url, undefined, 'advanced save must not touch backend url');
+});
+
+test('advanced save posts keep prefixes split on commas or newlines and leaves the backend url alone', async () => {
+  let savedBody;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: 'https://saved.test', model: 'jev-latest', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://saved.test', narrowSettings: { mode: 'enforce', keepPrefixes: savedBody.narrowSettings.keepPrefixes } }); }
+    if (String(url).endsWith('/config')) return envelope({ url: 'https://saved.test', model: 'jev-latest', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://saved.test', narrowSettings: { mode: 'enforce', keepPrefixes: ['mcp__openviking'] } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  const box = await view.findByPlaceholderText('mcp__openviking');
+  fireEvent.change(box, { target: { value: 'mcp__openviking, mcp__git\nmcp__openviking' } });
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.deepEqual(savedBody?.narrowSettings?.keepPrefixes, ['mcp__openviking', 'mcp__git']));
+  assert.equal(savedBody.url, undefined, 'advanced save must omit the backend url');
+  assert.equal(savedBody.apiKey, undefined, 'advanced save must omit the api key');
+});
+
+test('advanced save button is disabled until an advanced field changes', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', narrowSettings: { mode: 'enforce', keepPrefixes: ['mcp__openviking'] } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  const saveAdvanced = await view.findByRole('button', { name: '保存高级配置' });
+  assert.equal(saveAdvanced.disabled, true, 'nothing changed yet');
+  fireEvent.click(view.getByRole('checkbox', { name: '危险门控' }));
+  assert.equal(view.getByRole('button', { name: '保存高级配置' }).disabled, false, 'a change enables the advanced save');
 });
 
 test('delete key is a dedicated button that clears the saved key after confirmation', async () => {
