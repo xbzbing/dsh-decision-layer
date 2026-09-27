@@ -2,7 +2,7 @@ export const dictionaries = {
   zh: {
     summary: '危险调用门控、产出自检与防循环，由可插拔裁决模型驱动。',
     button: '决策层', title: '决策层', close: '关闭', metrics: '自动裁决统计',
-    triggerDecisions: '决策', triggerPassRate: '通过率',
+    triggerDecisions: '决策',
     empty: '尚无自动裁决。手动裁决不计入这里。', attempts: '评估次数', failures: '失败回退', suggestions: '模型建议（放行 / 询问 / 拒绝）', actual: '实际宿主结果（放行 / 拒绝）', checkAttempts: '自检评估次数', checkLow: '低分', checkOk: '通过', settings: '会话设置', cardGate: '危险门控', cardCheck: '产出自检', cardNarrow: '工具收窄', cardTimes: ' 次', allow: '放行', ask: '询问', deny: '拒绝', actualShort: '实际结果',
     narrowAppliedLabel: '收窄', narrowDroppedLabel: '摘除工具', narrowDropped: '摘除', narrowKept: '未收窄', narrowKeptCount: '保留', narrowMore: ' 等 {count} 个', narrowObserve: '仅观察', narrowEnforce: '已生效', checkPassRate: '通过率', narrowApplyRate: '收窄率', rateNa: '—',
     enabled: '启用自动介入',
@@ -29,7 +29,7 @@ export const dictionaries = {
   en: {
     summary: 'A danger-call gate, output self-check, and loop guard driven by a pluggable adjudication model.',
     button: 'Decision layer', title: 'Decision layer', close: 'Close', metrics: 'Automatic decisions',
-    triggerDecisions: 'decisions', triggerPassRate: 'pass rate',
+    triggerDecisions: 'decisions',
     empty: 'No automatic decisions yet. Manual verdicts are not counted here.', attempts: 'Evaluations', failures: 'Fallback failures', suggestions: 'Model suggestions (allow / ask / deny)', actual: 'Actual host outcomes (allow / deny)', checkAttempts: 'Self-check evaluations', checkLow: 'Low', checkOk: 'Passed', settings: 'Session settings', cardGate: 'Danger gate', cardCheck: 'Output self-check', cardNarrow: 'Tool narrowing', cardTimes: '', allow: 'Allow', ask: 'Ask', deny: 'Deny', actualShort: 'Actual',
     narrowAppliedLabel: 'Narrowed', narrowDroppedLabel: 'Tools dropped', narrowDropped: 'dropped', narrowKept: 'kept all', narrowKeptCount: 'kept', narrowMore: ' and {count} in total', narrowObserve: 'observe', narrowEnforce: 'enforced', checkPassRate: 'Pass rate', narrowApplyRate: 'Narrow rate', rateNa: '—',
     enabled: 'Enable automatic interventions',

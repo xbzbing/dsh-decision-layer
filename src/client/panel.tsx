@@ -150,13 +150,11 @@ function SessionPanel({ sessionId, t }: Props) {
   const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : status === 'checking' ? t('statusChecking') : t('statusIdle');
 
   const attempts = metrics?.attempts ?? 0;
-  const passed = (metrics?.gate?.allow ?? 0)
-    + (metrics?.check ? metrics.check.attempts - metrics.check.low - metrics.check.failures : 0);
-  const passRate = attempts > 0 ? Math.round((passed / attempts) * 100) : null;
 
   // Per-card rates exclude fallback failures from the denominator, matching the
   // ROADMAP metric definitions: self-check pass rate = passed / valid results;
-  // narrow rate = passes that dropped a tool / valid narrowing evaluations.
+  // narrow rate = passes that dropped a tool / valid narrowing evaluations. The
+  // dock trigger shows only the total count, not a mixed cross-feature rate.
   const checkValid = metrics?.check ? metrics.check.attempts - metrics.check.failures : 0;
   const checkPassRate = metrics?.check && checkValid > 0
     ? Math.round(((checkValid - metrics.check.low) / checkValid) * 100) : null;
@@ -172,8 +170,6 @@ function SessionPanel({ sessionId, t }: Props) {
       </svg>
       <span className="decision-trigger-text">
         {t('triggerDecisions')} <b>{attempts}</b>
-        <span className="decision-trigger-sep" aria-hidden="true"> - </span>
-        <b title={t('triggerPassRate')}>{passRate === null ? '—' : `${passRate}%`}</b>
       </span>
     </button>
     <dialog ref={dialog} className="decision-dialog" aria-labelledby="decision-panel-title"

@@ -3,7 +3,6 @@ const css = `
 .decision-trigger:hover,.decision-trigger[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover,#eef1f3);color:var(--dsw-alias-label-secondary,#59636e)}
 .decision-trigger-icon{flex:none;color:inherit}
 .decision-trigger-text{min-width:0;flex:0 1 auto;text-overflow:ellipsis;white-space:nowrap;overflow:hidden}
-.decision-trigger-sep{color:var(--dsw-alias-label-caption,#9aa5b1)}
 .decision-trigger-text b{color:inherit;font-weight:500;font-variant-numeric:tabular-nums}
 .decision-trigger:focus-visible,.decision-dialog button:focus-visible,.decision-dialog input:focus-visible,.decision-config input:focus-visible,.decision-config button:focus-visible{outline:2px solid #1f5d50;outline-offset:2px}
 .decision-dialog{box-sizing:border-box;flex-direction:column;width:min(46rem,calc(100vw - 2rem));max-height:min(74vh,40rem);border:1px solid var(--dsw-alias-border-l2,#dce1e6);border-radius:14px;padding:0;overflow:hidden;background:var(--dsw-alias-bg-layer-2,#fff);color:var(--dsw-alias-label-primary,#202124);box-shadow:0 1rem 3rem rgba(0,0,0,.18);font:inherit}
