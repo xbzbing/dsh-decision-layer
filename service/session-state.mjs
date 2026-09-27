@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { advanceRun, severityOf } from './quality-trend.mjs';
 
 function sessionKey(value) {
   if (typeof value !== 'string' || !value.trim() || value.length > 512) throw new Error('Invalid session ID');
@@ -8,7 +9,7 @@ function sessionKey(value) {
 function emptyState() {
   return { enabled: true, attempts: 0, failures: 0,
     gate: { attempts: 0, failures: 0, ask: 0, deny: 0, allow: 0, actual: { allow: 0, deny: 0, error: 0 } },
-    check: { attempts: 0, failures: 0, low: 0 },
+    check: { attempts: 0, failures: 0, low: 0, run: 0, severity: 'normal' },
     narrow: { attempts: 0, failures: 0, applied: 0, dropped: 0 },
     complete: { attempts: 0, failures: 0, unsatisfied: 0, satisfied: 0, insufficient: 0, steered: 0 }, log: [] };
 }
@@ -46,7 +47,7 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       const value = { enabled: overflow ? false : state.enabled, hasAutomaticDecisions: state.attempts > 0, attempts: state.attempts, failures: state.failures };
       if (overflow) value.capacityExceeded = true;
       if (state.gate.attempts > 0) value.gate = { ...state.gate, actual: { ...state.gate.actual } };
-      if (state.check.attempts > 0) value.check = { ...state.check };
+      if (state.check.attempts > 0) value.check = { attempts: state.check.attempts, failures: state.check.failures, low: state.check.low, trend: { run: state.check.run, severity: state.check.severity } };
       if (state.narrow.attempts > 0) value.narrow = { ...state.narrow };
       if (state.complete.attempts > 0) value.complete = { ...state.complete };
       if (state.log.length > 0) value.log = state.log.map(entry => ({ ...entry }));
@@ -64,13 +65,21 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       if (!['allow', 'deny', 'error'].includes(outcome)) throw new Error('Invalid actual decision');
       writable(id).gate.actual[outcome]++;
     },
-    recordCheck(id, outcome) {
+    recordCheck(id, outcome, trend) {
       if (!['ok', 'low', 'error'].includes(outcome)) throw new Error('Invalid self-check outcome');
       const state = writable(id);
       state.attempts++;
       state.check.attempts++;
-      if (outcome === 'error') { state.failures++; state.check.failures++; }
-      else if (outcome === 'low') state.check.low++;
+      if (outcome === 'error') { state.failures++; state.check.failures++; return; }
+      if (outcome === 'low') state.check.low++;
+      // Advance the quality-trend run over this evaluated score. A good score
+      // resets the run; a high-confidence low score grows it; a low-confidence
+      // low score neither resets nor grows. `trend` carries the per-sample flags
+      // and the configured thresholds; absent trend leaves the run unchanged.
+      if (trend && typeof trend === 'object') {
+        state.check.run = advanceRun(state.check.run, { lowScore: outcome === 'low', confident: trend.confident === true });
+        state.check.severity = severityOf(state.check.run, { trendRun: trend.trendRun, trendSevereRun: trend.trendSevereRun });
+      }
     },
     recordNarrow(id, outcome, dropped = 0) {
       if (!['ok', 'applied', 'error'].includes(outcome)) throw new Error('Invalid narrowing outcome');

@@ -40,12 +40,16 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
     const mode = raw?.mode === 'steer' ? 'steer' : 'observe';
     const lowScoreThreshold = Number.isSafeInteger(raw?.lowScoreThreshold) && raw.lowScoreThreshold >= 0 ? raw.lowScoreThreshold : 1;
-    return { mode, rubric: boundedRubric(raw?.rubric), lowScoreThreshold };
+    // Quality-trend thresholds (unvalidated heuristics; see quality-trend.mjs).
+    const trendMinConfidence = typeof raw?.trendMinConfidence === 'number' && Number.isFinite(raw.trendMinConfidence) && raw.trendMinConfidence >= 0 && raw.trendMinConfidence <= 1 ? raw.trendMinConfidence : 0.6;
+    const trendRun = Number.isSafeInteger(raw?.trendRun) && raw.trendRun >= 2 ? raw.trendRun : 3;
+    const trendSevereRun = Number.isSafeInteger(raw?.trendSevereRun) && raw.trendSevereRun > trendRun ? raw.trendSevereRun : Math.max(trendRun + 1, 5);
+    return { mode, rubric: boundedRubric(raw?.rubric), lowScoreThreshold, trendMinConfidence, trendRun, trendSevereRun };
   };
-  const record = (turn, outcome, detail = {}) => {
+  const record = (turn, outcome, detail = {}, trend) => {
     const id = turn?.agent?.session?.id;
     if (!sessions || typeof id !== 'string' || typeof sessions.recordCheck !== 'function') return;
-    try { sessions.recordCheck(id, outcome); } catch { /* telemetry is best effort */ }
+    try { sessions.recordCheck(id, outcome, trend); } catch { /* telemetry is best effort */ }
     if (typeof sessions.log !== 'function') return;
     try { sessions.log(id, { kind: 'check', outcome, ...detail }); }
     catch { /* logging is best effort */ }
@@ -59,7 +63,7 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
         try { if (sessions.snapshot(id).enabled === false) return { evaluated: false, lowScore: false, steered: false }; }
         catch { return { evaluated: false, lowScore: false, steered: false }; }
       }
-      const { mode, rubric, lowScoreThreshold } = await resolveSettings();
+      const { mode, rubric, lowScoreThreshold, trendMinConfidence, trendRun, trendSevereRun } = await resolveSettings();
       let answer;
       try {
         const result = await evaluate(scoreQuestion(output, rubric), { signal: turn.signal });
@@ -75,7 +79,10 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
       const confidence = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? answer.confidence : undefined;
       const detail = confidence === undefined ? {} : { confidence };
       const lowScore = answer.score <= lowScoreThreshold;
-      record(turn, lowScore ? 'low' : 'ok', { score: answer.score, ...detail });
+      // The trend run advances over every evaluated score; a high-confidence low
+      // score is the only thing that grows it. Thresholds flow to session-state.
+      const trend = { confident: lowScore && confidence !== undefined && confidence >= trendMinConfidence, trendRun, trendSevereRun };
+      record(turn, lowScore ? 'low' : 'ok', { score: answer.score, ...detail }, trend);
       if (!lowScore) return { evaluated: true, lowScore: false, steered: false, score: answer.score };
       const confident = confidence !== undefined && confidence >= minConfidence;
       if (mode === 'steer' && confident && typeof steer === 'function' && turn?.agent) {

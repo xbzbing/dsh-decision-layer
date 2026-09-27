@@ -30,11 +30,36 @@ test('self-check records low scores and failures separately from the gate', () =
   sessions.recordCheck('one', 'low');
   sessions.recordCheck('one', 'error');
   const snapshot = sessions.snapshot('one');
-  assert.deepEqual(snapshot.check, { attempts: 3, failures: 1, low: 1 });
+  assert.equal(snapshot.check.attempts, 3);
+  assert.equal(snapshot.check.failures, 1);
+  assert.equal(snapshot.check.low, 1);
   assert.equal(snapshot.gate, undefined);
   assert.equal(snapshot.attempts, 3);
   assert.equal(snapshot.failures, 1);
   assert.throws(() => sessions.recordCheck('one', 'bogus'), /self-check/i);
+});
+
+test('self-check trend run grows on high-confidence low scores and resets on a good score', () => {
+  const sessions = createSessionState();
+  const trend = { confident: true, trendRun: 3, trendSevereRun: 5 };
+  sessions.recordCheck('one', 'low', trend);
+  sessions.recordCheck('one', 'low', trend);
+  assert.equal(sessions.snapshot('one').check.trend.run, 2);
+  assert.equal(sessions.snapshot('one').check.trend.severity, 'normal');
+  sessions.recordCheck('one', 'low', trend);
+  assert.equal(sessions.snapshot('one').check.trend.run, 3, 'three in a row');
+  assert.equal(sessions.snapshot('one').check.trend.severity, 'warn');
+  // a low-confidence low score is skipped, leaving the run unchanged
+  sessions.recordCheck('one', 'low', { confident: false, trendRun: 3, trendSevereRun: 5 });
+  assert.equal(sessions.snapshot('one').check.trend.run, 3);
+  sessions.recordCheck('one', 'low', trend);
+  sessions.recordCheck('one', 'low', trend);
+  assert.equal(sessions.snapshot('one').check.trend.run, 5);
+  assert.equal(sessions.snapshot('one').check.trend.severity, 'severe');
+  // a good score resets the run to normal
+  sessions.recordCheck('one', 'ok', { confident: false, trendRun: 3, trendSevereRun: 5 });
+  assert.equal(sessions.snapshot('one').check.trend.run, 0);
+  assert.equal(sessions.snapshot('one').check.trend.severity, 'normal');
 });
 
 test('gate suggestions and actual outcomes remain separate', () => {

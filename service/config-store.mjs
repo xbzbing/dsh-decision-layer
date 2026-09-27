@@ -55,7 +55,7 @@ function validRules(value) {
 
 function validCheck(value) {
   if (!safeObject(value)) return undefined;
-  if (Object.keys(value).some(key => !['mode', 'rubric', 'lowScoreThreshold'].includes(key))) throw new Error('Invalid self-check settings');
+  if (Object.keys(value).some(key => !['mode', 'rubric', 'lowScoreThreshold', 'trendMinConfidence', 'trendRun', 'trendSevereRun'].includes(key))) throw new Error('Invalid self-check settings');
   const check = {};
   if (value.mode !== undefined) {
     if (value.mode !== 'observe' && value.mode !== 'steer') throw new Error('Invalid self-check settings');
@@ -70,6 +70,27 @@ function validCheck(value) {
   if (value.lowScoreThreshold !== undefined) {
     if (!Number.isSafeInteger(value.lowScoreThreshold) || value.lowScoreThreshold < 0 || value.lowScoreThreshold > 9) throw new Error('Invalid self-check settings');
     check.lowScoreThreshold = value.lowScoreThreshold;
+  }
+  // Quality-trend alarm thresholds (all unvalidated heuristics, tuned on real logs):
+  // a high-confidence low score requires confidence ≥ trendMinConfidence; a run of
+  // trendRun such scores raises "warn", trendSevereRun raises "severe".
+  if (value.trendMinConfidence !== undefined) {
+    if (typeof value.trendMinConfidence !== 'number' || !Number.isFinite(value.trendMinConfidence) || value.trendMinConfidence < 0 || value.trendMinConfidence > 1) throw new Error('Invalid self-check settings');
+    check.trendMinConfidence = value.trendMinConfidence;
+  }
+  if (value.trendRun !== undefined) {
+    if (!Number.isSafeInteger(value.trendRun) || value.trendRun < 2 || value.trendRun > 10) throw new Error('Invalid self-check settings');
+    check.trendRun = value.trendRun;
+  }
+  if (value.trendSevereRun !== undefined) {
+    if (!Number.isSafeInteger(value.trendSevereRun) || value.trendSevereRun < 2 || value.trendSevereRun > 20) throw new Error('Invalid self-check settings');
+    check.trendSevereRun = value.trendSevereRun;
+  }
+  // The severe threshold must sit strictly above the warn threshold; check against
+  // the effective warn value (explicit or default 3) so the pair is always ordered.
+  if (check.trendSevereRun !== undefined) {
+    const warn = check.trendRun ?? 3;
+    if (check.trendSevereRun <= warn) throw new Error('Invalid self-check settings');
   }
   return check;
 }
