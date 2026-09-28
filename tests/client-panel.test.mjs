@@ -183,7 +183,7 @@ test('config form reflects steer mode and posts the chosen mode on save', async 
 test('task-completion switch and steer post the chosen state on advanced save', async () => {
   let savedBody;
   globalThis.fetch = async (url, init) => {
-    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', completeSettings: { mode: savedBody.completeSettings.mode }, features: savedBody.features }); }
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', completeSettings: { mode: savedBody.completeSettings.mode } }); }
     if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', completeSettings: { mode: 'observe' }, features: { complete: true } });
     throw new Error(`Unexpected URL ${url}`);
   };
@@ -193,7 +193,43 @@ test('task-completion switch and steer post the chosen state on advanced save', 
   fireEvent.click(steer);
   fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
   await waitFor(() => assert.equal(savedBody?.completeSettings?.mode, 'steer'));
-  assert.equal(savedBody.features.complete, true, 'the completion feature stays on');
+  // advanced save no longer carries the feature switches (those save immediately)
+  assert.equal(savedBody.features, undefined, 'advanced save must not touch the feature switches');
+});
+
+test('a basic feature switch saves immediately and posts only the features', async () => {
+  const puts = [];
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { const body = JSON.parse(init.body); puts.push(body);
+      return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', features: body.features }); }
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', features: { gate: true, check: true, narrow: true, complete: true } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  const gate = await view.findByRole('checkbox', { name: '危险门控' });
+  assert.equal(gate.checked, true, 'gate starts on');
+  fireEvent.click(gate);
+  // toggling posts immediately, with only the features field and the full set
+  await waitFor(() => assert.equal(puts.length, 1, 'a toggle saves immediately without a save button'));
+  assert.equal(puts[0].features.gate, false, 'the toggled feature is posted off');
+  assert.equal(puts[0].features.check, true, 'the other features round-trip unchanged');
+  assert.equal(puts[0].url, undefined, 'an immediate feature save must not touch the backend url');
+  assert.equal(puts[0].checkSettings, undefined, 'an immediate feature save must not touch advanced settings');
+  await waitFor(() => assert.equal(view.getByRole('checkbox', { name: '危险门控' }).checked, false));
+});
+
+test('a failed feature toggle reverts to its previous state', async () => {
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config') && init?.method === 'PUT') return new Response(JSON.stringify({ ok: false, error: 'boom' }), { status: 500, headers: { 'content-type': 'application/json' } });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', features: { gate: true, check: true, narrow: true, complete: true } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  const narrow = await view.findByRole('checkbox', { name: '工具收窄' });
+  assert.equal(narrow.checked, true);
+  fireEvent.click(narrow);
+  // after the write fails the switch reverts to on
+  await waitFor(() => assert.equal(view.getByRole('checkbox', { name: '工具收窄' }).checked, true, 'a failed toggle reverts'));
 });
 
 test('trigger icon carries the quality-trend severity class from the metrics', async () => {
@@ -372,8 +408,10 @@ test('advanced save button is disabled until an advanced field changes', async (
   const view = render(React.createElement(ConfigForm, { t: translate }));
   const saveAdvanced = await view.findByRole('button', { name: '保存高级配置' });
   assert.equal(saveAdvanced.disabled, true, 'nothing changed yet');
-  fireEvent.click(view.getByRole('checkbox', { name: '危险门控' }));
-  assert.equal(view.getByRole('button', { name: '保存高级配置' }).disabled, false, 'a change enables the advanced save');
+  // the basic feature switches save immediately and no longer arm the advanced
+  // save; an actual advanced field (the self-check steer toggle) does.
+  fireEvent.click(view.getByRole('checkbox', { name: '得分偏低时自动补一轮' }));
+  assert.equal(view.getByRole('button', { name: '保存高级配置' }).disabled, false, 'an advanced change enables the advanced save');
 });
 
 test('delete key is a dedicated button that clears the saved key after confirmation', async () => {

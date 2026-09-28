@@ -104,15 +104,27 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     setCompleteOn(features?.complete !== false);
   };
 
-  // Reflect a saved config back into the form and clear both dirty flags.
-  const applyConfig = (value: Config) => {
+  // Reflect the backend section (url/model/key state) from a saved config.
+  const applyBackend = (value: Config) => {
     setConfig(value);
+  };
+
+  // Reflect the advanced section (self-check / narrowing / completion tuning)
+  // from a saved config.
+  const applyAdvanced = (value: Config) => {
     setCheckMode(value.checkSettings?.mode ?? 'observe');
     setNarrowMode(value.narrowSettings?.mode ?? 'enforce');
     setCompleteMode(value.completeSettings?.mode ?? 'observe');
     setKeepPrefixes(prefixesText(value.narrowSettings));
     setMaxCandidates(String(maxCandidatesOf(value.narrowSettings)));
     setThreshold(String(thresholdOf(value.narrowSettings)));
+  };
+
+  // Full reflect, used only on initial load. Each save handler applies just its
+  // own section afterward so a save never resets another section's unsaved edits.
+  const applyConfig = (value: Config) => {
+    applyBackend(value);
+    applyAdvanced(value);
     applyFeatures(value.features);
   };
 
@@ -124,8 +136,26 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     return () => { live = false; };
   }, [t, fetchFn]);
 
-  // Persist only the advanced section (features + self-check + narrowing);
-  // backend url/model/key are left untouched by omitting them from the body.
+  // The four basic feature switches save immediately on toggle (like the session
+  // master switch), so they need no save button and are never reset by the
+  // section save buttons. Optimistic: flip locally, PUT only the features, and on
+  // failure revert to the server's truth. `features` carries the full set so the
+  // server view round-trips the other three unchanged.
+  const toggleFeature = async (features: Features, revert: () => void) => {
+    setBusy(true);
+    try {
+      const value = await request<Config>('config', fetchFn, { method: 'PUT', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ features }) });
+      applyFeatures(value.features);
+    } catch { revert(); setMessage({ text: t('error'), ok: false }); }
+    finally { setBusy(false); }
+  };
+  const featureState = () => ({ gate: gateOn, check: checkOn, narrow: narrowOn, complete: completeOn });
+
+  // Persist only the advanced section (self-check + narrowing + completion tuning);
+  // backend url/model/key and the basic feature switches are left untouched by
+  // omitting them from the body, and only the advanced section is reflected back
+  // so an unsaved backend edit or a just-toggled feature is never reset.
   const saveAdvanced = async (event: React.FormEvent) => {
     event.preventDefault();
     // Clamp the candidate ceiling to the backend's accepted range; a blank or
@@ -139,15 +169,15 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     try {
       const value = await request<Config>('config', fetchFn, { method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ checkSettings: { mode: checkMode }, narrowSettings: { mode: narrowMode, keepPrefixes: parsePrefixes(keepPrefixes), maxCandidates: cap, threshold: thresh },
-          completeSettings: { mode: completeMode },
-          features: { gate: gateOn, check: checkOn, narrow: narrowOn, complete: completeOn } }) });
-      applyConfig(value); setAdvancedDirty(false); setMessage({ text: t('saved'), ok: true });
+          completeSettings: { mode: completeMode } }) });
+      applyAdvanced(value); setAdvancedDirty(false); setMessage({ text: t('saved'), ok: true });
     } catch { setMessage({ text: t('error'), ok: false }); }
     finally { setBusy(false); }
   };
 
-  // Persist only the backend section (url/model/key); the advanced settings are
-  // omitted so an unsaved advanced edit is not written by this button.
+  // Persist only the backend section (url/model/key); the advanced settings and
+  // feature switches are omitted, and only the backend section is reflected back
+  // so an unsaved advanced edit or a just-toggled feature is never reset.
   const saveBackend = async (event: React.FormEvent) => {
     event.preventDefault();
     const url = config.url.trim();
@@ -159,7 +189,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
         body: JSON.stringify({ url, model: config.model,
           ...(key ? { apiKey: key } : {}),
           ...(needsHttpConsent ? { confirmHttpUrl: url } : {}) }) });
-      applyConfig(value); setKey(''); setBackendDirty(false); setMessage({ text: t('saved'), ok: true });
+      applyBackend(value); setKey(''); setBackendDirty(false); setMessage({ text: t('saved'), ok: true });
     } catch { setMessage({ text: t('error'), ok: false }); }
     finally { setBusy(false); }
   };
@@ -189,17 +219,17 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
       <summary className="decision-collapse-head"><h3><HeadIcon name="features" />{t('basicFeatures')}</h3>
         <span className="decision-collapse-icon" aria-hidden="true" /></summary>
       <div className="decision-collapse-body">
-        <Toggle label={t('featureGate')} checked={gateOn} disabled={!ready}
-          onChange={next => { setGateOn(next); setAdvancedDirty(true); }} />
+        <Toggle label={t('featureGate')} checked={gateOn} disabled={!ready || busy}
+          onChange={next => { setGateOn(next); void toggleFeature({ ...featureState(), gate: next }, () => setGateOn(!next)); }} />
         <p className="decision-muted">{t('featureGateHint')}</p>
-        <Toggle label={t('featureCheck')} checked={checkOn} disabled={!ready}
-          onChange={next => { setCheckOn(next); setAdvancedDirty(true); }} />
+        <Toggle label={t('featureCheck')} checked={checkOn} disabled={!ready || busy}
+          onChange={next => { setCheckOn(next); void toggleFeature({ ...featureState(), check: next }, () => setCheckOn(!next)); }} />
         <p className="decision-muted">{t('featureCheckHint')}</p>
-        <Toggle label={t('featureNarrow')} checked={narrowOn} disabled={!ready}
-          onChange={next => { setNarrowOn(next); setAdvancedDirty(true); }} />
+        <Toggle label={t('featureNarrow')} checked={narrowOn} disabled={!ready || busy}
+          onChange={next => { setNarrowOn(next); void toggleFeature({ ...featureState(), narrow: next }, () => setNarrowOn(!next)); }} />
         <p className="decision-muted">{t('featureNarrowHint')}</p>
-        <Toggle label={t('featureComplete')} checked={completeOn} disabled={!ready}
-          onChange={next => { setCompleteOn(next); setAdvancedDirty(true); }} />
+        <Toggle label={t('featureComplete')} checked={completeOn} disabled={!ready || busy}
+          onChange={next => { setCompleteOn(next); void toggleFeature({ ...featureState(), complete: next }, () => setCompleteOn(!next)); }} />
         <p className="decision-muted">{t('featureCompleteHint')}</p>
       </div>
     </details>
