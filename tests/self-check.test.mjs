@@ -54,6 +54,15 @@ test('hard steer runs once per session turn even across fresh turn objects', asy
   assert.equal((await check.review(turn('weak', { turn: 8 }))).steered, true, 'a later turn may steer again');
 });
 
+test('a transient steer failure does not consume the turn budget; a retry in the same turn can steer', async () => {
+  let attempts = 0;
+  const check = createSelfCheck({ settings: { mode: 'steer' }, evaluate: async () => lowScore,
+    steer: () => { attempts++; if (attempts === 1) throw new Error('transient'); } });
+  assert.equal((await check.review(turn('weak', { turn: 9 }))).steered, false, 'first attempt throws');
+  assert.equal((await check.review(turn('weak', { turn: 9 }))).steered, true, 'same turn can retry after a transient failure');
+  assert.equal(attempts, 2);
+});
+
 test('configurable rubric and threshold flow through settings', async () => {
   const seen = [];
   const check = createSelfCheck({

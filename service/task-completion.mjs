@@ -1,3 +1,5 @@
+import { createSteerOnce } from './steer-once.mjs';
+
 const MAX_STATE = 8 * 1024;
 const MAX_CONDITION = 512;
 const MAX_CONDITIONS = 20;
@@ -78,11 +80,7 @@ export function completionQuestions(conditions, evidence, answer) {
 // opens a supplemental step; it never rewrites the already-committed reply.
 export function createTaskCompletion({ evaluate, sessions, steer, settings, minConfidence = 0.4 } = {}) {
   if (typeof evaluate !== 'function') throw new Error('Task completion requires an evaluator');
-  const steeredTurns = new Set();
-  const steerKey = turn => {
-    const id = turn?.agent?.session?.id;
-    return typeof id === 'string' && Number.isInteger(turn?.turn) ? `${id}:${turn.turn}` : undefined;
-  };
+  const steerOnce = createSteerOnce();
   const resolveSettings = async () => {
     let raw = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
@@ -122,31 +120,31 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
       }
       if (!answers) { record(turn, 'error', { reason: 'invalid-response' }); return { ...skip }; }
       let satisfied = 0, unsatisfied = 0, insufficient = 0;
-      let minConf = 1;
+      // Track the minimum confidence over the `unsatisfied` verdicts only: a steer
+      // fires on a confident unsatisfied finding, so a low-confidence satisfied /
+      // insufficient verdict on another condition must not suppress it.
+      let unsatisfiedMinConf = 1;
       for (let index = 0; index < conditions.length; index++) {
         const answer = answers[`c${index}`];
         if (!isObject(answer) || answer.type !== 'choice' || typeof answer.choice !== 'string') {
           insufficient++; continue;
         }
-        if (probability(answer.confidence)) minConf = Math.min(minConf, answer.confidence);
         if (answer.choice === 'satisfied') satisfied++;
-        else if (answer.choice === 'unsatisfied') unsatisfied++;
+        else if (answer.choice === 'unsatisfied') {
+          unsatisfied++;
+          if (probability(answer.confidence)) unsatisfiedMinConf = Math.min(unsatisfiedMinConf, answer.confidence);
+        }
         else insufficient++;
       }
       const outcome = unsatisfied > 0 ? 'unsatisfied' : 'ok';
       const detail = { conditions: conditions.length, satisfied, unsatisfied, insufficient };
       // A steer is only for a confident finding that a listed condition is not met.
-      const confident = unsatisfied > 0 && minConf >= minConfidence;
-      let steered = false;
-      if (mode === 'steer' && confident && typeof steer === 'function' && turn?.agent) {
-        const key = steerKey(turn);
-        if (key !== undefined && !steeredTurns.has(key)) {
-          steeredTurns.add(key);
-          if (steeredTurns.size > 4096) steeredTurns.delete(steeredTurns.values().next().value);
-          try { steer(turn.agent, STEER_TEXT); steered = true; }
-          catch { steered = false; }
-        }
-      }
+      const confident = unsatisfied > 0 && unsatisfiedMinConf >= minConfidence;
+      // The turn budget is consumed only on a successful steer (createSteerOnce),
+      // so a transient host failure does not permanently suppress this turn.
+      const steered = mode === 'steer' && confident && typeof steer === 'function' && turn?.agent
+        ? steerOnce.attempt(turn, () => steer(turn.agent, STEER_TEXT))
+        : false;
       if (steered) detail.steered = true;
       record(turn, outcome, detail);
       return { evaluated: true, steered, satisfied, unsatisfied, insufficient };

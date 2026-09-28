@@ -1,6 +1,11 @@
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const probability = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 const MAX_STATE = 8 * 1024;
+// The adjudication backend hard-rejects a request carrying more than 64 questions
+// (backend.mjs validateRequest). One relevance question is sent per optional tool,
+// so the candidate cap can never exceed this — otherwise evaluate() throws locally
+// before any network call and the failure is mislabeled as a backend error.
+const MAX_QUESTIONS = 64;
 
 // Core tools an agent almost always needs. They are never judged for relevance
 // and never dropped, so narrowing cannot strip the agent's fundamental
@@ -90,8 +95,11 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     const prefixes = Array.isArray(raw?.keepPrefixes)
       ? raw.keepPrefixes.filter(prefix => typeof prefix === 'string' && prefix)
       : defaultPrefixes;
-    // A configured optional-candidate ceiling overrides the constructor default.
-    const cap = Number.isSafeInteger(raw?.maxCandidates) && raw.maxCandidates >= 1 ? raw.maxCandidates : maxCandidates;
+    // A configured optional-candidate ceiling overrides the constructor default,
+    // clamped to the backend's per-request question limit so the judged set is
+    // never large enough to be rejected before it is sent.
+    const configuredCap = Number.isSafeInteger(raw?.maxCandidates) && raw.maxCandidates >= 1 ? raw.maxCandidates : maxCandidates;
+    const cap = Math.min(configuredCap, MAX_QUESTIONS);
     return { mode, threshold, prefixes, cap };
   };
   const record = (turn, outcome, detail = {}) => {
@@ -114,7 +122,6 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
       const alwaysKeep = name => core.has(name) || prefixes.some(prefix => name.startsWith(prefix));
       const keptNames = names.filter(alwaysKeep);
       const optional = tools.filter(tool => !alwaysKeep(tool.name));
-      const optionalNames = optional.map(tool => tool.name);
       if (optional.length < minCandidates) return { ...skip, keep: names };
       const hasState = typeof turn?.state === 'string' ? turn.state.trim().length > 0
         : isObject(turn?.state) ? Object.keys(turn.state).length > 0 : false;
@@ -124,13 +131,18 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
         try { if (sessions.snapshot(id).enabled === false) return { ...skip, keep: names }; }
         catch { return { ...skip, keep: names }; }
       }
-      // B: a large optional surface must not be enforced — only observed.
+      // B: a large optional surface must not be enforced — only observed. When
+      // over the cap we still evaluate a bounded subset (never more than the
+      // backend's question limit) so the pass is logged without throwing, but the
+      // result is observe-only and applies no restriction.
       const overCap = optional.length > cap;
       const effectiveMode = overCap ? 'observe' : mode;
+      const judged = overCap ? optional.slice(0, cap) : optional;
+      const judgedNames = judged.map(tool => tool.name);
       let result;
-      try { result = await evaluate(relevanceQuestions(turn.state, optional), { signal: turn.signal }); }
+      try { result = await evaluate(relevanceQuestions(turn.state, judged), { signal: turn.signal }); }
       catch (error) { record(turn, 'error', { reason: typeof error?.reason === 'string' ? error.reason : 'unreachable', mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
-      const narrowed = narrowTools(optionalNames, result, { threshold });
+      const narrowed = narrowTools(judgedNames, result, { threshold });
       const keep = [...keptNames, ...narrowed.keep];
       const drop = narrowed.drop;
       // C: too few tools left over is a sign the verdict over-pruned; do not apply.

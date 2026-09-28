@@ -1,3 +1,5 @@
+import { createSteerOnce } from './steer-once.mjs';
+
 const MAX_OUTPUT = 24 * 1024;
 
 export const DEFAULT_RUBRIC = Object.freeze([
@@ -30,11 +32,7 @@ export function scoreQuestion(output, rubric = DEFAULT_RUBRIC) {
 // the framework UserMessage so this module stays free of DSH message types.
 export function createSelfCheck({ evaluate, sessions, steer, settings, minConfidence = 0.4 } = {}) {
   if (typeof evaluate !== 'function') throw new Error('Self-check requires an evaluator');
-  const steeredTurns = new Set();
-  const steerKey = turn => {
-    const id = turn?.agent?.session?.id;
-    return typeof id === 'string' && Number.isInteger(turn?.turn) ? `${id}:${turn.turn}` : undefined;
-  };
+  const steerOnce = createSteerOnce();
   const resolveSettings = async () => {
     let raw = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
@@ -85,17 +83,12 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
       record(turn, lowScore ? 'low' : 'ok', { score: answer.score, ...detail }, trend);
       if (!lowScore) return { evaluated: true, lowScore: false, steered: false, score: answer.score };
       const confident = confidence !== undefined && confidence >= minConfidence;
-      if (mode === 'steer' && confident && typeof steer === 'function' && turn?.agent) {
-        const key = steerKey(turn);
-        if (key !== undefined && !steeredTurns.has(key)) {
-          steeredTurns.add(key);
-          if (steeredTurns.size > 4096) steeredTurns.delete(steeredTurns.values().next().value);
-          try { steer(turn.agent, STEER_TEXT); }
-          catch { return { evaluated: true, lowScore: true, steered: false, score: answer.score }; }
-          return { evaluated: true, lowScore: true, steered: true, score: answer.score };
-        }
-      }
-      return { evaluated: true, lowScore: true, steered: false, score: answer.score };
+      // The turn budget is consumed only on a successful steer (createSteerOnce),
+      // so a transient host failure does not permanently suppress this turn.
+      const steered = mode === 'steer' && confident && typeof steer === 'function' && turn?.agent
+        ? steerOnce.attempt(turn, () => steer(turn.agent, STEER_TEXT))
+        : false;
+      return { evaluated: true, lowScore: true, steered, score: answer.score };
     },
   };
 }

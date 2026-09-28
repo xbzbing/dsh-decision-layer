@@ -88,6 +88,20 @@ test('steer does not fire when all satisfied or when confidence is low', async (
   assert.equal((await lowConf.review(turn('1. a\n2. b'))).steered, false, 'a low-confidence unsatisfied must not steer');
 });
 
+test('a low-confidence satisfied on one condition does not suppress a confident unsatisfied on another', async () => {
+  const steers = [];
+  // c0 confidently unsatisfied (0.9), c1 low-confidence satisfied (0.1): the steer
+  // gate must look at the unsatisfied confidence only, not the global minimum.
+  const check = createTaskCompletion({ settings: { mode: 'steer' }, steer: (_agent, text) => steers.push(text),
+    evaluate: async () => ({ answers: {
+      c0: { ...choice('unsatisfied'), confidence: 0.9 },
+      c1: { ...choice('satisfied'), confidence: 0.1 },
+    } }) });
+  const result = await check.review(turn('1. a\n2. b'));
+  assert.equal(result.steered, true, 'a confident unsatisfied still steers despite a low-confidence satisfied elsewhere');
+  assert.equal(steers.length, 1);
+});
+
 test('backend failure and invalid response are recorded as error, not unsatisfied', async () => {
   const entries = [];
   const sessions = { snapshot: () => ({ enabled: true }), recordComplete: () => {}, log: (_id, e) => entries.push(e) };
@@ -106,4 +120,14 @@ test('a throwing steer is contained and reported as not steered', async () => {
   const result = await check.review(turn('1. a\n2. b'));
   assert.equal(result.evaluated, true);
   assert.equal(result.steered, false);
+});
+
+test('a transient steer failure does not consume the turn budget; a later retry can steer', async () => {
+  let attempts = 0;
+  const check = createTaskCompletion({ settings: { mode: 'steer' },
+    steer: () => { attempts++; if (attempts === 1) throw new Error('transient'); },
+    evaluate: async () => ({ answers: { c0: choice('unsatisfied'), c1: choice('satisfied') } }) });
+  assert.equal((await check.review(turn('1. a\n2. b', { turnNo: 7 }))).steered, false, 'first attempt throws');
+  assert.equal((await check.review(turn('1. a\n2. b', { turnNo: 7 }))).steered, true, 'same turn can retry after a transient failure');
+  assert.equal(attempts, 2);
 });

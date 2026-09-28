@@ -267,6 +267,37 @@ test('persisted ratings from /logs pre-fill the rating state on open', async () 
   assert.equal(view.queryByText(/已标注/), null, 'the modal no longer shows the annotation summary');
 });
 
+test('a failed re-rate rolls back to the previous rating instead of erasing it', async () => {
+  // The row starts persisted as good; the user re-rates it bad and the POST
+  // fails. The row must revert to good (its prior value), not become unrated.
+  let failNext = false;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
+      gate: { attempts: 1, failures: 0, allow: 0, ask: 0, deny: 1, actual: { allow: 0, deny: 1, error: 0 } } });
+    if (String(url).includes('/logs?')) return envelope({ totalDecisions: 1, annotations: { rated: 1, good: 1, bad: 0, unsure: 0 }, ratings: { 'dec-2': 'good' }, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { id: 'dec-2', at: 1_700_000_012_000, kind: 'gate', outcome: 'deny', tool: 'bash', action: 'deny' },
+    ] });
+    if (String(url).endsWith('/annotate') && init?.method === 'POST') {
+      if (failNext) return new Response(JSON.stringify({ ok: false, error: 'boom' }), { status: 500, headers: { 'content-type': 'application/json' } });
+      return envelope({ ok: true });
+    }
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'rollback', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  // seeded as good
+  await waitFor(() => assert.equal(view.getByRole('button', { name: '判对了' }).getAttribute('aria-pressed'), 'true'));
+  // re-rate to bad, but make the write fail
+  failNext = true;
+  fireEvent.click(view.getByRole('button', { name: '判错了' }));
+  // after the failed write it reverts to good, not unrated
+  await waitFor(() => assert.equal(view.getByRole('button', { name: '判对了' }).getAttribute('aria-pressed'), 'true'));
+  assert.equal(view.getByRole('button', { name: '判错了' }).getAttribute('aria-pressed'), 'false', 'the failed rating is not left applied');
+});
+
 test('advanced save posts keep prefixes split on commas or newlines and leaves the backend url alone', async () => {
   let savedBody;
   globalThis.fetch = async (url, init) => {

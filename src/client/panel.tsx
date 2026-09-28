@@ -33,6 +33,11 @@ function Bar({ allow, ask, deny }: { allow: number; ask: number; deny: number })
 function SessionPanel({ sessionId, t }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
+  // Tracks whether this mounted instance is still live, so an async probe that
+  // resolves after a session switch (SessionPanel remounts on key={sessionId})
+  // does not setStatus on an unmounted instance.
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
   const [open, setOpen] = useState(false);
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
@@ -52,11 +57,11 @@ function SessionPanel({ sessionId, t }: Props) {
     return () => { live = false; };
   }, [sessionId, t]);
 
-  const checkStatus = (live: () => boolean) => {
+  const checkStatus = () => {
     setStatus('checking');
     void request<Probe>('probe', { method: 'POST' })
-      .then(value => { if (!live()) return; setStatus(value.connected ? 'ok' : 'down'); })
-      .catch(() => { if (live()) setStatus('down'); });
+      .then(value => { if (mounted.current) setStatus(value.connected ? 'ok' : 'down'); })
+      .catch(() => { if (mounted.current) setStatus('down'); });
   };
 
   useEffect(() => {
@@ -73,7 +78,9 @@ function SessionPanel({ sessionId, t }: Props) {
     // rated-count summary lives in the "Decision analysis" tab, not here.
     void request<Analysis>(`logs?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) seed(value); }).catch(() => {});
     return () => { alive = false; element.close(); };
-  }, [open, t, sessionId, seed]);
+    // `t` is intentionally not a dependency: it is not read here, and including it
+    // would let a locale-identity change close the open modal mid-session.
+  }, [open, sessionId, seed]);
 
   const updateEnabled = async (next: boolean) => {
     setBusy(true);
@@ -130,7 +137,7 @@ function SessionPanel({ sessionId, t }: Props) {
         <div className="decision-status">
           <span className={`decision-status-dot decision-status-${status}`} aria-hidden="true" />
           <span className="decision-status-label">{t('backendStatus')}：{statusLabel}</span>
-          <button type="button" className="decision-status-recheck" disabled={status === 'checking'} onClick={() => checkStatus(() => true)}>{t('recheck')}</button>
+          <button type="button" className="decision-status-recheck" disabled={status === 'checking'} onClick={() => checkStatus()}>{t('recheck')}</button>
         </div></section>
       <section><h3>{t('metrics')}</h3>
         {!metrics?.gate && !metrics?.check && !metrics?.narrow && !metrics?.complete ? <p className="decision-empty" role="status">{t('empty')}</p> : <div className="decision-cards">

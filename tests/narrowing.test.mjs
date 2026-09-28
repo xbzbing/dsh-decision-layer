@@ -196,6 +196,21 @@ test('a configured maxCandidates overrides the constructor default', async () =>
   assert.equal(big.applied, true);
 });
 
+test('the judged set never exceeds the backend question limit even with a high configured cap', async () => {
+  // 70 optional tools with a configured cap of 200: the effective cap is clamped
+  // to the backend's 64-question limit, so the sent question set is <= 64 (never
+  // throwing locally) and the pass is observe-only.
+  const many = Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`opt_${i}`, 0.9]));
+  const tools = Object.keys(many).map(name => ({ name, description: '' }));
+  let sentCount = 0;
+  const check = createNarrowing({ settings: { mode: 'enforce', maxCandidates: 200 }, minKeep: 1, coreTools: [],
+    evaluate: async request => { sentCount = Object.keys(request.questions).length; return answers(many); } });
+  const result = await check.review(turn('do something', tools));
+  assert.ok(sentCount <= 64, `sent ${sentCount} questions; must not exceed the backend limit of 64`);
+  assert.equal(result.overCap, true, '70 optional tools is over the clamped cap');
+  assert.equal(result.applied, false, 'an over-cap surface is observe-only');
+});
+
 test('C: too few tools left over is treated as untrustworthy and not enforced', async () => {
   const check = createNarrowing({ settings: { mode: 'enforce' }, minKeep: 5, coreTools: [],
     evaluate: async () => answers({ a: 0.9, b: 0.1, c: 0.1, d: 0.1, e: 0.1 }) });

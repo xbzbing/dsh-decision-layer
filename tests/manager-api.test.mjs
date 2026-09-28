@@ -103,3 +103,49 @@ test('annotate appends a validated annotation and rejects bad input', async () =
     body: JSON.stringify({ target: 'd', rating: 'good', sessionId: 's1' }) });
   assert.equal(cross.status, 403);
 });
+
+test('CSRF guard: a cross-site fetch-metadata request is rejected even from loopback', async () => {
+  const response = await fetch(`${base}/session?sessionId=s1`, { headers: { 'sec-fetch-site': 'cross-site' } });
+  assert.equal(response.status, 403, 'sec-fetch-site: cross-site is refused');
+});
+
+test('CSRF guard: a mutation with a non-JSON content-type is rejected', async () => {
+  // A form/text content-type is the classic simple-request CSRF vector; readBody
+  // requires application/json, so the PUT is refused before any state change.
+  const response = await fetch(`${base}/session`, { method: 'PUT', headers: { origin, 'content-type': 'text/plain' },
+    body: JSON.stringify({ sessionId: 's1', enabled: false }) });
+  assert.equal(response.status, 400);
+});
+
+test('CSRF guard: an over-limit request body is rejected', async () => {
+  // Bodies above BODY_LIMIT (32 KiB) are refused so a client cannot stream an
+  // unbounded payload into the annotation writer.
+  const huge = 'x'.repeat(40 * 1024);
+  const response = await fetch(`${base}/annotate`, { method: 'POST', headers: { origin, 'content-type': 'application/json' },
+    body: JSON.stringify({ target: huge, rating: 'good', sessionId: 's1' }) });
+  assert.equal(response.status, 400);
+});
+
+test('CSRF guard: an origin-free non-GET mutation is rejected', async () => {
+  // The origin===undefined branch only trusts GET; a PUT with no Origin header
+  // (a non-browser or stripped-origin caller) cannot mutate state.
+  let code;
+  const putRoute = routes.find(route => route.path.endsWith('/session'));
+  await putRoute.handler({ method: 'PUT', headers: { host: `127.0.0.1:${server.address().port}`, 'content-type': 'application/json' },
+    socket: { remoteAddress: '127.0.0.1' } }, { writeHead: status => { code = status; }, end: () => {} });
+  assert.equal(code, 403, 'a non-GET request without an Origin is refused');
+});
+
+test('an internal analysis fault surfaces as 500, not a client 400', async () => {
+  // A validated /logs request whose analyzer throws is an internal fault; the
+  // client must see 500, not a misleading 400.
+  const faulting = createManagerRoutes({ path, sessions, env: {},
+    backend: { evaluate: async () => ({ model: 'x', answers: {}, usage: {} }) },
+    analyze: async () => { throw new Error('disk gone'); } })
+    .find(route => route.path.endsWith('/logs'));
+  let code;
+  await faulting.handler({ method: 'GET', url: '/plugins/dsh-decision-layer/api/logs?sessionId=s1',
+    headers: { host: `127.0.0.1:${server.address().port}`, origin }, socket: { remoteAddress: '127.0.0.1' } },
+    { writeHead: status => { code = status; }, end: () => {} });
+  assert.equal(code, 500, 'an analyzer throw is an internal error');
+});

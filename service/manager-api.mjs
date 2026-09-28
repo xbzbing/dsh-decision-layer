@@ -45,6 +45,10 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
       const value = await methods[req.method](req);
       return respond(res, 200, { ok: true, value });
     } catch (error) {
+      // A genuine internal fault (log analysis / annotation write) is a 500; a
+      // tagged or untagged validation/config error stays a client 400. Neither
+      // body carries error internals.
+      if (error?.code === 'INTERNAL') return respond(res, 500, { ok: false, error: 'Internal error' });
       if (error?.code === 'BAD_REQUEST') return respond(res, 400, { ok: false, error: error.message });
       return respond(res, 400, { ok: false, error: 'Invalid request or backend unavailable' });
     }
@@ -81,7 +85,9 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
     route('logs', {
       GET: async req => {
         if (typeof analyze !== 'function') { const error = new Error('analysis unavailable'); error.code = 'BAD_REQUEST'; throw error; }
-        return analyze(sessionId(req));
+        const id = sessionId(req);
+        try { return await analyze(id); }
+        catch (error) { if (error?.code === 'BAD_REQUEST') throw error; const wrapped = new Error('analysis failed'); wrapped.code = 'INTERNAL'; throw wrapped; }
       },
     }),
     // Append one annotation event for a decision. Explicit user intent: validated
@@ -96,7 +102,10 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
         if (!target || target.length > 128 || !['good', 'bad', 'unsure'].includes(rating) || !session || session.length > 512) {
           const error = new Error('Invalid annotation'); error.code = 'BAD_REQUEST'; throw error;
         }
-        await logStore.appendAnnotation({ kind: 'annotation', target, rating, sessionId: session });
+        // A validated write that still fails is an internal fault (disk / IO), not
+        // bad input: surface it as 500 so the client does not read it as a 400.
+        try { await logStore.appendAnnotation({ kind: 'annotation', target, rating, sessionId: session }); }
+        catch { const error = new Error('annotation write failed'); error.code = 'INTERNAL'; throw error; }
         return { ok: true, target, rating };
       },
     }),
