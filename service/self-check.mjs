@@ -80,6 +80,10 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
       // The trend run advances over every evaluated score; a high-confidence low
       // score is the only thing that grows it. Thresholds flow to session-state.
       const trend = { confident: lowScore && confidence !== undefined && confidence >= trendMinConfidence, trendRun, trendSevereRun };
+      // A low score the model is not confident about (confidence present but below
+      // the trend threshold) does not advance the quality-trend judgment. Flag it
+      // so the decision log can mark it as low-signal noise instead of a real dip.
+      if (lowScore && confidence !== undefined && !trend.confident) detail.lowConfidence = true;
       record(turn, lowScore ? 'low' : 'ok', { score: answer.score, ...detail }, trend);
       if (!lowScore) return { evaluated: true, lowScore: false, steered: false, score: answer.score };
       const confident = confidence !== undefined && confidence >= minConfidence;

@@ -61,6 +61,28 @@ test('switching session does not show stale enabled state or accept a late updat
   await waitFor(() => assert.equal(view.getByRole('checkbox', { name: '本会话内启用自动介入' }).checked, false));
 });
 
+test('a low-confidence low self-check score is tagged as ignorable noise', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
+      check: { attempts: 1, failures: 0, low: 1 } });
+    if (String(url).includes('/logs?')) return envelope({ totalDecisions: 1, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { id: 'n1', at: 1_700_000_040_000, kind: 'check', outcome: 'low', score: 0.76, confidence: 0, lowConfidence: true },
+    ] });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'noise', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  // the low-confidence low score reads as "低置信" and carries the noise tag
+  await view.findByText(/得分偏低（低置信）/);
+  const row = (await view.findByText(/噪声，可忽略/)).closest('li');
+  // the row uses the neutral muted accent, not the amber warn accent
+  assert.ok(row.className.includes('decision-log-muted'), 'a noisy low score is muted, not warn');
+  assert.ok(!row.className.includes('decision-log-warn'), 'it must not use the warn accent');
+});
+
 test('modal shows gate metrics and the decision log, not the backend form', async () => {
   globalThis.fetch = async (url, init) => {
     if (String(url).includes('/session?')) return envelope({ enabled: true });

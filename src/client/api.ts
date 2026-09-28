@@ -11,6 +11,7 @@ export interface LogEntry {
   tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number;
   mode?: string; dropped?: number; kept?: number; candidates?: number; tools?: string[];
   conditions?: number; satisfied?: number; unsatisfied?: number; insufficient?: number; steered?: boolean;
+  lowConfidence?: boolean;
 }
 
 // The read-only aggregate the /logs route returns over the persisted decision

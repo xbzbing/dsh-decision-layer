@@ -120,12 +120,27 @@ test('fractional scores are accepted and low confidence is a valid answer, not a
   assert.equal(result.evaluated, true);
   assert.equal(result.lowScore, false, 'a fractional score above the threshold is not low');
   assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 1.43, confidence: 0.9 });
-  // A low-confidence score is still recorded as a real ok/low answer with its confidence, never as an error.
+  // A low-confidence score is still recorded as a real ok/low answer with its
+  // confidence, never as an error; a low-confidence LOW score is additionally
+  // flagged lowConfidence so the UI can mark it as ignorable noise.
   const lowConf = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 0, confidence: 0.17, probabilities: { '0': 0.4, '1': 0.35, '2': 0.25 } } } }) });
   const lowConfResult = await lowConf.review(turn('answer'));
   assert.equal(lowConfResult.evaluated, true);
   assert.equal(lowConfResult.lowScore, true);
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'low', score: 0, confidence: 0.17 });
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'low', score: 0, confidence: 0.17, lowConfidence: true });
+});
+
+test('a high-confidence low score is NOT flagged as noise; a passing score never is', async () => {
+  const entries = [];
+  const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
+  // High-confidence low score: real dip, no noise flag (default trendMinConfidence 0.6).
+  const sure = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 0, confidence: 0.9, probabilities: { '0': 0.9, '1': 0.05, '2': 0.05 } } } }) });
+  await sure.review(turn('weak'));
+  assert.equal(entries.at(-1).lowConfidence, undefined, 'a confident low score is a real dip, not noise');
+  // Passing score with low confidence: not low, so never flagged.
+  const okLowConf = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 2, confidence: 0.1, probabilities: { '0': 0, '1': 0, '2': 1 } } } }) });
+  await okLowConf.review(turn('good'));
+  assert.equal(entries.at(-1).lowConfidence, undefined, 'a passing score is never noise-flagged');
 });
 
 test('low confidence never steers even in steer mode, but a confident low score does', async () => {

@@ -64,6 +64,7 @@ const css = `
 .decision-log-item.decision-log-deny{border-left-color:#c0392b}
 .decision-log-item.decision-log-error,.decision-log-item.decision-log-warn{border-left-color:#c98a1e}
 .decision-log-item.decision-log-ok{border-left-color:#1f8a70}
+.decision-log-item.decision-log-muted{border-left-color:var(--dsw-alias-border-l2,#dce1e6)}
 .decision-log-time{color:var(--dsw-alias-label-tertiary,#77818b);font-variant-numeric:tabular-nums;flex:0 0 auto}
 .decision-log-body{color:var(--dsw-alias-label-primary,#202124);flex:1 1 auto;min-width:0}
 .decision-rate{flex:0 0 auto;display:inline-flex;gap:1px;align-self:center}
@@ -80,6 +81,11 @@ const css = `
 .decision-log-ok .decision-log-verdict{color:#1f8a70}
 .decision-log-warn .decision-log-verdict{color:#c98a1e}
 .decision-log-detail{color:var(--dsw-alias-label-secondary,#59636e)}
+/* A low-confidence low score is noise: its verdict is shown muted (not the amber
+   warn accent) and a "noise, ignore" tag hangs off the row so it never reads as a
+   real quality dip. */
+.decision-log-muted-verdict{font-weight:600;color:var(--dsw-alias-label-tertiary,#9aa5b1)}
+.decision-log-muted .decision-log-time{opacity:.75}
 
 .decision-status{display:flex;align-items:center;gap:.5rem;margin-top:.7rem;font-size:.82rem}
 .decision-status-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:#9aa5b1}

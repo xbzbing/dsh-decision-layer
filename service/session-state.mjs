@@ -131,6 +131,7 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       if (Number.isSafeInteger(entry.unsatisfied) && entry.unsatisfied >= 0) record.unsatisfied = entry.unsatisfied;
       if (Number.isSafeInteger(entry.insufficient) && entry.insufficient >= 0) record.insufficient = entry.insufficient;
       if (entry.steered === true) record.steered = true;
+      if (entry.lowConfidence === true) record.lowConfidence = true;
       if (Array.isArray(entry.tools)) {
         const names = entry.tools.filter(name => typeof name === 'string' && name.trim()).slice(0, 12).map(name => name.trim().slice(0, 64));
         if (names.length > 0) record.tools = names;

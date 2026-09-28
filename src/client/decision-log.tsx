@@ -47,8 +47,16 @@ function renderGate({ t }: RowProps, entry: LogEntry) {
 function renderCheck({ t }: RowProps, entry: LogEntry) {
   const label = <span title={t('logCheckHint')}>{t('logCheck')}</span>;
   if (entry.outcome === 'error') return <>{label} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(t, entry)}` : ''}</span></>;
-  const result = entry.outcome === 'low' ? t('checkResultLow') : t('checkResultOk');
-  return <>{label} · <span className="decision-log-verdict">{result}</span>{entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null}{typeof entry.confidence === 'number' ? <span className="decision-log-detail"> · {t('logConfidence')} {entry.confidence}</span> : null}</>;
+  // A low score the model was not confident about is low-signal noise: it does not
+  // advance the quality trend and triggers no intervention. Mark it plainly so the
+  // reader does not mistake it for a real quality dip.
+  const noisy = entry.outcome === 'low' && entry.lowConfidence === true;
+  const result = entry.outcome === 'low' ? (noisy ? t('checkResultLowNoisy') : t('checkResultLow')) : t('checkResultOk');
+  const verdict = <span className={noisy ? 'decision-log-muted-verdict' : 'decision-log-verdict'}>{result}</span>;
+  const score = entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null;
+  const conf = typeof entry.confidence === 'number' ? <span className="decision-log-detail"> · {t('logConfidence')} {entry.confidence}</span> : null;
+  const hint = noisy ? <span className="decision-log-detail" title={t('checkNoiseHint')}> · {t('checkNoiseTag')}</span> : null;
+  return <>{label} · {verdict}{score}{conf}{hint}</>;
 }
 
 function renderNarrow({ t }: RowProps, entry: LogEntry) {
@@ -85,7 +93,12 @@ function renderComplete({ t }: RowProps, entry: LogEntry) {
 function outcomeTagOf(entry: LogEntry) {
   if (entry.kind === 'narrow') return entry.outcome === 'error' ? 'error' : 'ok';
   if (entry.kind === 'complete') return entry.outcome === 'error' ? 'error' : entry.outcome === 'unsatisfied' ? 'warn' : 'ok';
-  return entry.outcome === 'deny' ? 'deny' : entry.outcome === 'error' ? 'error' : entry.outcome === 'low' ? 'warn' : 'ok';
+  if (entry.outcome === 'deny') return 'deny';
+  if (entry.outcome === 'error') return 'error';
+  // A low-confidence low score is noise, not a real dip: render it neutral (muted)
+  // rather than the amber warn accent so it does not read as a quality problem.
+  if (entry.outcome === 'low') return entry.kind === 'check' && entry.lowConfidence === true ? 'muted' : 'warn';
+  return 'ok';
 }
 
 function renderBody(props: RowProps, entry: LogEntry) {
