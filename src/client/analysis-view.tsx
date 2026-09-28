@@ -3,6 +3,7 @@ import type { Translate } from '@deepseek-ai/dsh-client-ui-slots';
 import type { TranslationKey } from './i18n.js';
 import { request, type Analysis, type LogEntry } from './api.js';
 import { DecisionLogList } from './decision-log.js';
+import { CardHead, Stat, share } from './cards.js';
 import { useAnnotations } from './use-annotations.js';
 
 // The session-scoped "Decision analysis" conversation view tab. It reads the
@@ -12,20 +13,6 @@ import { useAnnotations } from './use-annotations.js';
 // one made there. It is read-only over logs and append-only over annotations;
 // it never touches the agent loop.
 interface Props { sessionId: string; t: Translate<TranslationKey> }
-
-// A single labelled number in the profile grid, with an optional share-of-total
-// percentage shown beneath it for at-a-glance comparison. `pct` is null when the
-// denominator is 0 (nothing to compare) so the row stays a bare count.
-function Stat({ label, value, pct, tone }: { label: string; value: number | string; pct?: number | null; tone?: 'warn' | 'muted' }) {
-  return <div className="decision-stat">
-    <span className={`decision-stat-num${tone ? ` decision-stat-${tone}` : ''}`}>{value}</span>
-    {typeof pct === 'number' && <span className="decision-stat-pct">{pct}%</span>}
-    <span className="decision-stat-label">{label}</span>
-  </div>;
-}
-
-// Share of a total as a rounded whole percent, or null when there is no total.
-const share = (n: number, total: number) => total > 0 ? Math.round((n / total) * 100) : null;
 
 export function AnalysisView({ sessionId, t }: Props) {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -67,8 +54,7 @@ export function AnalysisView({ sessionId, t }: Props) {
             <h3>{t('analysisProfile')}</h3>
             <div className="decision-analysis-cards">
               {profile.gate.attempts > 0 && <article className="decision-card">
-                <header className="decision-card-head"><span className="decision-card-title">{t('cardGate')}</span>
-                  <span className="decision-card-total">{profile.gate.attempts}<small>{t('cardTimes')}</small></span></header>
+                <CardHead title={t('cardGate')} total={profile.gate.attempts} unit={t('cardTimes')} />
                 <div className="decision-card-stats">
                   <Stat label={t('deny')} value={profile.gate.deny} pct={share(profile.gate.deny, profile.gate.attempts)} tone="warn" />
                   <Stat label={t('allow')} value={profile.gate.allow} pct={share(profile.gate.allow, profile.gate.attempts)} />
@@ -77,8 +63,7 @@ export function AnalysisView({ sessionId, t }: Props) {
                 </div>
               </article>}
               {profile.check.attempts > 0 && <article className="decision-card">
-                <header className="decision-card-head"><span className="decision-card-title">{t('cardCheck')}</span>
-                  <span className="decision-card-total">{profile.check.attempts}<small>{t('cardTimes')}</small></span></header>
+                <CardHead title={t('cardCheck')} total={profile.check.attempts} unit={t('cardTimes')} />
                 <div className="decision-card-stats">
                   <Stat label={t('checkLow')} value={profile.check.low} pct={share(profile.check.low, profile.check.attempts)} tone="warn" />
                   <Stat label={t('checkOk')} value={profile.check.ok} pct={share(profile.check.ok, profile.check.attempts)} />
@@ -87,8 +72,7 @@ export function AnalysisView({ sessionId, t }: Props) {
                 </div>
               </article>}
               {profile.narrow.attempts > 0 && <article className="decision-card">
-                <header className="decision-card-head"><span className="decision-card-title">{t('cardNarrow')}</span>
-                  <span className="decision-card-total">{profile.narrow.attempts}<small>{t('cardTimes')}</small></span></header>
+                <CardHead title={t('cardNarrow')} total={profile.narrow.attempts} unit={t('cardTimes')} />
                 <div className="decision-card-stats">
                   <Stat label={t('narrowAppliedLabel')} value={profile.narrow.applied} pct={share(profile.narrow.applied, profile.narrow.attempts)} />
                   <Stat label={t('narrowDroppedLabel')} value={profile.narrow.droppedSum} />
@@ -96,8 +80,7 @@ export function AnalysisView({ sessionId, t }: Props) {
                 </div>
               </article>}
               {profile.complete.attempts > 0 && <article className="decision-card">
-                <header className="decision-card-head"><span className="decision-card-title">{t('cardComplete')}</span>
-                  <span className="decision-card-total">{profile.complete.attempts}<small>{t('cardTimes')}</small></span></header>
+                <CardHead title={t('cardComplete')} total={profile.complete.attempts} unit={t('cardTimes')} />
                 <div className="decision-card-stats">
                   <Stat label={t('completeSatisfied')} value={profile.complete.satisfied} pct={share(profile.complete.satisfied, completeTotal)} />
                   <Stat label={t('completeUnsatisfied')} value={profile.complete.unsatisfied} pct={share(profile.complete.unsatisfied, completeTotal)} tone="warn" />

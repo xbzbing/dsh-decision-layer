@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots';
 import type { TranslationKey } from './i18n.js';
-import { request, type Analysis, type LogEntry, type Rating } from './api.js';
+import { request, type Analysis, type LogEntry } from './api.js';
 import { DecisionLogList } from './decision-log.js';
+import { CardHead, Stat } from './cards.js';
 import { useAnnotations } from './use-annotations.js';
 
-const api = '/plugins/dsh-decision-layer/api';
 interface GateMetrics { attempts: number; failures: number; ask: number; deny: number; allow: number; actual: { allow: number; deny: number; error: number } }
 interface CheckMetrics { attempts: number; failures: number; low: number; trend?: { run: number; severity: 'normal' | 'warn' | 'severe' } }
 interface NarrowMetrics { attempts: number; failures: number; applied: number; dropped: number }
@@ -85,8 +85,6 @@ function SessionPanel({ sessionId, t }: Props) {
     finally { setBusy(false); }
   };
 
-  const time = (at: number) => new Date(at).toLocaleTimeString();
-
   const statusLabel = status === 'ok' ? t('statusOk') : status === 'down' ? t('statusDown') : status === 'checking' ? t('statusChecking') : t('statusIdle');
 
   const attempts = metrics?.attempts ?? 0;
@@ -153,45 +151,30 @@ function SessionPanel({ sessionId, t }: Props) {
             </footer>
           </article>}
           {metrics.check && <article className="decision-card">
-            <header className="decision-card-head">
-              <span className="decision-card-title">{t('cardCheck')}</span>
-              <span className="decision-card-head-metrics">
-                <span className="decision-card-rate-inline">{t('checkPassRate')} <b>{checkPassRate === null ? t('rateNa') : `${checkPassRate}%`}</b></span>
-                <span className="decision-card-total">{metrics.check.attempts}<small>{t('cardTimes')}</small></span>
-              </span>
-            </header>
+            <CardHead title={t('cardCheck')} total={metrics.check.attempts} unit={t('cardTimes')}
+              rate={{ label: t('checkPassRate'), value: checkPassRate === null ? t('rateNa') : `${checkPassRate}%` }} />
             <div className="decision-card-stats">
-              <div className="decision-stat"><span className="decision-stat-num decision-stat-warn">{metrics.check.low}</span><span className="decision-stat-label">{t('checkLow')}</span></div>
-              <div className="decision-stat"><span className="decision-stat-num">{metrics.check.attempts - metrics.check.low - metrics.check.failures}</span><span className="decision-stat-label">{t('checkOk')}</span></div>
-              <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.check.failures}</span><span className="decision-stat-label">{t('failures')}</span></div>
+              <Stat label={t('checkLow')} value={metrics.check.low} tone="warn" />
+              <Stat label={t('checkOk')} value={metrics.check.attempts - metrics.check.low - metrics.check.failures} />
+              <Stat label={t('failures')} value={metrics.check.failures} tone="muted" />
             </div>
           </article>}
           {metrics.narrow && <article className="decision-card">
-            <header className="decision-card-head">
-              <span className="decision-card-title">{t('cardNarrow')}</span>
-              <span className="decision-card-head-metrics">
-                <span className="decision-card-rate-inline">{t('narrowApplyRate')} <b>{narrowApplyRate === null ? t('rateNa') : `${narrowApplyRate}%`}</b></span>
-                <span className="decision-card-total">{metrics.narrow.attempts}<small>{t('cardTimes')}</small></span>
-              </span>
-            </header>
+            <CardHead title={t('cardNarrow')} total={metrics.narrow.attempts} unit={t('cardTimes')}
+              rate={{ label: t('narrowApplyRate'), value: narrowApplyRate === null ? t('rateNa') : `${narrowApplyRate}%` }} />
             <div className="decision-card-stats">
-              <div className="decision-stat"><span className="decision-stat-num">{metrics.narrow.applied}</span><span className="decision-stat-label">{t('narrowAppliedLabel')}</span></div>
-              <div className="decision-stat"><span className="decision-stat-num">{metrics.narrow.dropped}</span><span className="decision-stat-label">{t('narrowDroppedLabel')}</span></div>
-              <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.narrow.failures}</span><span className="decision-stat-label">{t('failures')}</span></div>
+              <Stat label={t('narrowAppliedLabel')} value={metrics.narrow.applied} />
+              <Stat label={t('narrowDroppedLabel')} value={metrics.narrow.dropped} />
+              <Stat label={t('failures')} value={metrics.narrow.failures} tone="muted" />
             </div>
           </article>}
           {metrics.complete && <article className="decision-card">
-            <header className="decision-card-head">
-              <span className="decision-card-title">{t('cardComplete')}</span>
-              <span className="decision-card-head-metrics">
-                <span className="decision-card-rate-inline">{t('failures')} <b>{metrics.complete.failures}</b></span>
-                <span className="decision-card-total">{metrics.complete.attempts}<small>{t('cardTimes')}</small></span>
-              </span>
-            </header>
+            <CardHead title={t('cardComplete')} total={metrics.complete.attempts} unit={t('cardTimes')}
+              rate={{ label: t('failures'), value: `${metrics.complete.failures}` }} />
             <div className="decision-card-stats">
-              <div className="decision-stat"><span className="decision-stat-num">{metrics.complete.satisfied}</span><span className="decision-stat-label">{t('completeSatisfied')}</span></div>
-              <div className="decision-stat"><span className="decision-stat-num decision-stat-warn">{metrics.complete.unsatisfied}</span><span className="decision-stat-label">{t('completeUnsatisfied')}</span></div>
-              <div className="decision-stat"><span className="decision-stat-num decision-stat-muted">{metrics.complete.insufficient}</span><span className="decision-stat-label">{t('completeInsufficient')}</span></div>
+              <Stat label={t('completeSatisfied')} value={metrics.complete.satisfied} />
+              <Stat label={t('completeUnsatisfied')} value={metrics.complete.unsatisfied} tone="warn" />
+              <Stat label={t('completeInsufficient')} value={metrics.complete.insufficient} tone="muted" />
             </div>
           </article>}
         </div>}</section>
