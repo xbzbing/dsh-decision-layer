@@ -97,7 +97,7 @@ function validCheck(value) {
 
 function validNarrow(value) {
   if (!safeObject(value)) return undefined;
-  if (Object.keys(value).some(key => !['mode', 'threshold', 'keepPrefixes', 'maxCandidates'].includes(key))) throw new Error('Invalid narrowing settings');
+  if (Object.keys(value).some(key => !['mode', 'threshold', 'keepPrefixes', 'maxCandidates', 'batchMode'].includes(key))) throw new Error('Invalid narrowing settings');
   const narrow = {};
   if (value.mode !== undefined) {
     if (value.mode !== 'observe' && value.mode !== 'enforce') throw new Error('Invalid narrowing settings');
@@ -123,6 +123,17 @@ function validNarrow(value) {
   if (value.maxCandidates !== undefined) {
     if (!Number.isSafeInteger(value.maxCandidates) || value.maxCandidates < 1 || value.maxCandidates > 200) throw new Error('Invalid narrowing settings');
     narrow.maxCandidates = value.maxCandidates;
+  }
+  // Per-request batching strategy for the relevance pass, chosen by backend
+  // context capacity. 'single' sends every tool in one systemone request (best
+  // for large-context backends like Jev — one call). 'split' sends one request
+  // per tool concurrently (required for small-context backends like tev1, whose
+  // ~2050-token prompt limit rejects a many-tool request). 'auto' (default)
+  // tries 'single' first and falls back to 'split' only after a context-overflow
+  // http-error, so Jev stays at one call and tev1 self-corrects.
+  if (value.batchMode !== undefined) {
+    if (!['auto', 'single', 'split'].includes(value.batchMode)) throw new Error('Invalid narrowing settings');
+    narrow.batchMode = value.batchMode;
   }
   return narrow;
 }

@@ -235,3 +235,88 @@ test('createNarrowing records a failure reason when the backend throws', async (
   assert.equal(result.evaluated, false);
   assert.equal(logs.at(-1).reason, 'http-error');
 });
+
+test('batchMode "split" sends one request per tool and merges the per-tool answers', async () => {
+  const sent = [];
+  const check = createNarrowing({ settings: { mode: 'enforce', batchMode: 'split' }, minKeep: 1, coreTools: [],
+    evaluate: async req => {
+      const names = Object.keys(req.questions); sent.push(names.length);
+      const probs = { web_search: 0.9, web_fetch: 0.8, image_gen: 0.05 };
+      return answers(Object.fromEntries(names.map(n => [n, probs[n] ?? 0.9])));
+    } });
+  const result = await check.review(turn('search and read', [
+    { name: 'web_search', description: '' }, { name: 'web_fetch', description: '' }, { name: 'image_gen', description: '' },
+  ]));
+  assert.ok(sent.every(n => n === 1), 'split sends exactly one question per request');
+  assert.equal(sent.length, 3, 'one request per optional tool');
+  assert.equal(result.applied, true);
+  assert.deepEqual(result.drop, ['image_gen']);
+});
+
+test('batchMode "auto" falls back to per-tool split after a context-overflow http-error', async () => {
+  const sizes = [];
+  const check = createNarrowing({ settings: { mode: 'enforce', batchMode: 'auto' }, minKeep: 1, coreTools: [],
+    evaluate: async req => {
+      const names = Object.keys(req.questions); sizes.push(names.length);
+      if (names.length > 1) { const e = new Error('prompt too long'); e.reason = 'http-error'; throw e; }
+      const probs = { web_search: 0.9, image_gen: 0.05 };
+      return answers({ [names[0]]: probs[names[0]] ?? 0.9 });
+    } });
+  const result = await check.review(turn('search the web', [
+    { name: 'web_search', description: '' }, { name: 'image_gen', description: '' },
+  ]));
+  assert.equal(sizes[0], 2, 'first attempt is one whole-batch request');
+  assert.ok(sizes.slice(1).every(n => n === 1), 'fallback sends one question per tool');
+  assert.equal(result.applied, true);
+  assert.deepEqual(result.drop, ['image_gen']);
+});
+
+test('batchMode "auto" remembers the split fallback for later reviews (no repeated whole-batch probe)', async () => {
+  const sizes = [];
+  const check = createNarrowing({ settings: { mode: 'enforce', batchMode: 'auto' }, minKeep: 1, coreTools: [],
+    evaluate: async req => {
+      const names = Object.keys(req.questions); sizes.push(names.length);
+      if (names.length > 1) { const e = new Error('prompt too long'); e.reason = 'http-error'; throw e; }
+      return answers({ [names[0]]: 0.9 });
+    } });
+  const tools = [{ name: 'web_search', description: '' }, { name: 'web_fetch', description: '' }];
+  await check.review(turn('t1', tools, { turn: 1 }));
+  const before = sizes.length;
+  await check.review(turn('t2', tools, { turn: 2 }));
+  assert.ok(sizes.slice(before).every(n => n === 1), 'after one fallback, later reviews go straight to split');
+});
+
+test('split keeps a tool whose per-tool request fails, dropping the rest normally', async () => {
+  const check = createNarrowing({ settings: { mode: 'enforce', batchMode: 'split' }, minKeep: 1, coreTools: [],
+    evaluate: async req => {
+      const name = Object.keys(req.questions)[0];
+      if (name === 'flaky') { const e = new Error('boom'); e.reason = 'unreachable'; throw e; }
+      const probs = { web_search: 0.9, image_gen: 0.05 };
+      return answers({ [name]: probs[name] ?? 0.9 });
+    } });
+  const result = await check.review(turn('search', [
+    { name: 'web_search', description: '' }, { name: 'image_gen', description: '' }, { name: 'flaky', description: '' },
+  ]));
+  assert.equal(result.keep.includes('flaky'), true, 'a failed per-tool request conservatively keeps the tool');
+  assert.deepEqual(result.drop, ['image_gen']);
+});
+
+test('split that fails for every tool reports a backend error and skips', async () => {
+  const logs = [];
+  const sessions = { snapshot: () => ({ enabled: true }), recordNarrow: () => {}, log: (_id, entry) => logs.push(entry) };
+  const check = createNarrowing({ sessions, settings: { mode: 'enforce', batchMode: 'split' }, minKeep: 1, coreTools: [],
+    evaluate: async () => { const e = new Error('down'); e.reason = 'unreachable'; throw e; } });
+  const result = await check.review(turn('task', [{ name: 'web_search', description: '' }, { name: 'web_fetch', description: '' }]));
+  assert.equal(result.evaluated, false);
+  assert.equal(logs.at(-1).reason, 'unreachable');
+});
+
+test('batchMode "single" never falls back to split and surfaces the http-error', async () => {
+  const sizes = [];
+  const check = createNarrowing({ settings: { mode: 'enforce', batchMode: 'single' }, minKeep: 1, coreTools: [],
+    evaluate: async req => { sizes.push(Object.keys(req.questions).length); const e = new Error('too long'); e.reason = 'http-error'; throw e; } });
+  const result = await check.review(turn('task', [{ name: 'web_search', description: '' }, { name: 'web_fetch', description: '' }]));
+  assert.equal(result.evaluated, false, 'single mode does not retry');
+  assert.equal(sizes.length, 1, 'exactly one whole-batch attempt, no split fallback');
+  assert.equal(sizes[0], 2);
+});

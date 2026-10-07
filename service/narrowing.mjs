@@ -82,15 +82,22 @@ export function relevanceQuestions(state, tools) {
 //   C. if narrowing would leave fewer than `minKeep` tools total, the verdict is
 //      treated as untrustworthy and no restriction is applied.
 export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFAULT_CORE_TOOLS,
-  keepPrefixes = DEFAULT_KEEP_PREFIXES, minCandidates = 2, maxCandidates = 20, minKeep = 5 } = {}) {
+  keepPrefixes = DEFAULT_KEEP_PREFIXES, minCandidates = 2, maxCandidates = 20, minKeep = 5, splitConcurrency = 8 } = {}) {
   if (typeof evaluate !== 'function') throw new Error('Narrowing requires an evaluator');
   const core = new Set(Array.isArray(coreTools) ? coreTools.filter(name => typeof name === 'string') : []);
   const defaultPrefixes = Array.isArray(keepPrefixes) ? keepPrefixes.filter(prefix => typeof prefix === 'string' && prefix) : [];
+  const concurrency = Number.isSafeInteger(splitConcurrency) && splitConcurrency >= 1 ? splitConcurrency : 8;
+  // Set once a 'single' (whole-batch) pass hits a context-overflow http-error:
+  // from then on 'auto' sends one request per tool. A large-context backend
+  // (Jev) never trips this and stays at one call; a small-context backend
+  // (tev1, ~2050-token prompt) self-corrects after the first failure.
+  let adaptiveSplit = false;
   const resolveSettings = async () => {
     let raw = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
     const mode = raw?.mode === 'observe' ? 'observe' : 'enforce';
     const threshold = typeof raw?.threshold === 'number' && Number.isFinite(raw.threshold) && raw.threshold >= 0 && raw.threshold <= 1 ? raw.threshold : 0.3;
+    const batchMode = raw?.batchMode === 'single' || raw?.batchMode === 'split' ? raw.batchMode : 'auto';
     // An explicit array in settings (including empty) overrides the default set.
     const prefixes = Array.isArray(raw?.keepPrefixes)
       ? raw.keepPrefixes.filter(prefix => typeof prefix === 'string' && prefix)
@@ -100,7 +107,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     // never large enough to be rejected before it is sent.
     const configuredCap = Number.isSafeInteger(raw?.maxCandidates) && raw.maxCandidates >= 1 ? raw.maxCandidates : maxCandidates;
     const cap = Math.min(configuredCap, MAX_QUESTIONS);
-    return { mode, threshold, prefixes, cap };
+    return { mode, threshold, prefixes, cap, batchMode };
   };
   const record = (turn, outcome, detail = {}) => {
     const id = turn?.agent?.session?.id;
@@ -111,12 +118,34 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     try { sessions.log(id, { kind: 'narrow', outcome, ...detail }); }
     catch { /* logging is best effort */ }
   };
+  // Send one relevance request per tool with bounded concurrency, then merge the
+  // per-tool answers into one result. Each request's prompt is only the task
+  // state plus a single question, so it cannot exceed a small-context backend's
+  // prompt limit. A tool whose request fails is omitted from the merged answers,
+  // which narrowTools treats as "keep" (best effort). Returns null only when
+  // every tool failed, so the caller can still report a backend error.
+  const evaluateSplit = async (state, tools, signal) => {
+    const answers = Object.create(null);
+    let anyOk = false;
+    for (let i = 0; i < tools.length; i += concurrency) {
+      const group = tools.slice(i, i + concurrency);
+      const settled = await Promise.all(group.map(async tool => {
+        try {
+          const reply = await evaluate(relevanceQuestions(state, [tool]), { signal });
+          const answer = reply?.answers?.[tool.name];
+          return isObject(answer) ? [tool.name, answer] : undefined;
+        } catch { return undefined; }
+      }));
+      for (const pair of settled) { if (pair) { answers[pair[0]] = pair[1]; anyOk = true; } }
+    }
+    return anyOk ? { model: 'split', answers } : null;
+  };
   const skip = { evaluated: false, applied: false, keep: [], drop: [], mode: 'observe' };
   return {
     async review(turn) {
       const tools = Array.isArray(turn?.tools) ? turn.tools.filter(tool => tool && typeof tool.name === 'string') : [];
       const names = tools.map(tool => tool.name);
-      const { mode, threshold, prefixes, cap } = await resolveSettings();
+      const { mode, threshold, prefixes, cap, batchMode } = await resolveSettings();
       // A: core tools and keep-prefix matches are always kept and never sent to
       // the model for judging (e.g. mcp__openviking memory tools stay resident).
       const alwaysKeep = name => core.has(name) || prefixes.some(prefix => name.startsWith(prefix));
@@ -139,9 +168,29 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
       const effectiveMode = overCap ? 'observe' : mode;
       const judged = overCap ? optional.slice(0, cap) : optional;
       const judgedNames = judged.map(tool => tool.name);
+      // Choose per-request strategy by backend context capacity. 'split' (or an
+      // 'auto' pass that already fell back) sends one request per tool so no
+      // prompt exceeds a small-context limit. 'single'/'auto' first try one
+      // whole-batch request; under 'auto', a context-overflow http-error flips
+      // this instance to split from then on and retries the same tools split.
       let result;
-      try { result = await evaluate(relevanceQuestions(turn.state, judged), { signal: turn.signal }); }
-      catch (error) { record(turn, 'error', { reason: typeof error?.reason === 'string' ? error.reason : 'unreachable', mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
+      if (batchMode === 'split' || adaptiveSplit) {
+        result = await evaluateSplit(turn.state, judged, turn.signal);
+        if (!result) { record(turn, 'error', { reason: 'unreachable', mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
+      } else {
+        try { result = await evaluate(relevanceQuestions(turn.state, judged), { signal: turn.signal }); }
+        catch (error) {
+          const reason = typeof error?.reason === 'string' ? error.reason : 'unreachable';
+          if (batchMode === 'auto' && reason === 'http-error') {
+            adaptiveSplit = true;
+            result = await evaluateSplit(turn.state, judged, turn.signal);
+            if (!result) { record(turn, 'error', { reason, mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
+          } else {
+            record(turn, 'error', { reason, mode: effectiveMode });
+            return { ...skip, keep: names, mode: effectiveMode };
+          }
+        }
+      }
       const narrowed = narrowTools(judgedNames, result, { threshold });
       const keep = [...keptNames, ...narrowed.keep];
       const drop = narrowed.drop;
