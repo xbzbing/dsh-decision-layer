@@ -10,7 +10,8 @@ import { createNarrowing } from './narrowing.mjs';
 import { createTaskCompletion } from './task-completion.mjs';
 import { createLoopGuard } from './loop-guard.mjs';
 import { createLogStore } from './log-store.mjs';
-import { analyzeSessionLogs } from './log-analyze.mjs';
+import { createStateStore } from './state-store.mjs';
+import { analyzeSessionLogs, reconstructSessionSeed } from './log-analyze.mjs';
 
 export const name = 'dsh-decision-layer';
 export const inject = ['tools', 'skills'];
@@ -100,7 +101,23 @@ export async function apply(ctx, options = {}) {
   // The research log sink is attached once the web server reveals the instance
   // port (used in the file name); until then decision logs stay in memory only.
   let logStore;
-  const sessions = createSessionState({ onLog: entry => logStore?.append(entry) });
+  // Durable per-session mirror of the live decision counters/log, keyed by
+  // session id (not port), so a resumed session's panel survives an instance
+  // restart instead of resetting to zero. Independent of the JSONL research log.
+  const stateStore = createStateStore();
+  const sessions = createSessionState({
+    onLog: entry => logStore?.append(entry),
+    // Restore a resumed session from its durable snapshot; if it has none yet but
+    // has persisted JSONL decision history (e.g. a session that predates this
+    // persistence, or whose snapshot was pruned), reconstruct a seed from the
+    // logs instead. Logs are read across all ports and filtered by the globally
+    // unique session id, so a changed instance port never orphans the history.
+    loadState: async id => (await stateStore.load(id)) ?? reconstructSessionSeed(id, {
+      trendConfig: (await resolveConfig({ path })).checkSettings,
+    }).catch(() => undefined),
+    persistState: (id, state) => stateStore.save(id, state),
+  });
+  if (typeof ctx.effect === 'function') ctx.effect(() => () => { void stateStore.dispose(); });
   const gate = createDangerGate({
     evaluate: (input, request) => backend.evaluate(input, request),
     sessions,
@@ -185,6 +202,10 @@ export async function apply(ctx, options = {}) {
       const agent = payload?.agent;
       const id = agent?.session?.id;
       const turn = payload?.turn;
+      // Rehydrate this session's persisted counters/log on its first step this
+      // process, before any gate/check/narrow/complete event mutates them, so a
+      // resumed session continues from its saved totals instead of from zero.
+      if (typeof id === 'string') await sessions.ensureLoaded(id);
       if (typeof id === 'string' && Number.isInteger(turn) && await featureOn('narrow')) {
         const state = narrowedTurns.get(id);
         if (!state || state.turn !== turn) {

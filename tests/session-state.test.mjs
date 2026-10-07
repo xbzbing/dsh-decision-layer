@@ -187,3 +187,90 @@ test('decision log keeps a bounded newest-last ring and validates entries', () =
   assert.equal(bounded[2].tool, 't4');
   assert.throws(() => sessions.log('one', { kind: 'bogus', outcome: 'x' }), /log entry/i);
 });
+
+test('persistState receives the latest state after every mutation', () => {
+  const saved = new Map();
+  const sessions = createSessionState({ persistState: (id, state) => saved.set(id, structuredClone(state)) });
+  sessions.record('s', 'gate', 'deny');
+  sessions.recordActual('s', 'allow');
+  sessions.recordCheck('s', 'low', { confident: true, trendRun: 3, trendSevereRun: 5 });
+  sessions.recordNarrow('s', 'applied', 2);
+  sessions.recordComplete('s', 'unsatisfied', { satisfied: 1, unsatisfied: 1, steered: true });
+  sessions.log('s', { kind: 'gate', outcome: 'deny', tool: 'bash' });
+  sessions.setEnabled('s', false);
+  const persisted = saved.get('s');
+  assert.equal(persisted.enabled, false);
+  assert.equal(persisted.gate.deny, 1);
+  assert.equal(persisted.gate.actual.allow, 1);
+  assert.equal(persisted.check.low, 1);
+  assert.equal(persisted.narrow.applied, 1);
+  assert.equal(persisted.narrow.dropped, 2);
+  assert.equal(persisted.complete.unsatisfied, 1);
+  assert.equal(persisted.complete.steered, 1);
+  assert.equal(persisted.log.at(-1).tool, 'bash');
+});
+
+test('ensureLoaded seeds live counters/log from the durable store, once per id', async () => {
+  let calls = 0;
+  const stored = {
+    enabled: false, attempts: 4, failures: 1,
+    gate: { attempts: 2, failures: 0, ask: 0, deny: 1, allow: 1, actual: { allow: 1, deny: 0, error: 0 } },
+    check: { attempts: 2, failures: 1, low: 1, run: 2, severity: 'warn' },
+    log: [{ id: 'd1', at: 1, kind: 'gate', outcome: 'deny', tool: 'bash' }],
+  };
+  const sessions = createSessionState({ loadState: id => { calls++; return id === 's' ? stored : undefined; } });
+  await sessions.ensureLoaded('s');
+  await sessions.ensureLoaded('s'); // memoized: no second load
+  assert.equal(calls, 1);
+  const snapshot = sessions.snapshot('s');
+  assert.equal(snapshot.enabled, false);
+  assert.equal(snapshot.attempts, 4);
+  assert.equal(snapshot.gate.deny, 1);
+  assert.equal(snapshot.gate.actual.allow, 1);
+  assert.equal(snapshot.check.trend.run, 2);
+  assert.equal(snapshot.check.trend.severity, 'warn');
+  assert.equal(snapshot.log.at(-1).id, 'd1');
+  // New events accumulate on top of the restored totals.
+  sessions.record('s', 'gate', 'allow');
+  assert.equal(sessions.snapshot('s').attempts, 5);
+  assert.equal(sessions.snapshot('s').gate.allow, 2);
+});
+
+test('ensureLoaded never clobbers live state created before it runs', async () => {
+  const stored = { attempts: 99, gate: { attempts: 99, failures: 0, ask: 0, deny: 99, allow: 0, actual: { allow: 0, deny: 0, error: 0 } } };
+  const sessions = createSessionState({ loadState: () => stored });
+  // A live event arrives first (e.g. a race), creating in-memory state.
+  sessions.record('s', 'gate', 'allow');
+  await sessions.ensureLoaded('s');
+  // The disk seed is discarded; the live counters stand.
+  assert.equal(sessions.snapshot('s').attempts, 1);
+  assert.equal(sessions.snapshot('s').gate.allow, 1);
+  assert.equal(sessions.snapshot('s').gate.deny, 0);
+});
+
+test('ensureLoaded is a no-op without a loader and tolerates invalid ids', async () => {
+  const sessions = createSessionState();
+  await sessions.ensureLoaded('s'); // no loadState: returns immediately
+  assert.equal(sessions.snapshot('s').attempts, 0);
+  const withLoader = createSessionState({ loadState: () => { throw new Error('should not be called for an invalid id'); } });
+  await withLoader.ensureLoaded(''); // invalid id: swallowed, no throw
+});
+
+test('a corrupt persisted state is coerced into shape, not trusted verbatim', async () => {
+  const sessions = createSessionState({ loadState: () => ({
+    attempts: -5, failures: 'x',
+    gate: { attempts: 1, allow: 2.5, deny: 1, actual: { allow: 'nope' } },
+    check: { attempts: 1, severity: 'boom', run: -1 },
+    log: [{ kind: 'gate', outcome: 'deny' }, 'junk', { noKind: true }],
+  }) });
+  await sessions.ensureLoaded('s');
+  const snapshot = sessions.snapshot('s');
+  assert.equal(snapshot.attempts, 0, 'negative count coerced to 0');
+  assert.equal(snapshot.failures, 0, 'non-integer coerced to 0');
+  assert.equal(snapshot.gate.allow, 0, 'fractional coerced to 0');
+  assert.equal(snapshot.gate.deny, 1);
+  assert.equal(snapshot.gate.actual.allow, 0);
+  assert.equal(snapshot.check.trend.severity, 'normal', 'invalid severity falls back to normal');
+  assert.equal(snapshot.check.trend.run, 0);
+  assert.equal(snapshot.log.length, 1, 'only well-formed log entries survive');
+});

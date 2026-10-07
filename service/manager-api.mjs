@@ -77,8 +77,8 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
         } catch { return { connected: false, reason: 'unavailable', effectiveUrl }; }
       },
     }),
-    route('metrics', { GET: req => sessions.snapshot(sessionId(req)) }),
-    route('log', { GET: req => ({ entries: sessions.snapshot(sessionId(req)).log ?? [] }) }),
+    route('metrics', { GET: async req => { const id = sessionId(req); await sessions.ensureLoaded?.(id); return sessions.snapshot(id); } }),
+    route('log', { GET: async req => { const id = sessionId(req); await sessions.ensureLoaded?.(id); return { entries: sessions.snapshot(id).log ?? [] }; } }),
     // Read-only analysis over the persisted decision logs for one session. Returns
     // only aggregates and annotation counts — never raw log rows — so gate command
     // / path fragments are not echoed back to the browser.
@@ -110,9 +110,10 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
       },
     }),
     route('session', {
-      GET: req => sessions.snapshot(sessionId(req)),
+      GET: async req => { const id = sessionId(req); await sessions.ensureLoaded?.(id); return sessions.snapshot(id); },
       PUT: async req => {
         const body = await readBody(req);
+        await sessions.ensureLoaded?.(body.sessionId);
         sessions.setEnabled(body.sessionId, body.enabled);
         return sessions.snapshot(body.sessionId);
       },

@@ -1,4 +1,5 @@
 import { createReadableStream } from './log-read.mjs';
+import { advanceRun, severityOf } from './quality-trend.mjs';
 
 // Offline analysis over the persisted decision JSONL logs. Pure aggregation:
 // given a stream of records (decision events + annotation events) for one
@@ -152,4 +153,80 @@ export async function analyzeSessionLogs(sessionId, { dir, port, trendConfig, re
     if (record.sessionId === sessionId) records.push(record);
   }
   return analyzeSession(records, trendConfig);
+}
+
+// Reconstruct a live session-state seed (the counter shape session-state keeps,
+// plus the recent decision log) from this session's folded decisions. Used to
+// bridge a restart for a session that has persisted JSONL history but no state
+// snapshot yet, so its panel resumes from its real totals instead of from zero.
+//
+// Faithful for every counter because each feature logs exactly one record per
+// record*() call with the same outcome — with one documented exception:
+// gate.actual (observed tool outcomes) is never logged, so it starts at zero and
+// resumes as new tool results arrive. The check trend run/severity is replayed
+// with the same advanceRun/severityOf semantics the live path uses.
+export function buildSeed(decisions, { maxLog = 50, trendConfig = {} } = {}) {
+  const ordered = [...decisions.values()].filter(record => DECISION_KINDS.has(record.kind)).sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+  const seed = {
+    attempts: 0, failures: 0,
+    gate: { attempts: 0, failures: 0, ask: 0, deny: 0, allow: 0, actual: { allow: 0, deny: 0, error: 0 } },
+    check: { attempts: 0, failures: 0, low: 0, run: 0, severity: 'normal' },
+    narrow: { attempts: 0, failures: 0, applied: 0, dropped: 0 },
+    complete: { attempts: 0, failures: 0, unsatisfied: 0, satisfied: 0, insufficient: 0, steered: 0 },
+    log: [],
+  };
+  const minConfidence = typeof trendConfig.trendMinConfidence === 'number' ? trendConfig.trendMinConfidence : 0.6;
+  const thresholds = { trendRun: trendConfig.trendRun ?? 3, trendSevereRun: trendConfig.trendSevereRun ?? 5 };
+  let run = 0;
+  for (const record of ordered) {
+    const bucket = seed[record.kind];
+    seed.attempts++;
+    bucket.attempts++;
+    const isError = record.outcome === 'error';
+    if (isError) { seed.failures++; bucket.failures++; }
+    if (record.kind === 'gate') {
+      if (['allow', 'ask', 'deny'].includes(record.outcome)) bucket[record.outcome]++;
+    } else if (record.kind === 'check') {
+      if (!isError) {
+        if (record.outcome === 'low') bucket.low++;
+        // Replay the trend run exactly as recordCheck does: lowScore keys off the
+        // 'low' outcome, confident off the logged confidence vs the threshold.
+        const confident = typeof record.confidence === 'number' && Number.isFinite(record.confidence) && record.confidence >= minConfidence;
+        run = advanceRun(run, { lowScore: record.outcome === 'low', confident });
+      }
+    } else if (record.kind === 'narrow') {
+      if (record.outcome === 'applied') {
+        bucket.applied++;
+        if (Number.isSafeInteger(record.dropped) && record.dropped > 0) bucket.dropped += record.dropped;
+      }
+    } else if (record.kind === 'complete') {
+      if (!isError) {
+        if (Number.isSafeInteger(record.satisfied)) bucket.satisfied += record.satisfied;
+        if (Number.isSafeInteger(record.unsatisfied)) bucket.unsatisfied += record.unsatisfied;
+        if (Number.isSafeInteger(record.insufficient)) bucket.insufficient += record.insufficient;
+        if (record.steered === true) bucket.steered++;
+      }
+    }
+  }
+  seed.check.run = run;
+  seed.check.severity = severityOf(run, thresholds);
+  // The recent-log list: the newest decisions, as plain records (drop sessionId,
+  // which the live log does not carry). Already in the panel-record shape.
+  seed.log = ordered.slice(-maxLog).map(record => { const { sessionId, ...rest } = record; return rest; });
+  return seed;
+}
+
+// Read one session's persisted JSONL and reconstruct its live state seed, or
+// undefined when it has no decision history. Streams files like analyzeSessionLogs.
+export async function reconstructSessionSeed(sessionId, { dir, port, trendConfig, maxLog, readStream = createReadableStream } = {}) {
+  if (typeof sessionId !== 'string' || !sessionId.trim()) return undefined;
+  const records = [];
+  for await (const record of readStream({ dir, port })) {
+    if (!isObject(record)) continue;
+    if (record.sessionId === sessionId) records.push(record);
+  }
+  if (records.length === 0) return undefined;
+  const { decisions } = foldSession(records);
+  if (decisions.size === 0) return undefined;
+  return buildSeed(decisions, { maxLog, trendConfig });
 }

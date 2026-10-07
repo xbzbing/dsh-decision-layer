@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { foldSession, buildProfile, backtestTrend, annotationSummary, analyzeSession, analyzeSessionLogs } from '../service/log-analyze.mjs';
+import { foldSession, buildProfile, backtestTrend, annotationSummary, analyzeSession, analyzeSessionLogs, buildSeed, reconstructSessionSeed } from '../service/log-analyze.mjs';
 
 const rec = (over) => ({ sessionId: 's1', at: 1, ...over });
 
@@ -85,4 +85,50 @@ test('analyzeSessionLogs filters by session id over an injected stream', async (
   const result = await analyzeSessionLogs('s1', { readStream: stream });
   assert.equal(result.totalDecisions, 1, 'only s1 decisions are kept');
   assert.equal(result.annotations.good, 1);
+});
+
+test('buildSeed reconstructs the live counter shape from folded decisions', () => {
+  const { decisions } = foldSession([
+    rec({ id: 'g1', kind: 'gate', outcome: 'deny', at: 1 }),
+    rec({ id: 'g2', kind: 'gate', outcome: 'allow', at: 2 }),
+    rec({ id: 'g3', kind: 'gate', outcome: 'error', at: 3 }),
+    rec({ id: 'c1', kind: 'check', outcome: 'low', confidence: 0.9, at: 4 }),
+    rec({ id: 'c2', kind: 'check', outcome: 'low', confidence: 0.9, at: 5 }),
+    rec({ id: 'c3', kind: 'check', outcome: 'low', confidence: 0.9, at: 6 }),
+    rec({ id: 'n1', kind: 'narrow', outcome: 'applied', dropped: 4, at: 7 }),
+    rec({ id: 'k1', kind: 'complete', outcome: 'unsatisfied', satisfied: 1, unsatisfied: 2, insufficient: 1, steered: true, at: 8 }),
+  ]);
+  const seed = buildSeed(decisions, { trendConfig: { trendMinConfidence: 0.6, trendRun: 3, trendSevereRun: 5 } });
+  assert.equal(seed.attempts, 8);
+  assert.equal(seed.failures, 1, 'only the gate error counts as a failure');
+  assert.equal(seed.gate.attempts, 3);
+  assert.equal(seed.gate.deny, 1);
+  assert.equal(seed.gate.allow, 1);
+  assert.equal(seed.gate.failures, 1);
+  assert.deepEqual(seed.gate.actual, { allow: 0, deny: 0, error: 0 }, 'actual is not reconstructable, starts at zero');
+  assert.equal(seed.check.attempts, 3);
+  assert.equal(seed.check.low, 3);
+  assert.equal(seed.check.run, 3, 'three high-confidence lows in a row');
+  assert.equal(seed.check.severity, 'warn');
+  assert.equal(seed.narrow.applied, 1);
+  assert.equal(seed.narrow.dropped, 4);
+  assert.equal(seed.complete.satisfied, 1);
+  assert.equal(seed.complete.unsatisfied, 2);
+  assert.equal(seed.complete.insufficient, 1);
+  assert.equal(seed.complete.steered, 1);
+  assert.equal(seed.log.length, 8);
+  assert.equal(seed.log.at(-1).id, 'k1', 'newest-last, in time order');
+  assert.equal(seed.log[0].sessionId, undefined, 'the sessionId wrapper field is dropped');
+});
+
+test('reconstructSessionSeed streams, filters by session, and returns undefined with no history', async () => {
+  async function* stream() {
+    yield { sessionId: 's1', id: 'a', kind: 'gate', outcome: 'deny', at: 1 };
+    yield { sessionId: 's2', id: 'b', kind: 'gate', outcome: 'allow', at: 2 };
+  }
+  const seed = await reconstructSessionSeed('s1', { readStream: stream });
+  assert.equal(seed.attempts, 1);
+  assert.equal(seed.gate.deny, 1);
+  const none = await reconstructSessionSeed('nope', { readStream: stream });
+  assert.equal(none, undefined);
 });
