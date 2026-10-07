@@ -52,13 +52,13 @@ const css = `
 .decision-dot-deny{background:#c0392b}
 .decision-card-foot{display:flex;justify-content:space-between;gap:1rem;margin-top:.7rem;padding-top:.6rem;border-top:1px solid var(--dsw-alias-border-l2,#eef1f3);font-size:.76rem;color:var(--dsw-alias-label-secondary,#59636e)}
 .decision-card-foot b{color:var(--dsw-alias-label-primary,#202124);font-variant-numeric:tabular-nums;margin-left:.3rem}
-.decision-card-stats{display:flex;gap:.6rem}
-.decision-stat{flex:1 1 0;display:flex;flex-direction:column;align-items:center;gap:.2rem;padding:.5rem .3rem;border-radius:10px;background:var(--dsw-alias-bg-layer-1,#f6f8fa)}
-.decision-stat-num{font-size:1.35rem;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#202124)}
+.decision-card-stats{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:.6rem;align-items:stretch}
+.decision-stat{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:space-between;gap:.2rem;padding:.5rem .3rem;border-radius:10px;background:var(--dsw-alias-bg-layer-1,#f6f8fa)}
+.decision-stat-num{font-size:1.35rem;font-weight:700;line-height:1;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-primary,#202124)}
 .decision-stat-pct{font-size:.74rem;font-weight:600;line-height:1;color:var(--dsw-alias-label-tertiary,#77818b);font-variant-numeric:tabular-nums}
 .decision-stat-warn{color:#c98a1e}
 .decision-stat-muted{color:var(--dsw-alias-label-tertiary,#9aa5b1)}
-.decision-stat-label{font-size:.72rem;color:var(--dsw-alias-label-secondary,#59636e)}
+.decision-stat-label{font-size:.72rem;line-height:1.25;text-align:center;color:var(--dsw-alias-label-secondary,#59636e)}
 .decision-log{list-style:none;margin:0;padding:0;display:grid;gap:.5rem;max-height:13rem;overflow:auto}
 .decision-log-item{display:flex;align-items:baseline;gap:.6rem;font-size:.8rem;padding-left:.6rem;border-left:2px solid var(--dsw-alias-border-l2,#dce1e6);line-height:1.5}
 .decision-log-item.decision-log-deny{border-left-color:#c0392b}
@@ -179,9 +179,16 @@ const css = `
 .decision-analysis-section{border-top:1px solid var(--dsw-alias-border-l2,#eceff1);margin-top:1.1rem;padding-top:1rem}
 .decision-analysis-section>h3{font-size:.92rem;margin:0 0 .6rem}
 .decision-analysis-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));gap:.7rem}
-.decision-analysis-cards .decision-card-stats{flex-wrap:wrap}
 .decision-analysis-trend{max-width:26rem}
 .decision-analysis-note{margin:.5rem 0 0}
+/* The analysis tab's decision log shares the page scroll (no inner scrollbar);
+   the modal panel's .decision-log keeps its own capped scroll via the base rule. */
+.decision-analysis .decision-log{max-height:none;overflow:visible}
+.decision-pager{display:flex;align-items:center;justify-content:center;gap:.8rem;margin-top:.8rem}
+.decision-pager button{border:1px solid var(--dsw-alias-border-l2,#ccd3da);border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,#59636e);padding:.3rem .85rem;font:inherit;font-size:.8rem;cursor:pointer}
+.decision-pager button:hover:not(:disabled){background:var(--dsw-alias-bg-layer-1,#f2f4f6);color:var(--dsw-alias-label-primary,#202124)}
+.decision-pager button:disabled{opacity:.45;cursor:default}
+.decision-pager-status{font-size:.8rem;color:var(--dsw-alias-label-secondary,#59636e);font-variant-numeric:tabular-nums}
 @media (prefers-color-scheme:dark){
   .decision-analysis{color:var(--dsw-alias-label-primary,#e6eaee)}
 }

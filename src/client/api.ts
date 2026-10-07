@@ -31,6 +31,10 @@ export interface Analysis {
 
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
 
+// One newest-first page of a session's full persisted decision rows, from the
+// /logrows route. Backs the analysis tab's paginated log.
+export interface LogRows { entries: LogEntry[]; total: number; page: number; pageSize: number; pages: number }
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}/${path}`, init);
   const body = await response.json() as Envelope<T>;

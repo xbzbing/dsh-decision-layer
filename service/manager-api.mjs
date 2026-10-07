@@ -37,7 +37,7 @@ async function readBody(req) {
   return value;
 }
 
-export function createManagerRoutes({ path, sessions, backend, logStore, analyze, env = process.env, bindHost = '127.0.0.1' }) {
+export function createManagerRoutes({ path, sessions, backend, logStore, analyze, listRows, env = process.env, bindHost = '127.0.0.1' }) {
   const route = (suffix, methods) => ({ kind: 'exact', path: `${API_PREFIX}/${suffix}`, handler: async (req, res) => {
     if (bindHost !== '127.0.0.1' || !authorizedBrowser(req)) return respond(res, 403, { ok: false, error: 'Local same-origin browser request required' });
     if (!Object.hasOwn(methods, req.method)) return respond(res, 405, { ok: false, error: 'Method not allowed' });
@@ -88,6 +88,21 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
         const id = sessionId(req);
         try { return await analyze(id); }
         catch (error) { if (error?.code === 'BAD_REQUEST') throw error; const wrapped = new Error('analysis failed'); wrapped.code = 'INTERNAL'; throw wrapped; }
+      },
+    }),
+    // One newest-first page of this session's full persisted decision rows, for
+    // the analysis tab's paginated log. Rows carry only panel fields (tool name,
+    // outcome, counts) — never gate command/path, which is never logged — so this
+    // exposes nothing the recent-rows /log route does not already.
+    route('logrows', {
+      GET: async req => {
+        if (typeof listRows !== 'function') { const error = new Error('log rows unavailable'); error.code = 'BAD_REQUEST'; throw error; }
+        const id = sessionId(req);
+        const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
+        const page = Number.parseInt(params.get('page') ?? '1', 10);
+        const pageSize = Number.parseInt(params.get('pageSize') ?? '100', 10);
+        try { return await listRows(id, { page: Number.isNaN(page) ? 1 : page, pageSize: Number.isNaN(pageSize) ? 100 : pageSize }); }
+        catch (error) { if (error?.code === 'BAD_REQUEST') throw error; const wrapped = new Error('log rows failed'); wrapped.code = 'INTERNAL'; throw wrapped; }
       },
     }),
     // Append one annotation event for a decision. Explicit user intent: validated

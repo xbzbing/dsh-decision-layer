@@ -453,10 +453,10 @@ test('analysis view renders the profile, trend backtest, and accuracy summary fr
         narrow: { attempts: 0, applied: 0, error: 0, droppedSum: 0, tooManyCandidates: 0 },
         complete: { attempts: 0, satisfied: 0, unsatisfied: 0, insufficient: 0, error: 0, steered: 0 },
       } });
-    if (String(url).includes('/log?')) return envelope({ entries: [
+    if (String(url).includes('/logrows?')) return envelope({ entries: [
       { id: 'a-1', at: 1_700_000_020_000, kind: 'gate', outcome: 'deny', tool: 'bash', action: 'deny' },
       { id: 'a-2', at: 1_700_000_021_000, kind: 'check', outcome: 'low', score: 0 },
-    ] });
+    ], total: 2, page: 1, pageSize: 100, pages: 1 });
     throw new Error(`Unexpected URL ${url}`);
   };
   const view = render(React.createElement(AnalysisView, { sessionId: 'an-1', t: translate }));
@@ -480,9 +480,9 @@ test('analysis view rates a decision row through the shared /annotate route', as
       annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {},
       trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 },
       profile: { gate: { attempts: 1, allow: 0, ask: 0, deny: 1, error: 0 }, check: { attempts: 0, ok: 0, low: 0, error: 0, scoreSum: 0, scoreCount: 0, confidence: {} }, narrow: { attempts: 0, applied: 0, error: 0, droppedSum: 0, tooManyCandidates: 0 }, complete: { attempts: 0, satisfied: 0, unsatisfied: 0, insufficient: 0, error: 0, steered: 0 } } });
-    if (String(url).includes('/log?')) return envelope({ entries: [
+    if (String(url).includes('/logrows?')) return envelope({ entries: [
       { id: 'row-1', at: 1_700_000_030_000, kind: 'gate', outcome: 'deny', tool: 'bash', action: 'deny' },
-    ] });
+    ], total: 1, page: 1, pageSize: 100, pages: 1 });
     if (String(url).endsWith('/annotate') && init?.method === 'POST') { annotateBody = JSON.parse(init.body); return envelope({ ok: true, target: annotateBody.target, rating: annotateBody.rating }); }
     throw new Error(`Unexpected URL ${url}`);
   };
@@ -497,10 +497,44 @@ test('analysis view rates a decision row through the shared /annotate route', as
 test('analysis view shows the empty state when there are no decisions', async () => {
   globalThis.fetch = async url => {
     if (String(url).includes('/logs?')) return envelope({ totalDecisions: 0, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
-    if (String(url).includes('/log?')) return envelope({ entries: [] });
+    if (String(url).includes('/logrows?')) return envelope({ entries: [], total: 0, page: 1, pageSize: 100, pages: 1 });
     throw new Error(`Unexpected URL ${url}`);
   };
   const view = render(React.createElement(AnalysisView, { sessionId: 'an-empty', t: translate }));
   await view.findByText('本会话尚无决策记录。');
   assert.equal(view.queryByText('过程画像'), null, 'no profile section without decisions');
+});
+
+test('analysis view paginates the decision log and shares the page scroll', async () => {
+  const pageSizes = [];
+  const requested = [];
+  globalThis.fetch = async url => {
+    const s = String(url);
+    if (s.includes('/logs?')) return envelope({ totalDecisions: 150,
+      annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {},
+      trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 },
+      profile: { gate: { attempts: 150, allow: 0, ask: 0, deny: 150, error: 0 }, check: { attempts: 0, ok: 0, low: 0, error: 0, scoreSum: 0, scoreCount: 0, confidence: {} }, narrow: { attempts: 0, applied: 0, error: 0, droppedSum: 0, tooManyCandidates: 0 }, complete: { attempts: 0, satisfied: 0, unsatisfied: 0, insufficient: 0, error: 0, steered: 0 } } });
+    if (s.includes('/logrows?')) {
+      const page = Number(new URL(s, 'http://x').searchParams.get('page'));
+      requested.push(page);
+      pageSizes.push(new URL(s, 'http://x').searchParams.get('pageSize'));
+      return envelope({ entries: [{ id: `p${page}`, at: 1_700_000_000_000 + page, kind: 'gate', outcome: 'deny', tool: 'bash', action: 'deny' }],
+        total: 150, page, pageSize: 100, pages: 2 });
+    }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(AnalysisView, { sessionId: 'pg-1', t: translate }));
+  // first page requested at size 100, pager visible with 2 pages
+  await view.findByText(/第 1\/2 页 · 共 150 条/);
+  assert.equal(pageSizes[0], '100');
+  assert.deepEqual(requested, [1]);
+  // the analysis log shares the page scroll (no inner max-height scroll container)
+  const list = view.container.querySelector('.decision-analysis .decision-log');
+  assert.ok(list, 'the log list renders inside the analysis region');
+  // Next advances to page 2 and refetches
+  fireEvent.click(await view.findByRole('button', { name: '下一页' }));
+  await view.findByText(/第 2\/2 页 · 共 150 条/);
+  assert.deepEqual(requested, [1, 2], 'clicking next fetches page 2');
+  // on the last page, Next is disabled
+  assert.equal((await view.findByRole('button', { name: '下一页' })).disabled, true);
 });

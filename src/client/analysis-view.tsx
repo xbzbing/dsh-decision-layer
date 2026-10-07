@@ -1,22 +1,25 @@
 import { useEffect, useState } from 'react';
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots';
 import type { TranslationKey } from './i18n.js';
-import { request, type Analysis, type LogEntry } from './api.js';
+import { request, type Analysis, type LogRows } from './api.js';
 import { DecisionLogList } from './decision-log.js';
 import { CardHead, Stat, share } from './cards.js';
 import { useAnnotations } from './use-annotations.js';
 
 // The session-scoped "Decision analysis" conversation view tab. It reads the
-// read-only aggregate over the persisted decision logs (/logs) plus the recent
-// in-memory decision rows (/log), and shares the annotation writer + row
-// rendering with the composer-dock panel so a rating made here is identical to
-// one made there. It is read-only over logs and append-only over annotations;
-// it never touches the agent loop.
+// read-only aggregate over the persisted decision logs (/logs) plus the full
+// persisted decision rows, paginated (/logrows), and shares the annotation
+// writer + row rendering with the composer-dock panel so a rating made here is
+// identical to one made there. It is read-only over logs and append-only over
+// annotations; it never touches the agent loop.
 interface Props { sessionId: string; t: Translate<TranslationKey> }
+
+const LOG_PAGE_SIZE = 100;
 
 export function AnalysisView({ sessionId, t }: Props) {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
-  const [log, setLog] = useState<LogEntry[]>([]);
+  const [rows, setRows] = useState<LogRows | null>(null);
+  const [logPage, setLogPage] = useState(1);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState('');
   const { ratings, seed, annotate } = useAnnotations(sessionId, () => setMessage(t('annotateFailed')));
@@ -25,12 +28,25 @@ export function AnalysisView({ sessionId, t }: Props) {
     let alive = true;
     setMessage('');
     setLoaded(false);
-    void Promise.allSettled([
-      request<Analysis>(`logs?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) { setAnalysis(value); seed(value); } }),
-      request<{ entries: LogEntry[] }>(`log?sessionId=${encodeURIComponent(sessionId)}`).then(value => { if (alive) setLog(value.entries); }),
-    ]).finally(() => { if (alive) setLoaded(true); });
+    setLogPage(1);
+    setRows(null);
+    void request<Analysis>(`logs?sessionId=${encodeURIComponent(sessionId)}`)
+      .then(value => { if (alive) { setAnalysis(value); seed(value); } })
+      .catch(() => {})
+      .finally(() => { if (alive) setLoaded(true); });
     return () => { alive = false; };
   }, [sessionId, seed]);
+
+  // The decision log is a separate, paginated fetch so paging never refetches the
+  // aggregate. The analysis tab shows the full persisted history (the dock panel
+  // keeps only the in-memory recent rows with its own scroll).
+  useEffect(() => {
+    let alive = true;
+    void request<LogRows>(`logrows?sessionId=${encodeURIComponent(sessionId)}&page=${logPage}&pageSize=${LOG_PAGE_SIZE}`)
+      .then(value => { if (alive) setRows(value); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [sessionId, logPage]);
 
   const profile = analysis?.profile;
   const backtest = analysis?.trendBacktest;
@@ -109,10 +125,15 @@ export function AnalysisView({ sessionId, t }: Props) {
 
           <section className="decision-analysis-section">
             <h3>{t('log')}</h3>
-            {log.length === 0
+            {!rows || rows.total === 0
               ? <p className="decision-empty" role="status">{t('analysisLogTruncated')}</p>
               : <>
-                <DecisionLogList entries={log} ratings={ratings} onRate={(id, rating) => void annotate(id, rating)} t={t} />
+                <DecisionLogList entries={rows.entries} ratings={ratings} onRate={(id, rating) => void annotate(id, rating)} t={t} newestFirst={false} />
+                {rows.pages > 1 && <nav className="decision-pager" aria-label={t('log')}>
+                  <button type="button" disabled={rows.page <= 1} onClick={() => setLogPage(page => Math.max(1, page - 1))}>{t('pagerPrev')}</button>
+                  <span className="decision-pager-status">{t('pagerStatus', { page: rows.page, pages: rows.pages, total: rows.total })}</span>
+                  <button type="button" disabled={rows.page >= rows.pages} onClick={() => setLogPage(page => page + 1)}>{t('pagerNext')}</button>
+                </nav>}
                 <p className="decision-muted decision-analysis-note">{t('analysisLogNote')}</p>
               </>}
           </section>

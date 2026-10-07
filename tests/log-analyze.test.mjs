@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { foldSession, buildProfile, backtestTrend, annotationSummary, analyzeSession, analyzeSessionLogs, buildSeed, reconstructSessionSeed } from '../service/log-analyze.mjs';
+import { foldSession, buildProfile, backtestTrend, annotationSummary, analyzeSession, analyzeSessionLogs, buildSeed, reconstructSessionSeed, listSessionDecisions } from '../service/log-analyze.mjs';
 
 const rec = (over) => ({ sessionId: 's1', at: 1, ...over });
 
@@ -131,4 +131,36 @@ test('reconstructSessionSeed streams, filters by session, and returns undefined 
   assert.equal(seed.gate.deny, 1);
   const none = await reconstructSessionSeed('nope', { readStream: stream });
   assert.equal(none, undefined);
+});
+
+test('listSessionDecisions pages newest-first, filters by session, strips sessionId', async () => {
+  async function* stream() {
+    for (let i = 1; i <= 5; i++) yield { sessionId: 's1', id: `a${i}`, kind: 'gate', outcome: 'allow', at: i };
+    yield { sessionId: 's2', id: 'b', kind: 'gate', outcome: 'deny', at: 99 };
+    yield { sessionId: 's1', kind: 'annotation', target: 'a1', rating: 'good', at: 100 };
+  }
+  const page1 = await listSessionDecisions('s1', { page: 1, pageSize: 2, readStream: stream });
+  assert.equal(page1.total, 5, 'only s1 decisions counted, annotation excluded');
+  assert.equal(page1.pages, 3);
+  assert.equal(page1.page, 1);
+  assert.deepEqual(page1.entries.map(e => e.id), ['a5', 'a4'], 'newest first');
+  assert.equal(page1.entries[0].sessionId, undefined, 'internal sessionId stripped');
+  const page3 = await listSessionDecisions('s1', { page: 3, pageSize: 2, readStream: stream });
+  assert.deepEqual(page3.entries.map(e => e.id), ['a1'], 'last page holds the remainder');
+  // Out-of-range and malformed page/size are clamped to a valid page.
+  const clamped = await listSessionDecisions('s1', { page: 99, pageSize: 2, readStream: stream });
+  assert.equal(clamped.page, 3);
+  const defSize = await listSessionDecisions('s1', { pageSize: 0, readStream: stream });
+  assert.equal(defSize.pageSize, 100);
+  assert.equal(defSize.pages, 1);
+});
+
+test('listSessionDecisions folds a re-logged id (latest wins, no double count)', async () => {
+  async function* stream() {
+    yield { sessionId: 's1', id: 'd1', kind: 'check', outcome: 'ok', at: 1 };
+    yield { sessionId: 's1', id: 'd1', kind: 'check', outcome: 'low', at: 2 };
+  }
+  const page = await listSessionDecisions('s1', { readStream: stream });
+  assert.equal(page.total, 1);
+  assert.equal(page.entries[0].outcome, 'low', 'the later record wins');
 });

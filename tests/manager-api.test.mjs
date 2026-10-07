@@ -13,10 +13,12 @@ const path = join(directory, 'config.json');
 const sessions = createSessionState();
 const annotations = [];
 const analyzeCalls = [];
+const listRowsCalls = [];
 const routes = createManagerRoutes({ path, sessions, env: {},
   backend: { evaluate: async () => ({ model: 'jev-latest', answers: {}, usage: {} }) },
   logStore: { appendAnnotation: async entry => { annotations.push(entry); return entry; } },
-  analyze: async sessionId => { analyzeCalls.push(sessionId); return { totalDecisions: 0, profile: {}, trendBacktest: {}, annotations: { rated: 0 } }; } });
+  analyze: async sessionId => { analyzeCalls.push(sessionId); return { totalDecisions: 0, profile: {}, trendBacktest: {}, annotations: { rated: 0 } }; },
+  listRows: async (sessionId, opts) => { listRowsCalls.push({ sessionId, ...opts }); return { entries: [{ id: 'd1', at: 1, kind: 'gate', outcome: 'deny' }], total: 150, page: opts.page, pageSize: opts.pageSize, pages: 2 }; } });
 const server = createServer((req, res) => {
   const route = routes.find(route => route.path === new URL(req.url, 'http://localhost').pathname);
   if (!route) { res.writeHead(404).end(); return; }
@@ -148,4 +150,26 @@ test('an internal analysis fault surfaces as 500, not a client 400', async () =>
     headers: { host: `127.0.0.1:${server.address().port}`, origin }, socket: { remoteAddress: '127.0.0.1' } },
     { writeHead: status => { code = status; }, end: () => {} });
   assert.equal(code, 500, 'an analyzer throw is an internal error');
+});
+
+test('logrows returns a paginated page and forwards page/pageSize', async () => {
+  const response = await fetch(`${base}/logrows?sessionId=s1&page=2&pageSize=100`);
+  const body = await json(response);
+  assert.equal(body.ok, true);
+  assert.equal(body.value.total, 150);
+  assert.equal(body.value.pages, 2);
+  assert.equal(body.value.entries.length, 1);
+  assert.deepEqual(listRowsCalls.at(-1), { sessionId: 's1', page: 2, pageSize: 100 });
+});
+
+test('logrows defaults page/pageSize when the query is absent or malformed', async () => {
+  await json(await fetch(`${base}/logrows?sessionId=s1`));
+  assert.deepEqual(listRowsCalls.at(-1), { sessionId: 's1', page: 1, pageSize: 100 });
+  await json(await fetch(`${base}/logrows?sessionId=s1&page=abc&pageSize=xyz`));
+  assert.deepEqual(listRowsCalls.at(-1), { sessionId: 's1', page: 1, pageSize: 100 });
+});
+
+test('logrows requires a sessionId', async () => {
+  const response = await fetch(`${base}/logrows`);
+  assert.equal(response.status, 400);
 });

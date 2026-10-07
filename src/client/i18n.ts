@@ -37,7 +37,8 @@ export const dictionaries = {
     analysisTrendNote: '用当前阈值把本会话的自检分数按时间重放，统计告警本会「会」触发几次，用于校准阈值，不是实时信号。',
     analysisAccuracy: '判断准确度', analysisAccuracyEmpty: '尚未标注任何决策。在下方决策列表逐条标注「判对 / 判错 / 说不准」后，这里给出汇总。',
     analysisLogNote: '标注在此与介入面板同源：任一处标注都写入同一份日志、按决策 id 关联、取最新。',
-    analysisLogTruncated: '本会话暂无可展示的决策记录（内存日志可能已滚动清理）。',
+    analysisLogTruncated: '本会话暂无可展示的决策记录。',
+    pagerPrev: '上一页', pagerNext: '下一页', pagerStatus: '第 {page}/{pages} 页 · 共 {total} 条',
   },
   en: {
     summary: 'A danger-call gate, output self-check, and loop guard driven by a pluggable adjudication model.',
@@ -77,7 +78,8 @@ export const dictionaries = {
     analysisTrendNote: 'Replays this session\u2019s self-check scores in time order under the current thresholds to count how often the alarm would fire — a calibration aid, not a live signal.',
     analysisAccuracy: 'Decision accuracy', analysisAccuracyEmpty: 'No decisions rated yet. Rate rows below as correct / wrong / unsure and a summary appears here.',
     analysisLogNote: 'Ratings here share one source with the intervention panel: a rating on either surface writes to the same log, keyed by decision id, latest wins.',
-    analysisLogTruncated: 'No decision rows to show for this session (the in-memory log may have rolled over).',
+    analysisLogTruncated: 'No decision rows to show for this session.',
+    pagerPrev: 'Prev', pagerNext: 'Next', pagerStatus: 'Page {page}/{pages} · {total} total',
   },
 } as const;
 

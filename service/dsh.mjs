@@ -11,7 +11,7 @@ import { createTaskCompletion } from './task-completion.mjs';
 import { createLoopGuard } from './loop-guard.mjs';
 import { createLogStore } from './log-store.mjs';
 import { createStateStore } from './state-store.mjs';
-import { analyzeSessionLogs, reconstructSessionSeed } from './log-analyze.mjs';
+import { analyzeSessionLogs, reconstructSessionSeed, listSessionDecisions } from './log-analyze.mjs';
 
 export const name = 'dsh-decision-layer';
 export const inject = ['tools', 'skills'];
@@ -261,7 +261,8 @@ export async function apply(ctx, options = {}) {
       port,
       trendConfig: (await resolveConfig({ path })).checkSettings,
     });
-    const unregister = createManagerRoutes({ path, sessions, backend, logStore, analyze, bindHost: web.webServer.host }).map(route => web.webServer.register(route));
+    const listRows = (sessionId, { page, pageSize } = {}) => listSessionDecisions(sessionId, { port, page, pageSize });
+    const unregister = createManagerRoutes({ path, sessions, backend, logStore, analyze, listRows, bindHost: web.webServer.host }).map(route => web.webServer.register(route));
     return () => { unregister.forEach(dispose => dispose()); const store = logStore; logStore = undefined; void store?.dispose(); };
   });
 }

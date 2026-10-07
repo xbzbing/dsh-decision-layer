@@ -230,3 +230,27 @@ export async function reconstructSessionSeed(sessionId, { dir, port, trendConfig
   if (decisions.size === 0) return undefined;
   return buildSeed(decisions, { maxLog, trendConfig });
 }
+
+// Read one session's persisted decision rows and return a single newest-first
+// page. Backs the analysis tab's full decision log (the dock panel still shows
+// only the in-memory recent rows). Decisions are folded by id (latest wins) so a
+// re-logged id is not double-counted. Rows carry only the panel fields — tool
+// name, outcome, counts — never gate command/path, which is never logged. The
+// internal sessionId tag is stripped before the row leaves the server.
+export async function listSessionDecisions(sessionId, { dir, port, page = 1, pageSize = 100, readStream = createReadableStream } = {}) {
+  if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('Invalid session id');
+  const size = Number.isSafeInteger(pageSize) && pageSize > 0 && pageSize <= 500 ? pageSize : 100;
+  const records = [];
+  for await (const record of readStream({ dir, port })) {
+    if (!isObject(record)) continue;
+    if (record.sessionId === sessionId) records.push(record);
+  }
+  const { decisions } = foldSession(records);
+  const rows = [...decisions.values()].sort((a, b) => (b.at ?? 0) - (a.at ?? 0)); // newest first
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / size));
+  const current = Math.min(Math.max(1, Number.isSafeInteger(page) ? page : 1), pages);
+  const start = (current - 1) * size;
+  const entries = rows.slice(start, start + size).map(({ sessionId: _sessionId, ...rest }) => rest);
+  return { entries, total, page: current, pageSize: size, pages };
+}
