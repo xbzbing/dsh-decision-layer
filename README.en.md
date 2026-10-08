@@ -4,7 +4,7 @@
 
 `dsh-decision-layer` adds structured, explicitly scoped decisions to the DeepSeek Harness (DSH) agent loop, backed by a pluggable adjudication backend. Dangerous-call gating, output self-check, tool narrowing, and loop prevention hook into the agent loop as automatic interventions.
 
-> **0.6.1 is a preview release.** The plugin works, but how much real value the adjudication interventions add is still being explored — every threshold is an unvalidated heuristic default. Treat it as something to observe, not a proven guarantee of impact. See [ROADMAP.md](<ROADMAP.md>) for scope and progress.
+> **0.6.2 is a preview release.** The plugin works, but how much real value the adjudication interventions add is still being explored — every threshold is an unvalidated heuristic default. Treat it as something to observe, not a proven guarantee of impact. See [ROADMAP.md](<ROADMAP.md>) for scope and progress.
 
 ## Installation
 
@@ -50,4 +50,4 @@ Restart `dsh web` and refresh after installing or updating: the host and client 
 
 ## Safety boundary and development
 
-Automatic intervention only subtracts: the gate only denies, narrowing only removes tools, and neither grants new permissions. The gate defers to native DSH approval on backend failure rather than allowing; self-check, narrowing, and loop-guard errors skip intervention. The redacted summary sent to the backend carries only tool name and command/path with secret redaction — never file content. Node.js `>=20.11`; `npm test` and `npm run build:client` run local checks. Rebuild and commit `lib/client.js` with any client change. 0.6.1 is a preview: the interventions work, but their real value and thresholds are still being explored — feedback on misjudgments and feel observed in the decision log is welcome.
+Automatic intervention only subtracts: the gate only denies, narrowing only removes tools, and neither grants new permissions. The gate defers to native DSH approval on backend failure rather than allowing; self-check, narrowing, and loop-guard errors skip intervention. The redacted summary sent to the backend carries only tool name and command/path with secret redaction — never file content. Node.js `>=20.11`; `npm test` and `npm run build:client` run local checks. Rebuild and commit `lib/client.js` with any client change. 0.6.2 is a preview: the interventions work, but their real value and thresholds are still being explored — feedback on misjudgments and feel observed in the decision log is welcome.
