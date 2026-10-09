@@ -196,15 +196,19 @@ Three valid answers for `danger`/`gate`/`severity` means the link works. Referen
 
 ## Performance reference (measured, Apple Silicon / Metal)
 
-| Item | tev1:4b | tev1:0.8b |
-|------|---------|-----------|
-| Size | 4.5GB | 812MB |
-| Cold start | ~13s (resident afterward) | faster |
-| Steady per-adjudication | ~0.4–2s | ~0.4s |
-| typed-decisions accuracy (official) | 0.733 | 0.635 |
-| Chinese danger-gate direction | correct (gate=ask, severity toward high) | weak (gate often misreads as allow, very low confidence) |
+| Item | tev1:4b (Q8_0) | tev1:4b-q4_K_M | tev1:0.8b |
+|------|------|------|------|
+| Size | 4.5GB | 2.7GB | 812MB |
+| Resident memory | ~4.7GB | ~2.9GB | ~1GB |
+| Cold start | ~13s | ~7–13s | faster |
+| Steady per-adjudication | ~1.9s | ~2.1s | ~0.4s |
+| typed-decisions accuracy (official) | 0.733 | close to 0.733 (not officially published) | 0.635 |
+| Chinese danger-gate | gate=ask, danger/severity toward high | danger/severity hold, **gate regresses to allow** | gate often misreads as allow, very low confidence |
+
+Versus Q8_0, q4_K_M saves ~38% resident memory with `danger`/`severity` essentially unchanged, at the cost of `gate` slipping from ask toward allow on danger samples (see the measured comparison in [Step 1](#step-1-pull-the-model)); since the plugin only blocks on a high-confidence `deny`, the effect on actual blocking is limited.
 
 A CPU-only environment is much slower (official/early measurements around 4–7s per call, 20–30s cold start); there, residency matters even more, and mind the 20s backend timeout.
+
 
 ## Troubleshooting
 
