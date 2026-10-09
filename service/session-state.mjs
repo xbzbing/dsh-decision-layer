@@ -213,6 +213,12 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       if (typeof entry.suggestion === 'string' && entry.suggestion) record.suggestion = entry.suggestion.slice(0, 16);
       if (typeof entry.action === 'string' && entry.action) record.action = entry.action.slice(0, 16);
       if (typeof entry.reason === 'string' && entry.reason) record.reason = entry.reason.slice(0, 32);
+      // The redacted command/path summary of a gated call, so the log row can show
+      // what was evaluated (not just the tool). Already secret-stripped upstream;
+      // kept to a bounded preview here. Newlines collapse to single spaces so one
+      // multi-line script stays on one readable row.
+      if (typeof entry.command === 'string' && entry.command.trim()) record.command = entry.command.replace(/\s+/g, ' ').trim().slice(0, 512);
+      if (typeof entry.path === 'string' && entry.path.trim()) record.path = entry.path.replace(/\s+/g, ' ').trim().slice(0, 512);
       if (typeof entry.mode === 'string' && entry.mode) record.mode = entry.mode.slice(0, 16);
       if (typeof entry.score === 'number' && Number.isFinite(entry.score)) record.score = Math.round(entry.score * 100) / 100;
       if (typeof entry.confidence === 'number' && Number.isFinite(entry.confidence)) record.confidence = Math.round(entry.confidence * 100) / 100;

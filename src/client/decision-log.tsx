@@ -30,18 +30,27 @@ function failDetail(t: Translate<TranslationKey>, entry: LogEntry) {
   return reason;
 }
 
+function gateArgs({ t }: RowProps, entry: LogEntry) {
+  const value = entry.command || entry.path;
+  if (!value) return null;
+  const label = entry.command ? t('logCommandLabel') : t('logPathLabel');
+  const preview = value.length > 160 ? `${value.slice(0, 160)}…` : value;
+  return <code className="decision-log-cmd" title={`${label}${value}`}>{preview}</code>;
+}
+
 function renderGate({ t }: RowProps, entry: LogEntry) {
   const tool = <code className="decision-log-tool">{entry.tool ?? '—'}</code>;
-  if (entry.outcome === 'error') return <>{t('logGate')} · {tool} <span className="decision-log-detail">{t('gatePassThrough')}{entry.reason ? ` · ${failDetail(t, entry)}` : ''}</span></>;
+  const args = gateArgs({ t }, entry);
+  if (entry.outcome === 'error') return <>{t('logGate')} · {tool}{args ? <> {args}</> : null} <span className="decision-log-detail">{t('gatePassThrough')}{entry.reason ? ` · ${failDetail(t, entry)}` : ''}</span></>;
   if (entry.outcome === 'deny') {
     const suggestion = entry.suggestion && entry.suggestion !== 'deny'
       ? <span className="decision-log-detail"> · {t('logSuggested')} {actionText(t, entry.suggestion)}</span> : null;
-    return <>{t('logGate')} · {tool} <span className="decision-log-verdict">→ {t('actionDeny')}</span>{suggestion}</>;
+    return <>{t('logGate')} · {tool}{args ? <> {args}</> : null} <span className="decision-log-verdict">→ {t('actionDeny')}</span>{suggestion}</>;
   }
   const suggestion = entry.suggestion ? <span className="decision-log-detail"> · {t('logSuggested')} {actionText(t, entry.suggestion)}</span> : null;
   const lowConf = entry.reason === 'low-confidence' && typeof entry.confidence === 'number'
     ? <span className="decision-log-detail"> · {t('reasonLowConfidence')} {entry.confidence}</span> : null;
-  return <>{t('logGate')} · {tool} <span className="decision-log-verdict">{t('gatePassThrough')}</span>{suggestion}{lowConf}</>;
+  return <>{t('logGate')} · {tool}{args ? <> {args}</> : null} <span className="decision-log-verdict">{t('gatePassThrough')}</span>{suggestion}{lowConf}</>;
 }
 
 function renderCheck({ t }: RowProps, entry: LogEntry) {

@@ -9,6 +9,7 @@ export type Rating = 'good' | 'bad' | 'unsure';
 export interface LogEntry {
   id?: string; at: number; kind: 'gate' | 'check' | 'narrow' | 'complete'; outcome: string;
   tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number;
+  command?: string; path?: string;
   mode?: string; dropped?: number; kept?: number; candidates?: number; tools?: string[];
   conditions?: number; satisfied?: number; unsatisfied?: number; insufficient?: number; steered?: boolean;
   lowConfidence?: boolean;

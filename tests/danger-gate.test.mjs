@@ -100,11 +100,12 @@ test('gate logs a deny with action deny; a pass-through records action pass', as
   const sessions = { snapshot: () => ({ enabled: true }), record: () => {}, log: (_id, entry) => entries.push(entry) };
   const deny = createDangerGate({ sessions, evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 1, probabilities: { allow: 0, ask: 0, deny: 1 } } } }) });
   await deny.evaluate(exec('bash', { command: 'rm -rf /tmp/build' }));
-  assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'deny', tool: 'bash', suggestion: 'deny', action: 'deny' });
+  // The gated command rides along on the log so a human reviewer sees WHAT was gated.
+  assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'deny', tool: 'bash', command: 'rm -rf /tmp/build', suggestion: 'deny', action: 'deny' });
   // A backend failure is a pass-through (no intervention), logged as error/pass.
   const unavailable = createDangerGate({ sessions, evaluate: async () => { throw new Error('offline'); } });
   await unavailable.evaluate(exec('edit', { path: '/etc/passwd' }));
-  assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'error', tool: 'edit', action: 'pass', reason: 'unreachable' });
+  assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'error', tool: 'edit', path: '/etc/passwd', action: 'pass', reason: 'unreachable' });
 });
 
 test('gate logs distinct pass-through reasons for invalid response and low confidence', async () => {

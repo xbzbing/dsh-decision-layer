@@ -89,7 +89,15 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
     if (!sessions || typeof id !== 'string') return;
     try { sessions.record(id, 'gate', outcome); } catch { /* metrics cannot change the security decision */ }
     if (typeof sessions.log !== 'function') return;
-    try { sessions.log(id, { kind: 'gate', outcome, tool: exec?.name, ...detail }); }
+    // Attach the same redacted, bounded command/path summary that was sent to the
+    // backend, so a human reviewing the log sees WHAT was gated (e.g. the actual
+    // `rm -rf ...`), not just the tool name. Secrets are already stripped by
+    // summarizeExecution; session-state caps the length for storage.
+    const summary = summarizeExecution(exec);
+    const args = {};
+    if (summary.command) args.command = summary.command;
+    if (summary.path) args.path = summary.path;
+    try { sessions.log(id, { kind: 'gate', outcome, tool: exec?.name, ...args, ...detail }); }
     catch { /* logging is best effort */ }
   };
   // Two-tier model: the gate intervenes ONLY on a high-confidence `deny`

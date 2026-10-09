@@ -143,6 +143,19 @@ test('narrow log keeps the optional-candidate count for the too-many reason', ()
   assert.equal(entry.reason, 'too-many-candidates');
 });
 
+test('gate log keeps a bounded, whitespace-collapsed command/path for human review', () => {
+  const sessions = createSessionState();
+  sessions.log('g', { kind: 'gate', outcome: 'deny', tool: 'bash', command: 'rm -rf \n   /tmp/build' });
+  const denied = sessions.snapshot('g').log.at(-1);
+  assert.equal(denied.command, 'rm -rf /tmp/build', 'newlines/indent collapse to single spaces');
+  assert.equal(denied.path, undefined);
+  sessions.log('g', { kind: 'gate', outcome: 'error', tool: 'edit', path: '/etc/passwd', reason: 'unreachable' });
+  assert.equal(sessions.snapshot('g').log.at(-1).path, '/etc/passwd');
+  // Over-long command is capped for storage.
+  sessions.log('g', { kind: 'gate', outcome: 'deny', tool: 'bash', command: 'x'.repeat(900) });
+  assert.equal(sessions.snapshot('g').log.at(-1).command.length, 512);
+});
+
 test('onLog sink receives the full untruncated record with session id', () => {
   const sunk = [];
   const sessions = createSessionState({ onLog: entry => sunk.push(entry) });

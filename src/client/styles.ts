@@ -76,6 +76,7 @@ const css = `
 .decision-rate-btn.decision-rate-unsure{color:#c98a1e}
 .decision-rate-summary{margin-top:.5rem}
 .decision-log-tool{font-size:.76rem;padding:.05rem .35rem;border-radius:5px;background:var(--dsw-alias-bg-layer-1,#f2f4f6);color:var(--dsw-alias-label-primary,#202124)}
+.decision-log-cmd{font-size:.74rem;padding:.05rem .35rem;border-radius:5px;background:var(--dsw-alias-bg-layer-1,#f2f4f6);color:var(--dsw-alias-label-secondary,#59636e);word-break:break-all}
 .decision-log-verdict{font-weight:600}
 .decision-log-deny .decision-log-verdict{color:#c0392b}
 .decision-log-ok .decision-log-verdict{color:#1f8a70}
