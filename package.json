@@ -1,6 +1,6 @@
 {
   "name": "dsh-decision-layer",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "description": "A structured decision layer for the DeepSeek Harness agent loop: a danger-call gate, output self-check, tool narrowing, and loop guard backed by a pluggable adjudication model.",
   "keywords": [
     "dsh",
