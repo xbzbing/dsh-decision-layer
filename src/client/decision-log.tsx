@@ -56,9 +56,10 @@ function renderGate({ t }: RowProps, entry: LogEntry) {
 function renderCheck({ t }: RowProps, entry: LogEntry) {
   const label = <span title={t('logCheckHint')}>{t('logCheck')}</span>;
   // The request this self-check judged, so the reader knows which turn's output
-  // was scored. Truncated inline; full text in the tooltip.
+  // was scored. Rendered as a quoted, muted prose snippet (not a monospace command
+  // chip): truncated inline, full text in the tooltip.
   const subject = entry.subject
-    ? <code className="decision-log-cmd" title={`${t('logSubjectLabel')}${entry.subject}`}>{entry.subject.length > 60 ? `${entry.subject.slice(0, 60)}…` : entry.subject}</code>
+    ? <span className="decision-log-subject" title={`${t('logSubjectLabel')}${entry.subject}`}>「{entry.subject.length > 60 ? `${entry.subject.slice(0, 60)}…` : entry.subject}」</span>
     : null;
   if (entry.outcome === 'error') return <>{label}{subject ? <> {subject}</> : null} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(t, entry)}` : ''}</span></>;
   // A low score the model was not confident about is low-signal noise: it does not

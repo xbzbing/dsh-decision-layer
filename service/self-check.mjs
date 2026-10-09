@@ -12,11 +12,19 @@ const STEER_TEXT = '本回合自检得分偏低：请复核是否答到了用户
 
 // A short, single-line hint of the request this self-check judged, so a human
 // reviewing the log knows WHICH turn's output was scored (not just "self-check").
-// Best-effort over an untrusted string; whitespace collapses and length is capped.
+// Best-effort over an untrusted string: injected OpenViking memory context blocks
+// (which are not part of the user's actual request) are stripped first, then
+// whitespace collapses and the length is capped.
 function subjectOf(text) {
   if (typeof text !== 'string') return undefined;
-  const collapsed = text.replace(/\s+/g, ' ').trim();
-  return collapsed ? collapsed.slice(0, 120) : undefined;
+  const cleaned = text
+    // Drop any complete injected memory blocks (there can be several, multi-line).
+    .replace(/<openviking-context\b[^>]*>[\s\S]*?<\/openviking-context>/gi, ' ')
+    // Drop a dangling, unclosed block (e.g. a truncated tail) through to the end.
+    .replace(/<openviking-context\b[\s\S]*$/i, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned ? cleaned.slice(0, 120) : undefined;
 }
 
 function boundedRubric(rubric) {

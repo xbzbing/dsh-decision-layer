@@ -126,6 +126,22 @@ test('the turn request rides onto every self-check log row as a bounded subject'
   assert.equal(entries.at(-1).outcome, 'error');
 });
 
+test('the subject strips injected OpenViking memory context, keeping only the real request', async () => {
+  const entries = [];
+  const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
+  const ok = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1 } } } }) });
+  // A real turn: the user's question followed by one or more injected memory blocks.
+  const withMemory = userText => ({ ...turn('great answer'), userText });
+  await ok.review(withMemory('唯一直观的是减少 token，这个能评估出来具体的数据吗？\n<openviking-context>\nRelevant memory from OpenViking.\n<memory uri="viking://x">...</memory>\n</openviking-context>\n<openviking-context>\n更多记忆\n</openviking-context>'));
+  assert.equal(entries.at(-1).subject, '唯一直观的是减少 token，这个能评估出来具体的数据吗？', 'only the real request survives');
+  // A dangling, unclosed block (e.g. truncated) is also dropped.
+  await ok.review(withMemory('重构登录模块 <openviking-context> Relevant memory from OpenViking'));
+  assert.equal(entries.at(-1).subject, '重构登录模块');
+  // A turn that is only memory context yields no subject rather than noise.
+  await ok.review(withMemory('<openviking-context>only memory</openviking-context>'));
+  assert.equal(entries.at(-1).subject, undefined);
+});
+
 test('fractional scores are accepted and low confidence is a valid answer, not a failure', async () => {
   const entries = [];
   const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
