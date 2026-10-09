@@ -213,6 +213,9 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       if (typeof entry.suggestion === 'string' && entry.suggestion) record.suggestion = entry.suggestion.slice(0, 16);
       if (typeof entry.action === 'string' && entry.action) record.action = entry.action.slice(0, 16);
       if (typeof entry.reason === 'string' && entry.reason) record.reason = entry.reason.slice(0, 32);
+      // A short hint of the request a self-check judged, so a log row says which
+      // turn's output was scored (not just "self-check"). Already collapsed upstream.
+      if (typeof entry.subject === 'string' && entry.subject.trim()) record.subject = entry.subject.replace(/\s+/g, ' ').trim().slice(0, 120);
       // The redacted command/path summary of a gated call, so the log row can show
       // what was evaluated (not just the tool). Already secret-stripped upstream;
       // kept to a bounded preview here. Newlines collapse to single spaces so one

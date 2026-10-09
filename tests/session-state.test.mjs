@@ -156,6 +156,14 @@ test('gate log keeps a bounded, whitespace-collapsed command/path for human revi
   assert.equal(sessions.snapshot('g').log.at(-1).command.length, 512);
 });
 
+test('self-check log keeps a bounded, collapsed subject so a row names its request', () => {
+  const sessions = createSessionState();
+  sessions.log('c', { kind: 'check', outcome: 'low', score: 0, subject: '帮我\n  重构  登录模块' });
+  assert.equal(sessions.snapshot('c').log.at(-1).subject, '帮我 重构 登录模块');
+  sessions.log('c', { kind: 'check', outcome: 'error', reason: 'unreachable', subject: 'x'.repeat(300) });
+  assert.equal(sessions.snapshot('c').log.at(-1).subject.length, 120);
+});
+
 test('onLog sink receives the full untruncated record with session id', () => {
   const sunk = [];
   const sessions = createSessionState({ onLog: entry => sunk.push(entry) });

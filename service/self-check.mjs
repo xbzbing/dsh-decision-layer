@@ -10,6 +10,15 @@ export const DEFAULT_RUBRIC = Object.freeze([
 
 const STEER_TEXT = '本回合自检得分偏低：请复核是否答到了用户的问题、有无遗漏或自相矛盾，并在需要时补完。';
 
+// A short, single-line hint of the request this self-check judged, so a human
+// reviewing the log knows WHICH turn's output was scored (not just "self-check").
+// Best-effort over an untrusted string; whitespace collapses and length is capped.
+function subjectOf(text) {
+  if (typeof text !== 'string') return undefined;
+  const collapsed = text.replace(/\s+/g, ' ').trim();
+  return collapsed ? collapsed.slice(0, 120) : undefined;
+}
+
 function boundedRubric(rubric) {
   if (!Array.isArray(rubric)) return DEFAULT_RUBRIC;
   const levels = rubric.filter(item => typeof item === 'string' && item.trim() && item.length <= 256).slice(0, 10);
@@ -61,21 +70,25 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
         try { if (sessions.snapshot(id).enabled === false) return { evaluated: false, lowScore: false, steered: false }; }
         catch { return { evaluated: false, lowScore: false, steered: false }; }
       }
+      // The request this turn answered, carried onto every log row so a reviewer
+      // can tell which turn's output each self-check score belongs to.
+      const subject = subjectOf(turn?.userText);
+      const subjectDetail = subject ? { subject } : {};
       const { mode, rubric, lowScoreThreshold, trendMinConfidence, trendRun, trendSevereRun } = await resolveSettings();
       let answer;
       try {
         const result = await evaluate(scoreQuestion(output, rubric), { signal: turn.signal });
         answer = result?.answers?.quality;
-      } catch (error) { record(turn, 'error', { reason: typeof error?.reason === 'string' ? error.reason : 'unreachable' }); return { evaluated: false, lowScore: false, steered: false }; }
+      } catch (error) { record(turn, 'error', { ...subjectDetail, reason: typeof error?.reason === 'string' ? error.reason : 'unreachable' }); return { evaluated: false, lowScore: false, steered: false }; }
       if (!answer || answer.type !== 'score' || typeof answer.score !== 'number' || !Number.isFinite(answer.score)) {
-        record(turn, 'error', { reason: 'invalid-response' });
+        record(turn, 'error', { ...subjectDetail, reason: 'invalid-response' });
         return { evaluated: false, lowScore: false, steered: false };
       }
       // A low-confidence Score is a legitimate answer, not a failure: the score
       // stays usable and is recorded as ok/low. Confidence only gates the steer,
       // because only interrupting the user warrants the model being sure.
       const confidence = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? answer.confidence : undefined;
-      const detail = confidence === undefined ? {} : { confidence };
+      const detail = confidence === undefined ? { ...subjectDetail } : { ...subjectDetail, confidence };
       const lowScore = answer.score <= lowScoreThreshold;
       // The trend run advances over every evaluated score; a high-confidence low
       // score is the only thing that grows it. Thresholds flow to session-state.

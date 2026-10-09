@@ -55,7 +55,12 @@ function renderGate({ t }: RowProps, entry: LogEntry) {
 
 function renderCheck({ t }: RowProps, entry: LogEntry) {
   const label = <span title={t('logCheckHint')}>{t('logCheck')}</span>;
-  if (entry.outcome === 'error') return <>{label} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(t, entry)}` : ''}</span></>;
+  // The request this self-check judged, so the reader knows which turn's output
+  // was scored. Truncated inline; full text in the tooltip.
+  const subject = entry.subject
+    ? <code className="decision-log-cmd" title={`${t('logSubjectLabel')}${entry.subject}`}>{entry.subject.length > 60 ? `${entry.subject.slice(0, 60)}…` : entry.subject}</code>
+    : null;
+  if (entry.outcome === 'error') return <>{label}{subject ? <> {subject}</> : null} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(t, entry)}` : ''}</span></>;
   // A low score the model was not confident about is low-signal noise: it does not
   // advance the quality trend and triggers no intervention. Mark it plainly so the
   // reader does not mistake it for a real quality dip.
@@ -65,7 +70,7 @@ function renderCheck({ t }: RowProps, entry: LogEntry) {
   const score = entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null;
   const conf = typeof entry.confidence === 'number' ? <span className="decision-log-detail"> · {t('logConfidence')} {entry.confidence}</span> : null;
   const hint = noisy ? <span className="decision-log-detail" title={t('checkNoiseHint')}> · {t('checkNoiseTag')}</span> : null;
-  return <>{label} · {verdict}{score}{conf}{hint}</>;
+  return <>{label}{subject ? <> {subject}</> : null} · {verdict}{score}{conf}{hint}</>;
 }
 
 function renderNarrow({ t }: RowProps, entry: LogEntry) {

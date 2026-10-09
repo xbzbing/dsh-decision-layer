@@ -112,6 +112,20 @@ test('self-check logs score on evaluation and a reason on failure', async () => 
   assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'error', reason: 'unreachable' });
 });
 
+test('the turn request rides onto every self-check log row as a bounded subject', async () => {
+  const entries = [];
+  const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
+  const withSubject = text => ({ ...turn(text), userText: '帮我\n  重构登录模块' });
+  const ok = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1 } } } }) });
+  await ok.review(withSubject('great answer'));
+  assert.equal(entries.at(-1).subject, '帮我 重构登录模块', 'the request is collapsed to one line');
+  // The subject is attached even when the backend fails, so a failed row still names its request.
+  const offline = createSelfCheck({ sessions, evaluate: async () => { throw new Error('offline'); } });
+  await offline.review(withSubject('answer'));
+  assert.equal(entries.at(-1).subject, '帮我 重构登录模块');
+  assert.equal(entries.at(-1).outcome, 'error');
+});
+
 test('fractional scores are accepted and low confidence is a valid answer, not a failure', async () => {
   const entries = [];
   const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };

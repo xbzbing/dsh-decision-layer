@@ -161,6 +161,7 @@ export async function apply(ctx, options = {}) {
       return selfCheck.review({
         agent: payload.agent, turn: payload.turn, signal: payload.signal,
         output: lastAssistantText(payload.agent),
+        userText: turnUserText(payload.agent),
       });
     });
     if (typeof ctx.effect === 'function') ctx.effect(installCheck);
