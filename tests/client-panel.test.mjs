@@ -682,3 +682,37 @@ test('an invalid rubric blocks the save and names the problem', async () => {
   fireEvent.change(box, { target: { value: '差\n中' } });
   assert.equal(view.getByRole('button', { name: '保存高级配置' }).disabled, false, 'a valid rubric re-enables the save');
 });
+
+// The dock entry sits in the same composer row as the official context meter,
+// which renders nothing until the session has a context-pressure reading — so a
+// fresh chat showed our trigger alone under the composer. The gate below mirrors
+// the meter's predicate exactly; these tests pin the three states.
+const panelFetch = () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: false, attempts: 0, failures: 0 });
+    if (String(url).includes('/log?')) return envelope({ entries: [] });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+};
+
+test('the dock trigger stays hidden while the session has no context reading', async () => {
+  panelFetch();
+  const useProjection = () => undefined;
+  const view = render(React.createElement(Panel, { sessionId: 'blank', t: translate, useProjection }));
+  await waitFor(() => assert.equal(globalThis.fetch !== undefined, true));
+  assert.equal(view.queryByRole('button', { name: /决策层/ }), null, 'a fresh chat shows nothing, like the official meter');
+});
+
+test('the dock trigger appears as soon as a context reading exists', async () => {
+  panelFetch();
+  const useProjection = () => ({ pressureTokens: 1200, contextWindow: 128000 });
+  const view = render(React.createElement(Panel, { sessionId: 'started', t: translate, useProjection }));
+  assert.ok(view.getByRole('button', { name: /决策层/ }), 'once the meter has data, our entry shows too');
+});
+
+test('a host without the projection reader keeps the trigger visible', async () => {
+  panelFetch();
+  const view = render(React.createElement(Panel, { sessionId: 'legacy', t: translate }));
+  assert.ok(view.getByRole('button', { name: /决策层/ }), 'absence of the capability must not remove the entry point');
+});

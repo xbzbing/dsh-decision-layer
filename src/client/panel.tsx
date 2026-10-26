@@ -13,11 +13,22 @@ interface CompleteMetrics { attempts: number; failures: number; unsatisfied: num
 interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics; narrow?: NarrowMetrics; complete?: CompleteMetrics }
 interface Session { enabled: boolean }
 interface Probe { connected: boolean; model?: string; effectiveUrl?: string; reason?: string }
-interface Props { sessionId: string; t: Translate<TranslationKey> }
+// Host-computed context reading; shape mirrors the `contextPressure` projection
+// the official composer footer reads next to our entry.
+interface ContextPressure { projectedTokens?: number; pressureTokens?: number; contextWindow?: number }
+// The session standard kit (merged into session-scope slot props by ui-session)
+// exposes this projection reader. Declared structurally so the client bundle
+// does not depend on the controller package at build time.
+type ProjectionReader = (key: string) => unknown;
+interface Props { sessionId: string; t: Translate<TranslationKey>; useProjection?: ProjectionReader }
 
 export function DecisionPanel(props: Props) {
   return <SessionPanel key={props.sessionId} {...props} />;
 }
+
+// Stable identity for the hook call when the host provides no projection reader:
+// the call site stays unconditional, so Hook order never depends on the host.
+const NO_PROJECTION: ProjectionReader = () => undefined;
 
 function Bar({ allow, ask, deny }: { allow: number; ask: number; deny: number }) {
   const total = allow + ask + deny;
@@ -30,7 +41,7 @@ function Bar({ allow, ask, deny }: { allow: number; ask: number; deny: number })
   </div>;
 }
 
-function SessionPanel({ sessionId, t }: Props) {
+function SessionPanel({ sessionId, t, useProjection }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   // Tracks whether this mounted instance is still live, so an async probe that
@@ -110,6 +121,21 @@ function SessionPanel({ sessionId, t }: Props) {
   const narrowValid = metrics?.narrow ? metrics.narrow.attempts - metrics.narrow.failures : 0;
   const narrowApplyRate = metrics?.narrow && narrowValid > 0
     ? Math.round((metrics.narrow.applied / narrowValid) * 100) : null;
+
+  // Match the official composer footer's timing. The context meter rendered next
+  // to this entry returns null until the session has a context-pressure reading,
+  // so a fresh chat shows an empty row; without the same gate our trigger sat
+  // alone under the composer before the conversation had started. The predicate
+  // is deliberately identical to the meter's: both tokens and a window present.
+  // A host that does not expose the reader keeps the trigger visible rather than
+  // silently removing the entry point.
+  const readProjection = useProjection ?? NO_PROJECTION;
+  const pressure = readProjection('contextPressure') as ContextPressure | undefined;
+  const usedTokens = pressure?.projectedTokens ?? pressure?.pressureTokens;
+  const contextReady = useProjection === undefined
+    || (usedTokens !== undefined && pressure?.contextWindow !== undefined);
+
+  if (!contextReady) return null;
 
   return <>
     <button ref={trigger} className={`decision-trigger decision-trend-${severity}`} type="button" aria-haspopup="dialog" aria-expanded={open} aria-busy={enabled === null} aria-label={t('button')} title={trendTitle} onClick={() => setOpen(true)}>
