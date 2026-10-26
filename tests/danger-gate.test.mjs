@@ -129,3 +129,25 @@ test('recognizes DSH file_path arguments for ordinary edit calls', () => {
   assert.equal(classifyDangerous(ordinaryEdit, DEFAULT_DANGEROUS_RULES).dangerous, false);
   assert.equal(classifyDangerous(sensitiveEdit, DEFAULT_DANGEROUS_RULES).dangerous, true);
 });
+
+// The confidence floor is config-backed (config-store gateSettings.minConfidence)
+// and resolved per call, so raising or lowering it takes effect without a restart.
+test('a live confidence resolver decides which deny verdicts actually block', async () => {
+  const borderline = { answers: { verdict: { type: 'choice', choice: 'deny', confidence: 0.5, probabilities: { allow: 0, ask: 0, deny: 1 } } } };
+  let floor = 0.7;
+  const gate = createDangerGate({ evaluate: async () => borderline, minConfidence: async () => floor });
+  assert.equal(await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), undefined, '0.5 is below the 0.7 floor, so it passes through');
+  floor = 0.4;
+  const blocked = await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' }));
+  assert.equal(blocked?.kind, 'deny', 'the same 0.5 deny blocks once the floor drops to 0.4');
+});
+
+test('a broken confidence resolver falls back to the built-in floor, never to block-everything', async () => {
+  const borderline = { answers: { verdict: { type: 'choice', choice: 'deny', confidence: 0.5, probabilities: { allow: 0, ask: 0, deny: 1 } } } };
+  const broken = [async () => 'high', async () => Number.NaN, async () => { throw new Error('config unreadable'); }];
+  for (const resolver of broken) {
+    const gate = createDangerGate({ evaluate: async () => borderline, minConfidence: resolver });
+    assert.equal(await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), undefined,
+      'an invalid floor must fall back to 0.7, not to 0 (which would block every deny)');
+  }
+});

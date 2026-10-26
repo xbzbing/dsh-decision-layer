@@ -538,3 +538,147 @@ test('analysis view paginates the decision log and shares the page scroll', asyn
   // on the last page, Next is disabled
   assert.equal((await view.findByRole('button', { name: '下一页' })).disabled, true);
 });
+
+test('advanced save posts every intervention threshold, the rubric, and the batch mode', async () => {
+  let savedBody;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' }); }
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  fireEvent.change(await view.findByLabelText(/^门控拦截置信度/), { target: { value: '0.55' } });
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.equal(savedBody?.gateSettings?.minConfidence, 0.55));
+  // The server replaces each settings object wholesale, so every field the form
+  // does not edit must still be posted with its effective value or it is lost.
+  assert.equal(savedBody.checkSettings.minConfidence, 0.4);
+  assert.equal(savedBody.checkSettings.trendMinConfidence, 0.6);
+  assert.equal(savedBody.checkSettings.trendRun, 3);
+  assert.equal(savedBody.checkSettings.trendSevereRun, 5);
+  assert.equal(savedBody.checkSettings.lowScoreThreshold, 1);
+  assert.equal(savedBody.checkSettings.rubric.length, 3);
+  assert.equal(savedBody.narrowSettings.batchMode, 'auto');
+  assert.equal(savedBody.completeSettings.minConfidence, 0.4);
+  assert.equal(savedBody.completeSettings.minConditions, 2);
+});
+
+test('advanced fields reflect the saved thresholds, rubric, and batch mode', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai',
+      gateSettings: { minConfidence: 0.5 },
+      checkSettings: { mode: 'steer', minConfidence: 0.3, trendRun: 2, trendSevereRun: 4, rubric: ['差', '中', '好'] },
+      narrowSettings: { mode: 'enforce', batchMode: 'split' },
+      completeSettings: { mode: 'steer', minConditions: 4 } });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  assert.equal((await view.findByLabelText(/^门控拦截置信度/)).value, '0.5');
+  assert.equal(view.getByLabelText(/^自检补完置信度/).value, '0.3');
+  assert.equal(view.getByLabelText(/^告警连续次数/).value, '2');
+  assert.equal(view.getByLabelText(/^严重连续次数/).value, '4');
+  assert.equal(view.getByLabelText(/^最少交付条件数/).value, '4');
+  assert.equal(view.getByLabelText(/^分批策略/).value, 'split');
+  assert.equal(view.getByLabelText(/^评分档位/).value, '差\n中\n好');
+});
+
+test('the severe run count is clamped above the warn count instead of being rejected', async () => {
+  let savedBody;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' }); }
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  fireEvent.change(await view.findByLabelText(/^告警连续次数/), { target: { value: '6' } });
+  fireEvent.change(view.getByLabelText(/^严重连续次数/), { target: { value: '4' } });
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.equal(savedBody?.checkSettings?.trendSevereRun, 7, 'severe is pushed above the warn count'));
+  assert.equal(savedBody.checkSettings.trendRun, 6);
+});
+
+// The load-bearing invariant: the server replaces each settings section
+// wholesale, so an advanced save must carry every loaded value it does not edit.
+// This starts from NON-default values on every field (the previous test started
+// from an empty config, so "display loaded values, post the defaults" — the exact
+// regression this guards — would still have passed).
+test('advanced save preserves every loaded value it does not edit', async () => {
+  let savedBody;
+  const loaded = {
+    url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai',
+    gateSettings: { minConfidence: 0.62 },
+    checkSettings: { mode: 'steer', rubric: ['差', '中', '好', '优'], lowScoreThreshold: 2, minConfidence: 0.31,
+      trendMinConfidence: 0.71, trendRun: 4, trendSevereRun: 6 },
+    narrowSettings: { mode: 'observe', keepPrefixes: ['mcp__kept'], maxCandidates: 33, threshold: 0.42, batchMode: 'single' },
+    completeSettings: { mode: 'steer', minConditions: 5, minConfidence: 0.27 },
+    features: { gate: true, check: true, narrow: true, complete: true },
+  };
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope(loaded); }
+    if (String(url).endsWith('/config')) return envelope(loaded);
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  // change exactly one field, the gate floor
+  fireEvent.change(await view.findByLabelText(/^门控拦截置信度/), { target: { value: '0.55' } });
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.equal(savedBody?.gateSettings?.minConfidence, 0.55));
+  // every other loaded value must survive the save
+  assert.deepEqual(savedBody.checkSettings, { mode: 'steer', rubric: ['差', '中', '好', '优'], lowScoreThreshold: 2,
+    minConfidence: 0.31, trendMinConfidence: 0.71, trendRun: 4, trendSevereRun: 6 });
+  assert.deepEqual(savedBody.narrowSettings, { mode: 'observe', keepPrefixes: ['mcp__kept'], maxCandidates: 33,
+    threshold: 0.42, batchMode: 'single' });
+  assert.deepEqual(savedBody.completeSettings, { mode: 'steer', minConditions: 5, minConfidence: 0.27 });
+});
+
+// The client's posted body must be accepted by the REAL service validators: a
+// field-name drift between the halves (e.g. trendSevere vs trendSevereRun) would
+// otherwise keep these client tests green while every save 400s in production.
+test('the posted advanced body is accepted by the real config store and round-trips', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { saveConfig, resolveConfig } = await import('../service/config-store.mjs');
+  let savedBody;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' }); }
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  fireEvent.change(await view.findByLabelText(/^严重连续次数/), { target: { value: '7' } });
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.equal(savedBody?.checkSettings?.trendSevereRun, 7));
+
+  const dir = await mkdtemp(join(tmpdir(), 'decision-roundtrip-'));
+  try {
+    const file = join(dir, 'config.json');
+    await saveConfig(savedBody, file);                     // must not throw
+    const persisted = await resolveConfig({ path: file, env: {} });
+    assert.equal(persisted.gateSettings.minConfidence, 0.7);
+    assert.equal(persisted.checkSettings.trendSevereRun, 7);
+    assert.equal(persisted.checkSettings.minConfidence, 0.4);
+    assert.equal(persisted.checkSettings.rubric.length, 3);
+    assert.equal(persisted.narrowSettings.batchMode, 'auto');
+    assert.equal(persisted.completeSettings.minConfidence, 0.4);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+// An invalid rubric is now refused with a specific message instead of being
+// silently replaced by the defaults while reporting success.
+test('an invalid rubric blocks the save and names the problem', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  const box = await view.findByLabelText(/^评分档位/);
+  fireEvent.change(box, { target: { value: '只有一档' } });
+  assert.ok(view.getByText('至少需要 2 档（每行一档）。'), 'the reason is shown inline');
+  assert.equal(view.getByRole('button', { name: '保存高级配置' }).disabled, true, 'an invalid rubric blocks the save');
+  fireEvent.change(box, { target: { value: `差\n${'x'.repeat(300)}` } });
+  assert.ok(view.getByText('第 2 档超过 256 字，请精简后再保存。'), 'the offending level is named');
+  assert.equal(view.getByRole('button', { name: '保存高级配置' }).disabled, true);
+  fireEvent.change(box, { target: { value: '差\n中' } });
+  assert.equal(view.getByRole('button', { name: '保存高级配置' }).disabled, false, 'a valid rubric re-enables the save');
+});

@@ -188,3 +188,28 @@ test('low confidence never steers even in steer mode, but a confident low score 
   assert.equal((await sure.review(turn('weak', { turn: 4 }))).steered, true, 'a confident low score steers');
   assert.equal(steers.length, 1);
 });
+
+// The steer confidence floor is config-backed (checkSettings.minConfidence); the
+// constructor argument stays the fallback when the config does not set it.
+test('a configured confidence floor overrides the constructor default', async () => {
+  const borderline = { answers: { quality: { type: 'score', score: 0, confidence: 0.6, probabilities: { '0': 0.6, '1': 0.4, '2': 0 } } } };
+  const strict = [];
+  const strictCheck = createSelfCheck({ settings: { mode: 'steer', minConfidence: 0.9 },
+    evaluate: async () => borderline, steer: () => strict.push('steer') });
+  assert.equal((await strictCheck.review(turn('weak', { turn: 11 }))).steered, false, '0.6 is below the configured 0.9 floor');
+  assert.equal(strict.length, 0);
+  const lenient = [];
+  const lenientCheck = createSelfCheck({ settings: { mode: 'steer', minConfidence: 0.5 },
+    evaluate: async () => borderline, steer: () => lenient.push('steer') });
+  assert.equal((await lenientCheck.review(turn('weak', { turn: 12 }))).steered, true, '0.6 clears the configured 0.5 floor');
+  assert.equal(lenient.length, 1);
+});
+
+test('the constructor floor still applies when the config omits minConfidence', async () => {
+  const steers = [];
+  const check = createSelfCheck({ settings: { mode: 'steer' }, minConfidence: 0.9,
+    evaluate: async () => ({ answers: { quality: { type: 'score', score: 0, confidence: 0.6, probabilities: { '0': 0.6, '1': 0.4, '2': 0 } } } }),
+    steer: () => steers.push('steer') });
+  assert.equal((await check.review(turn('weak', { turn: 13 }))).steered, false);
+  assert.equal(steers.length, 0);
+});

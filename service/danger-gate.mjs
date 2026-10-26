@@ -13,6 +13,8 @@ const MAX_PATTERN_LENGTH = 128;
 const MAX_METADATA_LENGTH = 2048;
 export const MIN_CONFIDENCE = 0.7;
 
+const isProbability = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+
 export const DEFAULT_DANGEROUS_RULES = Object.freeze({
   toolNames: Object.freeze(['bash', 'pwsh', 'shell', 'exec', 'terminal', 'run_command', 'write', 'edit', 'str_replace_editor', 'file_write', 'write_file']),
   commandPatterns: DEFAULT_COMMAND_PATTERNS,
@@ -82,6 +84,17 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
     if (typeof rules !== 'function') return rules;
     try { return (await rules()) ?? DEFAULT_DANGEROUS_RULES; } catch { return DEFAULT_DANGEROUS_RULES; }
   };
+  // The confidence floor may be a fixed number or a live resolver (config-backed),
+  // mirroring `rules`, so changing it takes effect without reloading the plugin.
+  // An invalid or failed resolution falls back to the built-in floor rather than
+  // to 0 — a broken config must never turn the gate into "block every deny".
+  const resolveMinConfidence = async () => {
+    if (typeof minConfidence !== 'function') return isProbability(minConfidence) ? minConfidence : MIN_CONFIDENCE;
+    try {
+      const value = await minConfidence();
+      return isProbability(value) ? value : MIN_CONFIDENCE;
+    } catch { return MIN_CONFIDENCE; }
+  };
   const deniedCalls = new WeakSet();
   const evaluatedCalls = new WeakSet();
   const record = (exec, outcome, detail = {}) => {
@@ -139,7 +152,8 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
       const answer = result?.answers?.verdict;
       const choice = answer?.choice;
       if (!['allow', 'ask', 'deny'].includes(choice)) return passThrough(exec, 'error', { reason: 'invalid-response' });
-      const confident = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) && answer.confidence >= minConfidence;
+      const minConfidenceNow = await resolveMinConfidence();
+      const confident = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) && answer.confidence >= minConfidenceNow;
       // Only a high-confidence deny blocks the call.
       if (choice === 'deny' && confident) {
         record(exec, 'deny', { suggestion: 'deny', action: 'deny' });

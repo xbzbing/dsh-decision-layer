@@ -29,6 +29,11 @@ function safeText(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+// A confidence/threshold/probability: any finite number in [0, 1].
+function probability(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
 function checkedUrl(value) {
   if (!value) return '';
   let url;
@@ -53,9 +58,31 @@ function validRules(value) {
   return rules;
 }
 
+// Danger-gate settings. A gate verdict only intervenes on a high-confidence
+// `deny`, so minConfidence is the single knob that decides how sure the model
+// must be before a dangerous call is actually blocked. Lowering it makes the
+// gate block more (and risk blocking legitimate commands); raising it makes it
+// pass more through. Range 0–1; unset uses the built-in 0.7.
+//
+// Like every sibling validator, an unknown field or an out-of-range value is
+// REJECTED rather than ignored, which makes the whole resolve reject (see the
+// contract note on saveConfig). Callers that read config on a hot path must
+// therefore tolerate a throw and fall back to a safe default — see `featureOn`
+// in dsh.mjs and `resolveMinConfidence` in danger-gate.mjs.
+function validGate(value) {
+  if (!safeObject(value)) return undefined;
+  if (Object.keys(value).some(key => key !== 'minConfidence')) throw new Error('Invalid gate settings');
+  const gate = {};
+  if (value.minConfidence !== undefined) {
+    if (!probability(value.minConfidence)) throw new Error('Invalid gate settings');
+    gate.minConfidence = value.minConfidence;
+  }
+  return gate;
+}
+
 function validCheck(value) {
   if (!safeObject(value)) return undefined;
-  if (Object.keys(value).some(key => !['mode', 'rubric', 'lowScoreThreshold', 'trendMinConfidence', 'trendRun', 'trendSevereRun'].includes(key))) throw new Error('Invalid self-check settings');
+  if (Object.keys(value).some(key => !['mode', 'rubric', 'lowScoreThreshold', 'minConfidence', 'trendMinConfidence', 'trendRun', 'trendSevereRun'].includes(key))) throw new Error('Invalid self-check settings');
   const check = {};
   if (value.mode !== undefined) {
     if (value.mode !== 'observe' && value.mode !== 'steer') throw new Error('Invalid self-check settings');
@@ -71,11 +98,18 @@ function validCheck(value) {
     if (!Number.isSafeInteger(value.lowScoreThreshold) || value.lowScoreThreshold < 0 || value.lowScoreThreshold > 9) throw new Error('Invalid self-check settings');
     check.lowScoreThreshold = value.lowScoreThreshold;
   }
+  // Confidence required before a low score actually triggers the supplemental
+  // prompt. Below this the score is still logged; only interrupting the user
+  // warrants the model being sure. Range 0–1; unset uses the built-in 0.4.
+  if (value.minConfidence !== undefined) {
+    if (!probability(value.minConfidence)) throw new Error('Invalid self-check settings');
+    check.minConfidence = value.minConfidence;
+  }
   // Quality-trend alarm thresholds (all unvalidated heuristics, tuned on real logs):
   // a high-confidence low score requires confidence ≥ trendMinConfidence; a run of
   // trendRun such scores raises "warn", trendSevereRun raises "severe".
   if (value.trendMinConfidence !== undefined) {
-    if (typeof value.trendMinConfidence !== 'number' || !Number.isFinite(value.trendMinConfidence) || value.trendMinConfidence < 0 || value.trendMinConfidence > 1) throw new Error('Invalid self-check settings');
+    if (!probability(value.trendMinConfidence)) throw new Error('Invalid self-check settings');
     check.trendMinConfidence = value.trendMinConfidence;
   }
   if (value.trendRun !== undefined) {
@@ -104,7 +138,7 @@ function validNarrow(value) {
     narrow.mode = value.mode;
   }
   if (value.threshold !== undefined) {
-    if (typeof value.threshold !== 'number' || !Number.isFinite(value.threshold) || value.threshold < 0 || value.threshold > 1) throw new Error('Invalid narrowing settings');
+    if (!probability(value.threshold)) throw new Error('Invalid narrowing settings');
     narrow.threshold = value.threshold;
   }
   // Tool name prefixes that are always kept and never judged for relevance, on
@@ -144,10 +178,12 @@ export const FEATURE_KEYS = Object.freeze(['gate', 'check', 'narrow', 'complete'
 
 // Task-completion checking settings: observe-only by default; steer opts into a
 // single supplemental prompt on low completion. minConditions is the minimum
-// number of explicit conditions a turn must have for the check to run at all.
+// number of explicit conditions a turn must have for the check to run at all;
+// minConfidence is how sure the model must be that a condition is unmet before
+// it actually opens the supplemental step.
 function validComplete(value) {
   if (!safeObject(value)) return undefined;
-  if (Object.keys(value).some(key => !['mode', 'minConditions'].includes(key))) throw new Error('Invalid task-completion settings');
+  if (Object.keys(value).some(key => !['mode', 'minConditions', 'minConfidence'].includes(key))) throw new Error('Invalid task-completion settings');
   const complete = {};
   if (value.mode !== undefined) {
     if (value.mode !== 'observe' && value.mode !== 'steer') throw new Error('Invalid task-completion settings');
@@ -156,6 +192,11 @@ function validComplete(value) {
   if (value.minConditions !== undefined) {
     if (!Number.isSafeInteger(value.minConditions) || value.minConditions < 2 || value.minConditions > 20) throw new Error('Invalid task-completion settings');
     complete.minConditions = value.minConditions;
+  }
+  // Range 0–1; unset uses the built-in 0.4.
+  if (value.minConfidence !== undefined) {
+    if (!probability(value.minConfidence)) throw new Error('Invalid task-completion settings');
+    complete.minConfidence = value.minConfidence;
   }
   return complete;
 }
@@ -186,6 +227,7 @@ function view(stored) {
     httpApprovedUrl: safeText(stored.httpApprovedUrl),
   };
   if (stored.dangerRules !== undefined) result.dangerRules = validRules(stored.dangerRules);
+  if (stored.gateSettings !== undefined) result.gateSettings = validGate(stored.gateSettings);
   if (stored.checkSettings !== undefined) result.checkSettings = validCheck(stored.checkSettings);
   if (stored.narrowSettings !== undefined) result.narrowSettings = validNarrow(stored.narrowSettings);
   if (stored.completeSettings !== undefined) result.completeSettings = validComplete(stored.completeSettings);
@@ -207,6 +249,7 @@ export async function resolveConfig({ path = configPath(), env = process.env } =
     httpApprovedUrl: safeText(stored.httpApprovedUrl),
   };
   if (stored.dangerRules !== undefined) resolved.dangerRules = validRules(stored.dangerRules);
+  if (stored.gateSettings !== undefined) resolved.gateSettings = validGate(stored.gateSettings);
   if (stored.checkSettings !== undefined) resolved.checkSettings = validCheck(stored.checkSettings);
   if (stored.narrowSettings !== undefined) resolved.narrowSettings = validNarrow(stored.narrowSettings);
   if (stored.completeSettings !== undefined) resolved.completeSettings = validComplete(stored.completeSettings);
@@ -214,8 +257,17 @@ export async function resolveConfig({ path = configPath(), env = process.env } =
   return resolved;
 }
 
+// Write the configuration atomically. Contract for the nested settings sections
+// (dangerRules, gateSettings, checkSettings, narrowSettings, completeSettings,
+// features): a POSTED section REPLACES the stored one wholesale; an OMITTED
+// section keeps its previous value. So a caller updating one field of a section
+// must send the whole section, and a caller that wants to change a field inside
+// a section it does not own must read first and send `{...previous, edit}`.
+// Merge-per-field was considered and rejected: it would make a stored field
+// impossible to unset. service/manager-api.mjs forwards the raw body, so this
+// contract holds for API clients too, not just the config page.
 export async function saveConfig(input, path = configPath()) {
-  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'checkSettings', 'narrowSettings', 'completeSettings', 'features'].includes(key))) {
+  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'gateSettings', 'checkSettings', 'narrowSettings', 'completeSettings', 'features'].includes(key))) {
     throw new Error('Invalid configuration fields');
   }
   for (const key of ['url', 'apiKey', 'model', 'confirmHttpUrl']) {
@@ -229,6 +281,7 @@ export async function saveConfig(input, path = configPath()) {
     throw new Error('Invalid model or API key');
   }
   const dangerRules = input.dangerRules === undefined ? previous.dangerRules : validRules(input.dangerRules);
+  const gateSettings = input.gateSettings === undefined ? previous.gateSettings : validGate(input.gateSettings);
   const checkSettings = input.checkSettings === undefined ? previous.checkSettings : validCheck(input.checkSettings);
   const narrowSettings = input.narrowSettings === undefined ? previous.narrowSettings : validNarrow(input.narrowSettings);
   const completeSettings = input.completeSettings === undefined ? previous.completeSettings : validComplete(input.completeSettings);
@@ -240,6 +293,7 @@ export async function saveConfig(input, path = configPath()) {
   }
   const next = { url, apiKey, model, httpApprovedUrl: url.startsWith('http://') ? url : '' };
   if (dangerRules !== undefined) next.dangerRules = dangerRules;
+  if (gateSettings !== undefined) next.gateSettings = gateSettings;
   if (checkSettings !== undefined) next.checkSettings = checkSettings;
   if (narrowSettings !== undefined) next.narrowSettings = narrowSettings;
   if (completeSettings !== undefined) next.completeSettings = completeSettings;

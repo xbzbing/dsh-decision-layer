@@ -122,10 +122,23 @@ export async function apply(ctx, options = {}) {
     evaluate: (input, request) => backend.evaluate(input, request),
     sessions,
     rules: async () => normalizeDangerRules((await resolveConfig({ path })).dangerRules),
+    // Live config-backed floor (default 0.7): a `deny` only blocks once the model
+    // is at least this confident. Read per call so an edit takes effect at once.
+    minConfidence: async () => (await resolveConfig({ path })).gateSettings?.minConfidence,
   });
   const loopGuard = createLoopGuard({ sessions });
   // Live per-feature enablement; every decision point defaults to enabled.
-  const featureOn = async key => featureEnabled((await resolveConfig({ path })).features, key);
+  // An invalid config must not fail every tool call: these hooks run inside the
+  // host's tools/pre-execute waterfall, which converts a throw into a failed call
+  // (the tool never dispatches, so `read`/`edit` can no longer repair the file).
+  // An unreadable config therefore degrades to "all features on", and each
+  // decision point keeps its own safe fallback (the gate falls back to 0.7 and
+  // the built-in rules), so the safety net stays armed instead of the agent
+  // losing every tool.
+  const featureOn = async key => {
+    try { return featureEnabled((await resolveConfig({ path })).features, key); }
+    catch { return true; }
+  };
   if (typeof ctx.on === 'function') {
     if (typeof ctx.tools.guard === 'function') {
       // Deterministic loop guard runs with no backend; then the dangerous-gate

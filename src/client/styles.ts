@@ -126,13 +126,14 @@ const css = `
 .decision-config form{display:grid;gap:1rem;margin-top:.8rem}
 .decision-field{display:grid;gap:.4rem;font-size:.82rem;font-weight:600}
 .decision-field .decision-muted{font-weight:400;margin:.1rem 0 0}
-.decision-config input:not([type=checkbox]){box-sizing:border-box;width:100%;min-height:2.4rem;border:1px solid var(--dsw-alias-border-l2,#ccd3da);border-radius:8px;padding:.4rem .7rem;background:var(--dsw-alias-bg-layer-2,#fff);color:inherit;font:inherit;font-weight:400}
-.decision-config input:not([type=checkbox]):disabled{background:var(--dsw-alias-bg-layer-1,#f6f8fa);opacity:.7}
+.decision-config :is(input:not([type=checkbox]),select){box-sizing:border-box;width:100%;min-height:2.4rem;border:1px solid var(--dsw-alias-border-l2,#ccd3da);border-radius:8px;padding:.4rem .7rem;background:var(--dsw-alias-bg-layer-2,#fff);color:inherit;font:inherit;font-weight:400}
+.decision-config :is(input:not([type=checkbox]),select):disabled{background:var(--dsw-alias-bg-layer-1,#f6f8fa);opacity:.7}
 .decision-config textarea{box-sizing:border-box;width:100%;border:1px solid var(--dsw-alias-border-l2,#ccd3da);border-radius:8px;padding:.4rem .7rem;background:var(--dsw-alias-bg-layer-2,#fff);color:inherit;font:inherit;font-weight:400;resize:vertical;min-height:3.4rem}
 .decision-config textarea:disabled{background:var(--dsw-alias-bg-layer-1,#f6f8fa);opacity:.7}
 .decision-field-textarea{margin-top:.7rem}
 .decision-field-inline{margin-top:.7rem}
 .decision-narrow-cap{width:6rem!important}
+.decision-select{width:11rem!important}
 .decision-prefixes{font-family:var(--dsw-alias-font-mono,ui-monospace,SFMono-Regular,Menlo,monospace)!important;line-height:1.5}
 
 .decision-field-block{display:grid;gap:.35rem}
@@ -141,6 +142,11 @@ const css = `
 .decision-advanced-grid{display:grid;grid-template-columns:1fr;gap:1.1rem;align-items:start;justify-content:start}
 .decision-advanced-grid .decision-field-block+.decision-field-block{margin-top:0}
 @container (min-width:34rem){.decision-advanced-grid{grid-template-columns:repeat(2,minmax(0,28rem));column-gap:2rem}}
+/* A block that needs the full row width (the threshold list, the rubric box);
+   its own fields flow into as many columns as fit, so eight numeric fields do
+   not stretch one grid cell to ~50rem of height beside a mostly empty one. */
+.decision-field-block-wide{grid-column:1/-1}
+.decision-threshold-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(13rem,1fr));gap:.9rem 1.6rem;align-items:start}
 .decision-subhead{font-size:.86rem;font-weight:600;color:var(--dsw-alias-label-secondary,#59636e)}
 .decision-toggle{display:flex;align-items:center;justify-content:space-between;gap:1rem;font-size:.86rem;font-weight:600;cursor:pointer}
 .decision-toggle-text{flex:1 1 auto}

@@ -241,3 +241,31 @@ test('manual evaluation through registered tool does not increment automatic met
     assert.equal(serialized.value.attempts, 0);
   } finally { globalThis.fetch = realFetch; }
 });
+
+// Blast-radius guard: the per-feature flag is read inside the host's
+// tools/pre-execute waterfall, where a throw becomes a FAILED tool call (the tool
+// never dispatches, so even `read`/`edit` stop working and the user cannot repair
+// the file). A config that fails validation must therefore degrade to "all
+// features on" and pass the call through, not take the agent's tools away.
+test('an invalid config does not fail tool calls; the gate degrades and passes through', async () => {
+  const path = join(directory, 'invalid-config.json');
+  const { writeFile } = await import('node:fs/promises');
+  // bypasses saveConfig's validation on purpose: this is what a hand-edited file
+  // with a typo or an out-of-range value looks like on disk
+  await writeFile(path, JSON.stringify({ url: 'https://api.typesafe.ai', apiKey: 'k', gateSettings: { minConfidence: 1.5 } }));
+  const listeners = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('the backend must not be reachable through an invalid config'); };
+  try {
+    await apply({ tools: { register: () => {}, guard: () => () => {} }, skills: { register: () => {} },
+      on: (event, listener) => { if (event === 'tools/pre-execute') listeners.push(listener); return () => {}; },
+      effect: setup => setup(), inject: () => {} }, { configPath: path });
+    assert.equal(listeners.length, 1);
+    const exec = { name: 'shell', arguments: { command: 'rm -rf /tmp/build' }, callId: 'invalid-config-call', token: Symbol('token'),
+      signal: AbortSignal.timeout(1000), agent: { session: { id: 'invalid-config-session' } } };
+    // the assertion that matters is that this RESOLVES at all: before the guard,
+    // featureOn re-threw `Invalid gate settings` out of the hook
+    const result = await listeners[0](exec, async () => ({ kind: 'allow' }));
+    assert.equal(result.kind, 'allow', 'an unreadable config degrades to pass-through, not a broken tool call');
+  } finally { globalThis.fetch = realFetch; }
+});

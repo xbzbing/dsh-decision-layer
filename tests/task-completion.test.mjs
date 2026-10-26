@@ -131,3 +131,19 @@ test('a transient steer failure does not consume the turn budget; a later retry 
   assert.equal((await check.review(turn('1. a\n2. b', { turnNo: 7 }))).steered, true, 'same turn can retry after a transient failure');
   assert.equal(attempts, 2);
 });
+
+// The steer confidence floor is config-backed (completeSettings.minConfidence);
+// the constructor argument stays the fallback when the config does not set it.
+test('a configured confidence floor decides whether an unmet condition steers', async () => {
+  const borderline = { answers: { c0: { ...choice('unsatisfied'), confidence: 0.6 }, c1: choice('satisfied') } };
+  const strict = [];
+  const strictCheck = createTaskCompletion({ settings: { mode: 'steer', minConfidence: 0.9 }, steer: () => strict.push('steer'),
+    evaluate: async () => borderline });
+  assert.equal((await strictCheck.review(turn('1. 改配置\n2. 跑测试', { turnNo: 21 }))).steered, false);
+  assert.equal(strict.length, 0);
+  const lenient = [];
+  const lenientCheck = createTaskCompletion({ settings: { mode: 'steer', minConfidence: 0.5 }, steer: () => lenient.push('steer'),
+    evaluate: async () => borderline });
+  assert.equal((await lenientCheck.review(turn('1. 改配置\n2. 跑测试', { turnNo: 22 }))).steered, true);
+  assert.equal(lenient.length, 1);
+});

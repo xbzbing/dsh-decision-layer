@@ -119,6 +119,64 @@ test('per-feature switches are validated, persisted, and default to enabled', as
   assert.equal(featureEnabled(undefined, 'complete'), true, 'completion defaults to enabled');
 });
 
+test('danger-gate settings are validated, persisted, and resolved', async () => {
+  const gateFile = join(temporary, 'gate.json');
+  const saved = await saveConfig({ apiKey: 'k', gateSettings: { minConfidence: 0.55 } }, gateFile);
+  assert.deepEqual(saved.gateSettings, { minConfidence: 0.55 });
+  assert.deepEqual((await resolveConfig({ path: gateFile, env: {} })).gateSettings, { minConfidence: 0.55 });
+  // Both extremes are legal: 0 blocks every deny verdict, 1 only a certain one.
+  assert.equal((await saveConfig({ gateSettings: { minConfidence: 0 } }, gateFile)).gateSettings.minConfidence, 0);
+  assert.equal((await saveConfig({ gateSettings: { minConfidence: 1 } }, gateFile)).gateSettings.minConfidence, 1);
+  await assert.rejects(saveConfig({ gateSettings: { minConfidence: 1.5 } }, gateFile), /gate settings/i);
+  await assert.rejects(saveConfig({ gateSettings: { minConfidence: -0.1 } }, gateFile), /gate settings/i);
+  await assert.rejects(saveConfig({ gateSettings: { minConfidence: '0.5' } }, gateFile), /gate settings/i);
+  await assert.rejects(saveConfig({ gateSettings: { unknown: 1 } }, gateFile), /gate settings/i);
+  assert.deepEqual((await saveConfig({ gateSettings: {} }, gateFile)).gateSettings, {});
+});
+
+test('self-check confidence is validated alongside the other self-check fields', async () => {
+  const checkFile = join(temporary, 'check-confidence.json');
+  const saved = await saveConfig({ apiKey: 'k', checkSettings: { mode: 'steer', minConfidence: 0.55, trendMinConfidence: 0.7, trendRun: 4, trendSevereRun: 6, lowScoreThreshold: 2 } }, checkFile);
+  assert.deepEqual(saved.checkSettings, { mode: 'steer', minConfidence: 0.55, trendMinConfidence: 0.7, trendRun: 4, trendSevereRun: 6, lowScoreThreshold: 2 });
+  assert.deepEqual((await resolveConfig({ path: checkFile, env: {} })).checkSettings, saved.checkSettings);
+  await assert.rejects(saveConfig({ checkSettings: { minConfidence: 2 } }, checkFile), /self-check/i);
+  await assert.rejects(saveConfig({ checkSettings: { minConfidence: 'high' } }, checkFile), /self-check/i);
+  // the severe run must sit strictly above the warn run
+  await assert.rejects(saveConfig({ checkSettings: { trendRun: 5, trendSevereRun: 5 } }, checkFile), /self-check/i);
+});
+
+test('task-completion confidence is validated alongside minConditions', async () => {
+  const completeFile = join(temporary, 'complete-confidence.json');
+  const saved = await saveConfig({ apiKey: 'k', completeSettings: { mode: 'steer', minConditions: 3, minConfidence: 0.45 } }, completeFile);
+  assert.deepEqual(saved.completeSettings, { mode: 'steer', minConditions: 3, minConfidence: 0.45 });
+  assert.deepEqual((await resolveConfig({ path: completeFile, env: {} })).completeSettings, saved.completeSettings);
+  await assert.rejects(saveConfig({ completeSettings: { minConfidence: -1 } }, completeFile), /task-completion/i);
+  await assert.rejects(saveConfig({ completeSettings: { minConfidence: 1.01 } }, completeFile), /task-completion/i);
+});
+
+test('narrowing batchMode is validated, persisted, and resolved', async () => {
+  const batchFile = join(temporary, 'narrow-batch.json');
+  assert.equal((await saveConfig({ apiKey: 'k', narrowSettings: { batchMode: 'split' } }, batchFile)).narrowSettings.batchMode, 'split');
+  assert.equal((await resolveConfig({ path: batchFile, env: {} })).narrowSettings.batchMode, 'split');
+  assert.equal((await saveConfig({ narrowSettings: { batchMode: 'single' } }, batchFile)).narrowSettings.batchMode, 'single');
+  assert.equal((await saveConfig({ narrowSettings: { batchMode: 'auto' } }, batchFile)).narrowSettings.batchMode, 'auto');
+  await assert.rejects(saveConfig({ narrowSettings: { batchMode: 'many' } }, batchFile), /narrowing/i);
+});
+
+test('a flat save leaves untouched sections on disk instead of dropping them', async () => {
+  const flatFile = join(temporary, 'flat.json');
+  await saveConfig({ apiKey: 'k', gateSettings: { minConfidence: 0.5 }, checkSettings: { minConfidence: 0.3 },
+    narrowSettings: { batchMode: 'split' }, completeSettings: { minConfidence: 0.2 } }, flatFile);
+  // saving the backend section alone must not wipe the tuning sections
+  await saveConfig({ model: 'other-model' }, flatFile);
+  const resolved = await resolveConfig({ path: flatFile, env: {} });
+  assert.equal(resolved.model, 'other-model');
+  assert.equal(resolved.gateSettings.minConfidence, 0.5);
+  assert.equal(resolved.checkSettings.minConfidence, 0.3);
+  assert.equal(resolved.narrowSettings.batchMode, 'split');
+  assert.equal(resolved.completeSettings.minConfidence, 0.2);
+});
+
 test('invalid URLs are rejected and missing config has a safe display view', async () => {
   const missing = await loadConfig(join(temporary, 'missing.json'));
   assert.deepEqual(missing, { url: '', model: '', apiKeySet: false, httpApprovedUrl: '' });

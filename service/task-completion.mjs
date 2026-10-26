@@ -74,11 +74,17 @@ export function completionQuestions(conditions, evidence, answer) {
   return { state, questions };
 }
 
+// The confidence floor for interrupting the user with a supplemental prompt.
+// Named rather than inlined because config-store's `completeSettings.minConfidence`
+// and the config form both document this value; a bare literal in three places
+// drifts silently on the next tuning pass.
+export const DEFAULT_MIN_CONFIDENCE = 0.4;
+
 // Orchestrates one task-completion pass at turn end. Read-only by default: it
 // records a per-condition verdict and only steers when explicitly configured,
 // the model is confident, and at least one condition is not satisfied. A steer
 // opens a supplemental step; it never rewrites the already-committed reply.
-export function createTaskCompletion({ evaluate, sessions, steer, settings, minConfidence = 0.4 } = {}) {
+export function createTaskCompletion({ evaluate, sessions, steer, settings, minConfidence = DEFAULT_MIN_CONFIDENCE } = {}) {
   if (typeof evaluate !== 'function') throw new Error('Task completion requires an evaluator');
   const steerOnce = createSteerOnce();
   const resolveSettings = async () => {
@@ -86,7 +92,11 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
     const mode = raw?.mode === 'steer' ? 'steer' : 'observe';
     const minConditions = Number.isSafeInteger(raw?.minConditions) && raw.minConditions >= 2 ? raw.minConditions : 2;
-    return { mode, minConditions };
+    // Confidence required before an unmet condition actually opens the
+    // supplemental step; the constructor argument is the fallback when the
+    // config does not set it.
+    const confidenceFloor = probability(raw?.minConfidence) ? raw.minConfidence : minConfidence;
+    return { mode, minConditions, minConfidence: confidenceFloor };
   };
   const record = (turn, outcome, detail = {}) => {
     const id = turn?.agent?.session?.id;
@@ -100,7 +110,7 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
   return {
     async review(turn) {
       const output = typeof turn?.output === 'string' ? turn.output.trim() : '';
-      const { mode, minConditions } = await resolveSettings();
+      const { mode, minConditions, minConfidence: confidenceFloor } = await resolveSettings();
       const conditions = extractConditions(turn?.userText);
       if (conditions.length < minConditions) return { ...skip };
       const evidence = Array.isArray(turn?.evidence) ? turn.evidence : [];
@@ -139,7 +149,7 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
       const outcome = unsatisfied > 0 ? 'unsatisfied' : 'ok';
       const detail = { conditions: conditions.length, satisfied, unsatisfied, insufficient };
       // A steer is only for a confident finding that a listed condition is not met.
-      const confident = unsatisfied > 0 && unsatisfiedMinConf >= minConfidence;
+      const confident = unsatisfied > 0 && unsatisfiedMinConf >= confidenceFloor;
       // The turn budget is consumed only on a successful steer (createSteerOnce),
       // so a transient host failure does not permanently suppress this turn.
       const steered = mode === 'steer' && confident && typeof steer === 'function' && turn?.agent
