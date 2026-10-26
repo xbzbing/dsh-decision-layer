@@ -11,7 +11,7 @@ const PATH_KEYS = new Set(['path', 'file_path', 'filePath', 'target', 'file', 'f
 const MAX_RULES = 64;
 const MAX_PATTERN_LENGTH = 128;
 const MAX_METADATA_LENGTH = 2048;
-export const MIN_CONFIDENCE = 0.7;
+export const MIN_CONFIDENCE = 0.6;
 
 const isProbability = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 

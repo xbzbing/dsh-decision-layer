@@ -655,7 +655,7 @@ test('the posted advanced body is accepted by the real config store and round-tr
     const file = join(dir, 'config.json');
     await saveConfig(savedBody, file);                     // must not throw
     const persisted = await resolveConfig({ path: file, env: {} });
-    assert.equal(persisted.gateSettings.minConfidence, 0.7);
+    assert.equal(persisted.gateSettings.minConfidence, 0.6);
     assert.equal(persisted.checkSettings.trendSevereRun, 7);
     assert.equal(persisted.checkSettings.minConfidence, 0.4);
     assert.equal(persisted.checkSettings.rubric.length, 3);

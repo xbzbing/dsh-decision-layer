@@ -148,6 +148,6 @@ test('a broken confidence resolver falls back to the built-in floor, never to bl
   for (const resolver of broken) {
     const gate = createDangerGate({ evaluate: async () => borderline, minConfidence: resolver });
     assert.equal(await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), undefined,
-      'an invalid floor must fall back to 0.7, not to 0 (which would block every deny)');
+      'an invalid floor must fall back to the 0.6 default, not to 0 (which would block every deny)');
   }
 });

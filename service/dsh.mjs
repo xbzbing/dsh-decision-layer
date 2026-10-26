@@ -122,7 +122,7 @@ export async function apply(ctx, options = {}) {
     evaluate: (input, request) => backend.evaluate(input, request),
     sessions,
     rules: async () => normalizeDangerRules((await resolveConfig({ path })).dangerRules),
-    // Live config-backed floor (default 0.7): a `deny` only blocks once the model
+    // Live config-backed floor (default 0.6): a `deny` only blocks once the model
     // is at least this confident. Read per call so an edit takes effect at once.
     minConfidence: async () => (await resolveConfig({ path })).gateSettings?.minConfidence,
   });
@@ -132,7 +132,7 @@ export async function apply(ctx, options = {}) {
   // host's tools/pre-execute waterfall, which converts a throw into a failed call
   // (the tool never dispatches, so `read`/`edit` can no longer repair the file).
   // An unreadable config therefore degrades to "all features on", and each
-  // decision point keeps its own safe fallback (the gate falls back to 0.7 and
+  // decision point keeps its own safe fallback (the gate falls back to 0.6 and
   // the built-in rules), so the safety net stays armed instead of the agent
   // losing every tool.
   const featureOn = async key => {

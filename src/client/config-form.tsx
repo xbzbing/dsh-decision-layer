@@ -45,7 +45,7 @@ const DEFAULT_RUBRIC = [
 // lowScore, trendMin/trendRun/trendSevere), task-completion.mjs (completeMin,
 // minConditions).
 const THRESHOLD_DEFAULTS = {
-  gateMin: 0.7, checkMin: 0.4, lowScore: 1, trendMin: 0.6, trendRun: 3, trendSevere: 5,
+  gateMin: 0.6, checkMin: 0.4, lowScore: 1, trendMin: 0.6, trendRun: 3, trendSevere: 5,
   completeMin: 0.4, minConditions: 2,
 };
 type ThresholdKey = keyof typeof THRESHOLD_DEFAULTS;

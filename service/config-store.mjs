@@ -62,7 +62,7 @@ function validRules(value) {
 // `deny`, so minConfidence is the single knob that decides how sure the model
 // must be before a dangerous call is actually blocked. Lowering it makes the
 // gate block more (and risk blocking legitimate commands); raising it makes it
-// pass more through. Range 0–1; unset uses the built-in 0.7.
+// pass more through. Range 0–1; unset uses the built-in 0.6.
 //
 // Like every sibling validator, an unknown field or an out-of-range value is
 // REJECTED rather than ignored, which makes the whole resolve reject (see the
