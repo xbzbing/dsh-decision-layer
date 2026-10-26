@@ -4,7 +4,7 @@
 
 DeepSeek Harness（DSH）的结构化裁决插件。它把有明确判断标准的问题交给同协议的裁决后端，供 agent 在需要时使用，并在 agent loop 上接入危险门控、产出自检、工具收窄和防循环等自动介入。
 
-> **0.6.4 是体验版。** 插件功能已可用，但裁决介入能带来多少实际价值仍在探索中——各决策点的阈值都是未经验证的启发式默认值，建议先以观察心态体验，别当成经过验证的效果保证。功能与后续进度以 [ROADMAP.md](<ROADMAP.md>) 为准。
+> **0.7.0 是体验版。** 插件功能已可用，但裁决介入能带来多少实际价值仍在探索中——各决策点的阈值都是未经验证的启发式默认值，建议先以观察心态体验，别当成经过验证的效果保证。功能与后续进度以 [ROADMAP.md](<ROADMAP.md>) 为准。
 
 ## 安装
 
@@ -60,4 +60,4 @@ dsh plugin --profile web add file:/绝对路径/dsh-decision-layer
 
 **构建产物不入库**（[ADR-0012](<docs/adr/0012-distribution-via-github-actions.md>)）：`lib/` 已被 `.gitignore` 覆盖，源码是唯一事实来源。发布由 GitHub Actions 的 `release.yml` 完成——构建、跑门禁、`npm pack`，并用 `scripts/assert-pack.mjs` 断言产物里确实有 `lib/client.js` 且没有源码泄漏，之后才发 npm / 建 Release。该 workflow 只手动触发且默认 `dry_run=true`，误点不会发版。
 
-架构决策记录见 [docs/adr/](<docs/adr/README.md>)：每条规则为什么存在、当时放弃了哪些备选。0.6.4 为体验版：介入能力已可用，但实际价值与阈值仍在探索，欢迎反馈决策日志观察到的误判与体感。
+架构决策记录见 [docs/adr/](<docs/adr/README.md>)：每条规则为什么存在、当时放弃了哪些备选。0.7.0 为体验版：介入能力已可用，但实际价值与阈值仍在探索，欢迎反馈决策日志观察到的误判与体感。
