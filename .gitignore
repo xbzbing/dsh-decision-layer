@@ -1,8 +1,11 @@
 node_modules/
 dist/
-lib/*
-!lib/client.js
+# Build output — not committed (docs/adr/0012). The release pipeline builds it
+# before `npm pack`; `npm run build:client` builds it locally.
+lib/
 *.log
 .DS_Store
 *.tsbuildinfo
 docs/local/
+# Packed tarballs are produced locally / by CI, never committed.
+*.tgz

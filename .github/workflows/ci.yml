@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check (node ${{ matrix.node }})
+    # Pinned rather than `ubuntu-latest`: a silent image migration moves the
+    # Node/npm baseline the tests sit on. Bump this line deliberately.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json engines: >=20.11. Node 20 is retired on hosted runners,
+        # so the floor is covered by 22.
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `lib/` is not committed (docs/adr/0012), so the client bundle is built
+      # here. `build:client` also runs `tsc` in strict mode — there is no
+      # separate typecheck step because the bundle build *is* the typecheck.
+      - name: Build client bundle and typecheck
+        run: npm ci && npm run build:client
+
+      - name: Tests
+        run: npm test

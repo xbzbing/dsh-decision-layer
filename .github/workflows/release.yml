@@ -1,0 +1,164 @@
+name: release
+
+# Manual only, and DRY BY DEFAULT (docs/adr/0012).
+#
+# Dispatching this workflow builds, gates and packs the tarball, asserts its
+# contents, then stops. Nothing is tagged, published to npm, or released unless
+# `dry_run` is explicitly turned off — and even then `confirm_version` must equal
+# the version in package.json. The tag and the npm publish are irreversible, so
+# they require a deliberate second signal rather than one click.
+#
+# Deliberately NOT triggered by a package.json push: bumping a dependency or a
+# script would otherwise start a release.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只构建 + 校验 + 打包；不 tag、不发布 npm、不建 Release'
+        type: boolean
+        default: true
+      confirm_version:
+        description: 'dry_run=false 时必填，必须等于 package.json 的 version'
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: write   # push the tag, create / edit the Release
+  id-token: write   # npm provenance / Trusted Publishing
+
+# One release at a time; never cancel halfway (npm publish is not transactional
+# with the tag or the Release that follows it).
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+          cache: npm
+          registry-url: 'https://registry.npmjs.org'
+
+      # Read what already happened for this version before spending a minute on a
+      # gate that may not be needed. A hyphen in the version marks a prerelease:
+      # it goes to GitHub only, never to npm.
+      - id: state
+        name: Release state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          V=$(node -p "require('./package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          case "$V" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          git ls-remote --exit-code --tags origin "refs/tags/v$V" >/dev/null 2>&1 && echo "tag=done" >> "$GITHUB_OUTPUT" || true
+          gh release view "v$V" >/dev/null 2>&1 && echo "gh=done" >> "$GITHUB_OUTPUT" || true
+          if [ "${V#*-}" = "$V" ]; then
+            npm view "dsh-decision-layer@$V" version >/dev/null 2>&1 && echo "npm=done" >> "$GITHUB_OUTPUT" || true
+          else
+            echo "npm=skipped" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The release body ships with the release commit so it is reviewed like the
+      # code, and a missing file fails BEFORE the irreversible npm step.
+      - id: notes
+        name: Release notes
+        run: |
+          set -euo pipefail
+          V="${{ steps.state.outputs.version }}"
+          FILE="docs/releases/v$V.md"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::$FILE is missing — write it from docs/releases/README.md and commit it with the version bump"
+            exit 1
+          fi
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+
+      # `lib/` is not committed, so the bundle must be built before packing; the
+      # assertion is what turns "forgot to build" from a silent broken release
+      # into a failed pipeline.
+      - name: Gate (build + tests + pack + assert)
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run check
+          npm pack
+          node scripts/assert-pack.mjs "dsh-decision-layer-$(node -p "require('./package.json').version").tgz"
+
+      - name: Refuse to publish without a matching confirmation
+        if: inputs.dry_run == false
+        env:
+          EXPECTED: ${{ steps.state.outputs.version }}
+          CONFIRMED: ${{ inputs.confirm_version }}
+        run: |
+          set -euo pipefail
+          if [ "$CONFIRMED" != "$EXPECTED" ]; then
+            echo "::error::confirm_version must equal the package.json version ($EXPECTED)"
+            exit 1
+          fi
+
+      - name: Dry run summary
+        if: inputs.dry_run == true
+        env:
+          TAG: ${{ steps.state.outputs.tag }}
+          GH: ${{ steps.state.outputs.gh }}
+          NPM: ${{ steps.state.outputs.npm }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.state.outputs.version }}"
+          echo "dry_run: nothing was published"
+          echo "  version:      $V"
+          echo "  prerelease:   ${{ steps.state.outputs.prerelease }}"
+          echo "  tag exists:   ${TAG:-no}"
+          echo "  npm exists:   ${NPM:-no}"
+          echo "  release exists: ${GH:-no}"
+          echo "  tarball:      $(ls -1 dsh-decision-layer-*.tgz)"
+
+      - name: Tag
+        if: inputs.dry_run == false && steps.state.outputs.tag != 'done'
+        run: |
+          set -euo pipefail
+          V="${{ steps.state.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$V" -m "v$V"
+          git push origin "refs/tags/v$V"
+
+      # Trusted Publishing (OIDC) is preferred; to fall back, add an NPM_TOKEN
+      # secret. Prereleases never reach this step.
+      - name: Publish to npm
+        if: inputs.dry_run == false && steps.state.outputs.prerelease != 'true' && steps.state.outputs.npm != 'done'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.state.outputs.version }}"
+          npm publish "dsh-decision-layer-$V.tgz" --provenance --access public
+
+      - name: GitHub Release
+        if: inputs.dry_run == false && steps.state.outputs.gh != 'done'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          V="${{ steps.state.outputs.version }}"
+          if [ "${{ steps.state.outputs.prerelease }}" = "true" ]; then
+            CHANNEL=(--prerelease)
+          else
+            CHANNEL=(--latest)
+          fi
+          if gh release view "v$V" >/dev/null 2>&1; then
+            gh release edit "v$V" --title "v$V" --notes-file "${{ steps.notes.outputs.file }}" "${CHANNEL[@]}"
+          else
+            gh release create "v$V" "dsh-decision-layer-$V.tgz" \
+              --title "v$V" --notes-file "${{ steps.notes.outputs.file }}" "${CHANNEL[@]}"
+          fi
