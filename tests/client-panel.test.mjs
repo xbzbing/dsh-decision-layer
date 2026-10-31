@@ -178,7 +178,8 @@ test('narrow log marks a vetoed enforce pass as not applied', async () => {
     if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
       narrow: { attempts: 1, failures: 0, applied: 0, dropped: 5 } });
     if (String(url).includes('/log?')) return envelope({ entries: [
-      { at: 1_700_000_005_000, kind: 'narrow', outcome: 'applied', mode: 'enforce', dropped: 5, kept: 3, applied: false },
+      // The server's low-keep shape: a drop was computed, then vetoed.
+      { at: 1_700_000_005_000, kind: 'narrow', outcome: 'applied', mode: 'enforce', dropped: 5, kept: 3, applied: false, reason: 'low-keep' },
     ] });
     if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
     throw new Error(`Unexpected URL ${url}`);
@@ -186,7 +187,26 @@ test('narrow log marks a vetoed enforce pass as not applied', async () => {
   const view = render(React.createElement(Panel, { sessionId: 'narrow-vetoed', t: translate }));
   fireEvent.click(view.getByRole('button', { name: /决策层/ }));
   const row = (await view.findByText(/摘除 5/)).closest('li') ?? (await view.findByText(/摘除 5/)).parentElement;
-  assert.match(row.textContent, /未生效/);
+  assert.match(row.textContent, /保留过少/);
+  assert.equal((row.textContent.match(/未生效/g) ?? []).length, 1, 'the veto is stated once, by the mode tag');
+  assert.doesNotMatch(row.textContent, /已生效/);
+});
+
+test('narrow log reads a legacy low-keep row without an applied field as not applied', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
+      narrow: { attempts: 1, failures: 0, applied: 0, dropped: 5 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { at: 1_700_000_006_000, kind: 'narrow', outcome: 'applied', mode: 'enforce', dropped: 5, kept: 3, reason: 'low-keep' },
+    ] });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'narrow-legacy-vetoed', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  const row = (await view.findByText(/摘除 5/)).closest('li') ?? (await view.findByText(/摘除 5/)).parentElement;
+  assert.equal((row.textContent.match(/未生效/g) ?? []).length, 1, 'a row logged before applied existed is still read as not applied');
   assert.doesNotMatch(row.textContent, /已生效/);
 });
 

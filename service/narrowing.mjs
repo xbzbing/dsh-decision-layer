@@ -1,5 +1,14 @@
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const probability = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+
+// Whether a narrowing pass actually restricted the tool set. `applied` is the
+// authoritative field; a vetoed pass (low-keep, too many candidates) is never
+// applied, and rows logged before `applied` existed are read from their reason.
+export const narrowApplied = record => {
+  if (record?.applied === false) return false;
+  if (record?.reason === 'low-keep' || record?.reason === 'too-many-candidates') return false;
+  return record?.applied === true || record?.outcome === 'applied';
+};
 const MAX_STATE = 8 * 1024;
 // The adjudication backend hard-rejects a request carrying more than 64 questions
 // (backend.mjs validateRequest). One relevance question is sent per optional tool,
@@ -37,11 +46,12 @@ export const DEFAULT_KEEP_PREFIXES = Object.freeze(['mcp__openviking']);
 // keep-prefix matches); the never-strip-everything guard must count them, or
 // dropping every optional tool would be vetoed even though those tools remain.
 // Drop threshold: a tool is dropped only when its relevance probability is below
-// this value (noul < threshold). The default 0.7 leans aggressive — only tools
-// the model rates as fairly relevant survive, so the surface stays small. A noul
-// near 0.5 means the model is unsure and is dropped under this default; lower the
+// this value (noul < threshold). The default leans aggressive — only tools the
+// model rates as fairly relevant survive, so the surface stays small. A noul near
+// 0.5 means the model is unsure and is dropped under this default; lower the
 // threshold to keep such may-need tools.
-export function narrowTools(allowed, result, { threshold = 0.7, keepBase = 0 } = {}) {
+export const DEFAULT_NARROW_THRESHOLD = 0.7;
+export function narrowTools(allowed, result, { threshold = DEFAULT_NARROW_THRESHOLD, keepBase = 0 } = {}) {
   const tools = Array.isArray(allowed) ? allowed.filter(name => typeof name === 'string') : [];
   const answers = isObject(result?.answers) ? result.answers : undefined;
   if (tools.length === 0 || !answers) return { applied: false, keep: [...tools], drop: [] };
@@ -102,7 +112,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     let raw = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
     const mode = raw?.mode === 'observe' ? 'observe' : 'enforce';
-    const threshold = typeof raw?.threshold === 'number' && Number.isFinite(raw.threshold) && raw.threshold >= 0 && raw.threshold <= 1 ? raw.threshold : 0.7;
+    const threshold = typeof raw?.threshold === 'number' && Number.isFinite(raw.threshold) && raw.threshold >= 0 && raw.threshold <= 1 ? raw.threshold : DEFAULT_NARROW_THRESHOLD;
     const batchMode = raw?.batchMode === 'single' || raw?.batchMode === 'split' ? raw.batchMode : 'auto';
     // An explicit array in settings (including empty) overrides the default set.
     const prefixes = Array.isArray(raw?.keepPrefixes)
@@ -118,7 +128,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
   const record = (turn, outcome, detail = {}) => {
     const id = turn?.agent?.session?.id;
     if (!sessions || typeof id !== 'string') return;
-    try { if (typeof sessions.recordNarrow === 'function') sessions.recordNarrow(id, outcome, detail.dropped ?? 0); }
+    try { if (typeof sessions.recordNarrow === 'function') sessions.recordNarrow(id, outcome, detail.dropped ?? 0, narrowApplied({ ...detail, outcome })); }
     catch { /* telemetry is best effort */ }
     if (typeof sessions.log !== 'function') return;
     try { sessions.log(id, { kind: 'narrow', outcome, ...detail }); }

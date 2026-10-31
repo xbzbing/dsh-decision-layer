@@ -1,5 +1,6 @@
 import { createReadableStream } from './log-read.mjs';
 import { advanceRun, severityOf } from './quality-trend.mjs';
+import { narrowApplied } from './narrowing.mjs';
 
 // Offline analysis over the persisted decision JSONL logs. Pure aggregation:
 // given a stream of records (decision events + annotation events) for one
@@ -75,7 +76,7 @@ export function buildProfile(decisions) {
       if (cb) bucket.confidence[cb]++;
     } else if (kind === 'narrow') {
       if (record.outcome === 'error') bucket.error++;
-      else if (record.outcome === 'applied') bucket.applied++;
+      else if (narrowApplied(record)) bucket.applied++;
       if (Number.isSafeInteger(record.dropped) && record.dropped > 0) bucket.droppedSum += record.dropped;
       if (record.reason === 'too-many-candidates') bucket.tooManyCandidates++;
     } else if (kind === 'complete') {
@@ -196,7 +197,7 @@ export function buildSeed(decisions, { maxLog = 50, trendConfig = {} } = {}) {
       }
     } else if (record.kind === 'narrow') {
       if (record.outcome === 'applied') {
-        bucket.applied++;
+        if (narrowApplied(record)) bucket.applied++;
         if (Number.isSafeInteger(record.dropped) && record.dropped > 0) bucket.dropped += record.dropped;
       }
     } else if (record.kind === 'complete') {
@@ -234,9 +235,9 @@ export async function reconstructSessionSeed(sessionId, { dir, port, trendConfig
 // Read one session's persisted decision rows and return a single newest-first
 // page. Backs the analysis tab's full decision log (the dock panel still shows
 // only the in-memory recent rows). Decisions are folded by id (latest wins) so a
-// re-logged id is not double-counted. Rows carry only the panel fields — tool
-// name, outcome, counts — never gate command/path, which is never logged. The
-// internal sessionId tag is stripped before the row leaves the server.
+// re-logged id is not double-counted. Rows carry only the panel fields, including
+// the gate's redacted, length-bounded command/path. The internal sessionId tag is
+// stripped before the row leaves the server.
 export async function listSessionDecisions(sessionId, { dir, port, page = 1, pageSize = 100, readStream = createReadableStream } = {}) {
   if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('Invalid session id');
   const size = Number.isSafeInteger(pageSize) && pageSize > 0 && pageSize <= 500 ? pageSize : 100;

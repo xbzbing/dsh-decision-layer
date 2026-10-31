@@ -172,14 +172,16 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       }
       bump(sessionKey(id), state);
     },
-    recordNarrow(id, outcome, dropped = 0) {
+    recordNarrow(id, outcome, dropped = 0, applied = outcome === 'applied') {
       if (!['ok', 'applied', 'error'].includes(outcome)) throw new Error('Invalid narrowing outcome');
       const state = writable(id);
       state.attempts++;
       state.narrow.attempts++;
       if (outcome === 'error') { state.failures++; state.narrow.failures++; }
       else if (outcome === 'applied') {
-        state.narrow.applied++;
+        // A vetoed pass (low-keep, too many candidates) still dropped tools on
+        // paper, but the restriction never took effect; only count real ones.
+        if (applied) state.narrow.applied++;
         if (Number.isSafeInteger(dropped) && dropped > 0) state.narrow.dropped += dropped;
       }
       bump(sessionKey(id), state);
