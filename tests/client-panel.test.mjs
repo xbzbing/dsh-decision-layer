@@ -133,6 +133,43 @@ test('narrow log with too-many-candidates shows the count once and no duplicate 
   assert.equal((row.textContent.match(/仅观察/g) ?? []).length, 1, 'the final mode tag shows observe once');
 });
 
+test('narrow log does not claim an enforced pass when nothing was dropped', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
+      narrow: { attempts: 1, failures: 0, applied: 0, dropped: 0 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { at: 1_700_000_004_000, kind: 'narrow', outcome: 'ok', mode: 'enforce', dropped: 0, kept: 80, applied: false },
+    ] });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'narrow-no-drop', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  const row = (await view.findByText(/保留 80/)).closest('li') ?? (await view.findByText(/保留 80/)).parentElement;
+  // nothing was dropped, so the pass neither enforced nor failed to enforce
+  assert.doesNotMatch(row.textContent, /已生效/);
+  assert.doesNotMatch(row.textContent, /未生效/);
+});
+
+test('narrow log marks a vetoed enforce pass as not applied', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 1, failures: 0,
+      narrow: { attempts: 1, failures: 0, applied: 0, dropped: 5 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { at: 1_700_000_005_000, kind: 'narrow', outcome: 'applied', mode: 'enforce', dropped: 5, kept: 3, applied: false },
+    ] });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'narrow-vetoed', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  const row = (await view.findByText(/摘除 5/)).closest('li') ?? (await view.findByText(/摘除 5/)).parentElement;
+  assert.match(row.textContent, /未生效/);
+  assert.doesNotMatch(row.textContent, /已生效/);
+});
+
 test('config form discloses HTTPS destination and clears password draft on unmount', async () => {
   globalThis.fetch = async url => {
     if (String(url).endsWith('/config')) return envelope({ url: 'https://custom.test', model: 'jev-latest', apiKeySet: false,

@@ -33,15 +33,19 @@ export const DEFAULT_KEEP_PREFIXES = Object.freeze(['mcp__openviking']);
 // Intersect the host-allowed tool set with the model's relevance verdict. Only
 // removes tools; never adds. Any missing or invalid noul keeps the tool, and a
 // verdict that would strip everything is skipped so the agent is never disabled.
+// `keepBase` is the number of always-kept tools outside `allowed` (core tools and
+// keep-prefix matches); the never-strip-everything guard must count them, or
+// dropping every optional tool would be vetoed even though those tools remain.
 // Drop threshold: a tool is dropped only when its relevance probability is below
 // this value (noul < threshold). The default 0.7 leans aggressive — only tools
 // the model rates as fairly relevant survive, so the surface stays small. A noul
 // near 0.5 means the model is unsure and is dropped under this default; lower the
 // threshold to keep such may-need tools.
-export function narrowTools(allowed, result, { threshold = 0.7 } = {}) {
+export function narrowTools(allowed, result, { threshold = 0.7, keepBase = 0 } = {}) {
   const tools = Array.isArray(allowed) ? allowed.filter(name => typeof name === 'string') : [];
   const answers = isObject(result?.answers) ? result.answers : undefined;
   if (tools.length === 0 || !answers) return { applied: false, keep: [...tools], drop: [] };
+  const base = Number.isSafeInteger(keepBase) && keepBase > 0 ? keepBase : 0;
 
   const keep = [];
   const drop = [];
@@ -50,7 +54,7 @@ export function narrowTools(allowed, result, { threshold = 0.7 } = {}) {
     if (isObject(answer) && answer.type === 'noul' && probability(answer.noul) && answer.noul < threshold) drop.push(name);
     else keep.push(name);
   }
-  if (drop.length === 0 || keep.length === 0) return { applied: false, keep: [...tools], drop: [] };
+  if (drop.length === 0 || keep.length + base === 0) return { applied: false, keep: [...tools], drop: [] };
   return { applied: true, keep, drop };
 }
 
@@ -193,14 +197,14 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
           }
         }
       }
-      const narrowed = narrowTools(judgedNames, result, { threshold });
+      const narrowed = narrowTools(judgedNames, result, { threshold, keepBase: keptNames.length });
       const keep = [...keptNames, ...narrowed.keep];
       const drop = narrowed.drop;
       // C: too few tools left over is a sign the verdict over-pruned; do not apply.
       const trustworthy = keep.length >= minKeep;
       const applied = narrowed.applied && trustworthy && !overCap && mode === 'enforce';
       const dropped = drop.length;
-      const detail = { dropped, kept: keep.length, mode: effectiveMode, tools: drop };
+      const detail = { dropped, kept: keep.length, mode: effectiveMode, tools: drop, applied };
       // The optional-candidate count (excludes core tools and keep-prefix matches),
       // recorded so the "too many candidates" reason shows the number that tripped it.
       if (overCap) { detail.reason = 'too-many-candidates'; detail.candidates = optional.length; }

@@ -30,6 +30,16 @@ test('narrowing that would drop every tool is skipped to avoid disabling the age
   assert.deepEqual(result.keep.sort(), ['bash', 'read']);
 });
 
+test('dropping every judged tool applies when always-kept tools remain', () => {
+  // The caller keeps core/prefix tools outside this set; a verdict that drops all
+  // optional tools is not "disabling the agent" and must not be vetoed.
+  const result = narrowTools(['web_search', 'weather'], answers({ web_search: 0.01, weather: 0.02 }),
+    { threshold: 0.7, keepBase: 3 });
+  assert.equal(result.applied, true);
+  assert.deepEqual(result.keep, []);
+  assert.deepEqual(result.drop.sort(), ['weather', 'web_search']);
+});
+
 test('a tool missing from the answers is conservatively kept', () => {
   const result = narrowTools(['read', 'bash', 'write'], answers({ read: 0.9, bash: 0.1 }), { threshold: 0.5 });
   assert.equal(result.keep.includes('write'), true);
@@ -75,7 +85,23 @@ test('createNarrowing records observe suggestions without claiming to enforce', 
   assert.equal(result.evaluated, true);
   assert.equal(result.mode, 'observe');
   assert.deepEqual(result.drop, ['image_gen']);
-  assert.deepEqual(logs.at(-1), { kind: 'narrow', outcome: 'applied', dropped: 1, kept: 2, mode: 'observe', tools: ['image_gen'] });
+  assert.deepEqual(logs.at(-1), { kind: 'narrow', outcome: 'applied', dropped: 1, kept: 2, mode: 'observe', tools: ['image_gen'], applied: false });
+});
+
+test('all optional tools judged irrelevant are dropped while core tools remain', async () => {
+  // Regression: with an aggressive threshold the model can rate every optional
+  // tool below it. That used to trip narrowTools' never-empty guard on the
+  // optional subset alone, vetoing the whole pass and keeping all 80 tools.
+  const check = createNarrowing({ settings: { mode: 'enforce', threshold: 0.7 }, minKeep: 1,
+    coreTools: ['read', 'bash'],
+    evaluate: async () => answers({ web_search: 0.01, weather: 0.02 }) });
+  const result = await check.review(turn('read the file and edit it', [
+    { name: 'read', description: '' }, { name: 'bash', description: '' },
+    { name: 'web_search', description: '' }, { name: 'weather', description: '' },
+  ]));
+  assert.equal(result.applied, true, 'core tools still keep the agent usable');
+  assert.deepEqual(result.keep.sort(), ['bash', 'read']);
+  assert.deepEqual(result.drop.sort(), ['weather', 'web_search']);
 });
 
 test('createNarrowing in enforce mode reports the kept set for the caller to restrict', async () => {

@@ -83,7 +83,14 @@ function renderNarrow({ t }: RowProps, entry: LogEntry) {
     ? (typeof entry.candidates === 'number' ? t('reasonTooManyCount', { count: entry.candidates }) : t('reasonTooMany'))
     : entry.reason === 'low-keep' ? t('reasonLowKeep') : undefined;
   const guard = guardText ? <span className="decision-log-detail"> · {guardText}</span> : null;
-  const modeTag = <span className="decision-log-detail"> · {entry.mode === 'enforce' ? t('narrowEnforce') : t('narrowObserve')}</span>;
+  // The mode tag says what actually happened to this pass, not merely the
+  // configured mode: observe never restricts, a drop that was vetoed (e.g. by the
+  // low-keep guard) did not apply, and a pass that dropped nothing has nothing to
+  // enforce, so it carries no mode tag.
+  const modeTag = entry.mode === 'observe'
+    ? <span className="decision-log-detail"> · {t('narrowObserve')}</span>
+    : dropped === 0 ? null
+    : <span className="decision-log-detail"> · {entry.applied === false ? t('narrowNotApplied') : t('narrowEnforce')}</span>;
   if (dropped === 0) {
     return <>{label} · <span className="decision-log-verdict">{t('narrowKept')}</span>{kept !== undefined ? <span className="decision-log-detail"> · {t('narrowKeptCount')} {kept}</span> : null}{guard}{modeTag}</>;
   }

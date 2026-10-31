@@ -227,6 +227,7 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       if (typeof entry.confidence === 'number' && Number.isFinite(entry.confidence)) record.confidence = Math.round(entry.confidence * 100) / 100;
       if (Number.isSafeInteger(entry.dropped) && entry.dropped >= 0) record.dropped = entry.dropped;
       if (Number.isSafeInteger(entry.kept) && entry.kept >= 0) record.kept = entry.kept;
+      if (typeof entry.applied === 'boolean') record.applied = entry.applied;
       if (Number.isSafeInteger(entry.candidates) && entry.candidates >= 0) record.candidates = entry.candidates;
       if (Number.isSafeInteger(entry.conditions) && entry.conditions >= 0) record.conditions = entry.conditions;
       if (Number.isSafeInteger(entry.satisfied) && entry.satisfied >= 0) record.satisfied = entry.satisfied;
