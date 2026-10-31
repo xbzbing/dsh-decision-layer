@@ -1,34 +1,27 @@
 name: release
 
-# Manual only, and DRY BY DEFAULT (docs/adr/0012).
+# Release on a version bump (ADR-0014). A push to main that changes package.json
+# runs the full gate; if the version in that manifest is new, the run tags the
+# commit, publishes to npm through Trusted Publishing (OIDC), and opens a GitHub
+# Release with the same tarball. A package.json change that leaves the version
+# alone is a no-op: the tag, npm version, and Release already exist.
 #
-# Dispatching this workflow builds, gates and packs the tarball, asserts its
-# contents, then stops. Nothing is tagged, published to npm, or released unless
-# `dry_run` is explicitly turned off — and even then `confirm_version` must equal
-# the version in package.json. The tag and the npm publish are irreversible, so
-# they require a deliberate second signal rather than one click.
-#
-# Deliberately NOT triggered by a package.json push: bumping a dependency or a
-# script would otherwise start a release.
+# Every step checks state first, so a partially completed release can be re-run:
+# an already-published npm version is skipped, an existing tag is not recreated,
+# and an existing Release is edited in place. npm publish sits after the tag and
+# before the Release — it is the only irreversible step.
 on:
+  push:
+    branches: [main]
+    paths: [package.json]
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: '只构建 + 校验 + 打包；不 tag、不发布 npm、不建 Release'
-        type: boolean
-        default: true
-      confirm_version:
-        description: 'dry_run=false 时必填，必须等于 package.json 的 version'
-        type: string
-        required: false
-        default: ''
 
 permissions:
-  contents: write   # push the tag, create / edit the Release
-  id-token: write   # npm provenance / Trusted Publishing
+  contents: write   # push the release tag, create / edit the Release
+  id-token: write   # npm Trusted Publishing (OIDC) + provenance
 
-# One release at a time; never cancel halfway (npm publish is not transactional
-# with the tag or the Release that follows it).
+# One release at a time; never cancel one halfway (npm publish is not
+# transactional with the tag or Release that follows it).
 concurrency:
   group: release
   cancel-in-progress: false
@@ -40,11 +33,20 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # No registry-url / NODE_AUTH_TOKEN on purpose: a .npmrc auth line would
+      # make npm try token auth instead of the OIDC exchange. Trusted Publishing
+      # needs npm >= 11.5.1, which the Node 24 image ships.
       - uses: actions/setup-node@v7
         with:
           node-version: '24.x'
           cache: npm
-          registry-url: 'https://registry.npmjs.org'
+
+      - name: npm version
+        run: |
+          set -euo pipefail
+          V=$(npm --version)
+          echo "npm $V"
+          node -e "const [a,b]=process.argv[1].split('.').map(Number); if (a<11||(a===11&&b<5)) { console.error('npm >= 11.5.1 is required for Trusted Publishing'); process.exit(1); }" "$V"
 
       # Read what already happened for this version before spending a minute on a
       # gate that may not be needed. A hyphen in the version marks a prerelease:
@@ -87,6 +89,7 @@ jobs:
       # assertion is what turns "forgot to build" from a silent broken release
       # into a failed pipeline.
       - name: Gate (build + tests + pack + assert)
+        if: steps.state.outputs.npm != 'done' || steps.state.outputs.tag != 'done' || steps.state.outputs.gh != 'done'
         run: |
           set -euo pipefail
           npm ci
@@ -94,37 +97,8 @@ jobs:
           npm pack
           node scripts/assert-pack.mjs "dsh-decision-layer-$(node -p "require('./package.json').version").tgz"
 
-      - name: Refuse to publish without a matching confirmation
-        if: inputs.dry_run == false
-        env:
-          EXPECTED: ${{ steps.state.outputs.version }}
-          CONFIRMED: ${{ inputs.confirm_version }}
-        run: |
-          set -euo pipefail
-          if [ "$CONFIRMED" != "$EXPECTED" ]; then
-            echo "::error::confirm_version must equal the package.json version ($EXPECTED)"
-            exit 1
-          fi
-
-      - name: Dry run summary
-        if: inputs.dry_run == true
-        env:
-          TAG: ${{ steps.state.outputs.tag }}
-          GH: ${{ steps.state.outputs.gh }}
-          NPM: ${{ steps.state.outputs.npm }}
-        run: |
-          set -euo pipefail
-          V="${{ steps.state.outputs.version }}"
-          echo "dry_run: nothing was published"
-          echo "  version:      $V"
-          echo "  prerelease:   ${{ steps.state.outputs.prerelease }}"
-          echo "  tag exists:   ${TAG:-no}"
-          echo "  npm exists:   ${NPM:-no}"
-          echo "  release exists: ${GH:-no}"
-          echo "  tarball:      $(ls -1 dsh-decision-layer-*.tgz)"
-
       - name: Tag
-        if: inputs.dry_run == false && steps.state.outputs.tag != 'done'
+        if: steps.state.outputs.tag != 'done'
         run: |
           set -euo pipefail
           V="${{ steps.state.outputs.version }}"
@@ -133,19 +107,18 @@ jobs:
           git tag -a "v$V" -m "v$V"
           git push origin "refs/tags/v$V"
 
-      # Trusted Publishing (OIDC) is preferred; to fall back, add an NPM_TOKEN
-      # secret. Prereleases never reach this step.
+      # Trusted Publishing: npm exchanges the workflow's OIDC token for a
+      # short-lived publish credential. No NPM_TOKEN secret is involved.
+      # Prereleases never reach this step.
       - name: Publish to npm
-        if: inputs.dry_run == false && steps.state.outputs.prerelease != 'true' && steps.state.outputs.npm != 'done'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: steps.state.outputs.prerelease != 'true' && steps.state.outputs.npm != 'done'
         run: |
           set -euo pipefail
           V="${{ steps.state.outputs.version }}"
           npm publish "dsh-decision-layer-$V.tgz" --provenance --access public
 
       - name: GitHub Release
-        if: inputs.dry_run == false && steps.state.outputs.gh != 'done'
+        if: steps.state.outputs.gh != 'done'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -160,5 +133,5 @@ jobs:
             gh release edit "v$V" --title "v$V" --notes-file "${{ steps.notes.outputs.file }}" "${CHANNEL[@]}"
           else
             gh release create "v$V" "dsh-decision-layer-$V.tgz" \
-              --title "v$V" --notes-file "${{ steps.notes.outputs.file }}" "${CHANNEL[@]}"
+              --title "v$V" --notes-file "${{ steps.notes.outputs.file }}" --verify-tag "${CHANNEL[@]}"
           fi

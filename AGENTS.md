@@ -16,7 +16,7 @@ npm run check               # 两者，提交前必须通过，与 CI 等价
 
 - Host 改动重启 `dsh web` 生效；client 改动必须重建 `lib/client.js` 再刷新页面。
 - 改行为先补/改测试；修 bug 必须带回归测试，不要删测试换绿色。
-- 发布走 `.github/workflows/release.yml`（手动触发、默认 `dry_run=true`），不要手工打 tag 或 `npm publish`；版本号用 `npm version <v> --no-git-tag-version`，同时新增 `docs/releases/v<v>.md`。
+- 发布走 `.github/workflows/release.yml`：版本号变更推入 main 即自动门禁、打 tag、用 OIDC 发 npm 与 Release；不要手工打 tag 或 `npm publish`。版本号用 `npm version <v> --no-git-tag-version`，同时新增 `docs/releases/v<v>.md`。
 
 ## 必须守住的边界
 

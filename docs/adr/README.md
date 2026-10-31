@@ -29,6 +29,7 @@
 | [ADR-0011](0011-observability-persistence.md) | 决策数据落盘：JSONL 日志 + 会话快照 | 数据 |
 | [ADR-0012](0012-distribution-via-github-actions.md) | 产物移出仓库，发布交给 GitHub Actions | 分发 |
 | [ADR-0013](0013-test-and-gate-strategy.md) | 测试与门禁策略 | 工程 |
+| [ADR-0014](0014-release-on-version-bump-with-oidc.md) | 版本变更推入 main 即发布，npm 走 OIDC | 分发 |
 
 ## 有效期
 
@@ -36,6 +37,7 @@ ADR 记录的是**决策与它的有效期**，不是当前实现的快照。当
 
 - **ADR-0001** 关于「只有 client 半有产物」的结论持续有效；其中「产物入库」已退出，由 **ADR-0012** 取代（`lib/` 已移出 main）。
 - **ADR-0006** 标定的默认值全部是**未经验证的启发式**，插件因此仍标为体验版（见 README 顶部）；实测校准后应新写 ADR 记录新值，而不是改这份。
+- **ADR-0012** 的「产物移出仓库、由 CI 构建」持续有效；其中「发布只手动触发、默认 dry run」由 **ADR-0014** 取代（改为版本变更自动触发 + OIDC）。
 
 ## 新增一份 ADR
 

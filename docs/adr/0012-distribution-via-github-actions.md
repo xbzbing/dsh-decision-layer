@@ -1,6 +1,6 @@
 # ADR-0012：产物移出仓库，发布交给 GitHub Actions
 
-- 状态：Accepted（2026-10-26）
+- 状态：Accepted（2026-10-26；发布触发与 npm 凭据部分由 [ADR-0014](0014-release-on-version-bump-with-oidc.md) 取代）
 - 相关：`.github/workflows/ci.yml`、`.github/workflows/release.yml`、`scripts/assert-pack.mjs`、`.gitignore`、`package.json` 的 `files`、README 安装章节、ADR-0001
 
 ## Context
