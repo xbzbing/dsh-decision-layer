@@ -27,8 +27,10 @@ export function AnalysisView({ sessionId, t }: Props) {
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState('');
   // Session-level automatic-intervention switch. null means "still reading";
-  // the control stays disabled until the /session read resolves.
+  // sessionError means the read failed, so the control offers a retry instead of
+  // staying disabled forever.
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [sessionError, setSessionError] = useState(false);
   const [busy, setBusy] = useState(false);
   const { ratings, seed, annotate } = useAnnotations(sessionId, () => setMessage(t('annotateFailed')));
   // The session this mounted view currently shows, checked after an async
@@ -36,16 +38,20 @@ export function AnalysisView({ sessionId, t }: Props) {
   // session's state into the newly shown one.
   const active = useRef(sessionId);
 
+  const loadSession = () => {
+    const session = sessionId;
+    setEnabled(null);
+    setSessionError(false);
+    void request<SessionState>(`session?sessionId=${encodeURIComponent(session)}`)
+      .then(value => { if (active.current === session) setEnabled(value.enabled); })
+      .catch(() => { if (active.current === session) setSessionError(true); });
+  };
+
   useEffect(() => {
     active.current = sessionId;
-    let live = true;
-    setEnabled(null);
     setBusy(false);
     setMessage('');
-    void request<SessionState>(`session?sessionId=${encodeURIComponent(sessionId)}`)
-      .then(value => { if (live) setEnabled(value.enabled); })
-      .catch(() => { if (live) setMessage(t('error')); });
-    return () => { live = false; };
+    loadSession();
   }, [sessionId]);
 
   // The dock panel shows the same switch and can change it while this tab is
@@ -68,6 +74,7 @@ export function AnalysisView({ sessionId, t }: Props) {
   }, [sessionId, seed]);
 
   const toggleEnabled = async () => {
+    if (sessionError) { loadSession(); return; }
     if (enabled === null || busy) return;
     const next = !enabled;
     const session = sessionId;
@@ -80,6 +87,7 @@ export function AnalysisView({ sessionId, t }: Props) {
       });
       if (active.current === session) {
         setEnabled(value.enabled);
+        setMessage('');
         announceSessionEnabled({ sessionId: session, enabled: value.enabled });
       }
     } catch {
@@ -118,12 +126,13 @@ export function AnalysisView({ sessionId, t }: Props) {
           <p className="decision-muted decision-analysis-intro">{t('analysisIntro')}</p>
         </div>
         <button type="button" className="decision-analysis-switch"
-          aria-label={t('enabled')} aria-pressed={enabled === true}
-          aria-busy={enabled === null || busy} disabled={enabled === null || busy}
-          title={enabled === false ? t('analysisDecisionHintOff') : enabled === true ? t('analysisDecisionHintOn') : undefined}
+          aria-pressed={enabled === true}
+          aria-busy={busy || (enabled === null && !sessionError)} disabled={busy || (enabled === null && !sessionError)}
+          title={sessionError ? t('analysisDecisionRetry') : enabled === false ? t('analysisDecisionHintOff') : enabled === true ? t('analysisDecisionHintOn') : undefined}
           onClick={() => void toggleEnabled()}>
           <span className="decision-analysis-switch-dot" aria-hidden="true" />
-          <span>{enabled === null ? t('loading') : enabled ? t('analysisDecisionOn') : t('analysisDecisionOff')}</span>
+          <span>{t('analysisDecisionSwitch')}</span>
+          <span className="decision-analysis-switch-state">{sessionError ? t('analysisDecisionUnavailable') : enabled === null ? t('loading') : enabled ? t('analysisDecisionOn') : t('analysisDecisionOff')}</span>
         </button>
       </header>
 

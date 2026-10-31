@@ -194,7 +194,8 @@ const css = `
 .decision-analysis-switch-dot{flex:0 0 auto;width:.5rem;height:.5rem;border-radius:50%;background:var(--dsw-alias-label-tertiary,#9aa5b1);transition:background .15s,box-shadow .15s}
 .decision-analysis-switch[aria-pressed="true"] .decision-analysis-switch-dot{background:var(--decision-analysis-dot);box-shadow:0 0 0 2px var(--decision-analysis-ring)}
 .decision-analysis-switch:disabled{opacity:.55;cursor:default}
-.decision-analysis-switch:focus-visible{outline:2px solid #1f5d50;outline-offset:2px}
+.decision-analysis-switch-state{font-weight:400;opacity:.8}
+.decision-analysis-switch:focus-visible{outline:2px solid var(--decision-analysis-accent);outline-offset:2px}
 .decision-analysis-section{border-top:1px solid var(--dsw-alias-border-l2,#eceff1);margin-top:1.1rem;padding-top:1rem}
 .decision-analysis-section>h3{font-size:.92rem;margin:0 0 .6rem}
 .decision-analysis-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:.7rem}

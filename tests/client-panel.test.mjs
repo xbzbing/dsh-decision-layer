@@ -637,20 +637,67 @@ test('analysis view enables this session\'s decisions from the header control', 
   const changes = [];
   const record = event => changes.push(event.detail);
   window.addEventListener('dsh-decision-layer:session-enabled', record);
-  const toggle = await view.findByRole('button', { name: '本会话内启用自动介入' });
+  const toggle = await view.findByRole('button', { name: /本会话自动介入/ });
   await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'false'));
   // with decisions off and no history, the empty state explains why nothing new appears
   await view.findByText('本会话的自动介入已关闭。开启后，新的回合才会产生决策记录。');
   fireEvent.click(toggle);
   await waitFor(() => assert.deepEqual(putBody, { sessionId: 'an-toggle', enabled: true }));
   await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'true'));
-  assert.match(toggle.textContent, /本会话决策已开启/);
+  assert.match(toggle.textContent, /本会话自动介入.*已开启/);
   // the confirmed write is broadcast so the dock panel's master switch follows
   assert.deepEqual(changes.at(-1), { sessionId: 'an-toggle', enabled: true });
   // and a change made in the dock panel updates this tab's control
   window.dispatchEvent(new window.CustomEvent('dsh-decision-layer:session-enabled', { detail: { sessionId: 'an-toggle', enabled: false } }));
   await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'false'));
   window.removeEventListener('dsh-decision-layer:session-enabled', record);
+});
+
+test('analysis view offers a retry when the session read fails', async () => {
+  let reads = 0;
+  globalThis.fetch = async url => {
+    const s = String(url);
+    if (s.includes('/session?')) {
+      reads += 1;
+      if (reads === 1) throw new Error('offline');
+      return envelope({ enabled: false });
+    }
+    if (s.includes('/logs?')) return envelope({ totalDecisions: 0, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
+    if (s.includes('/logrows?')) return envelope({ entries: [], total: 0, page: 1, pageSize: 100, pages: 1 });
+    throw new Error(`Unexpected URL ${s}`);
+  };
+  const view = render(React.createElement(AnalysisView, { sessionId: 'an-read-fail', t: translate }));
+  const toggle = await view.findByRole('button', { name: /本会话自动介入/ });
+  await waitFor(() => assert.match(toggle.textContent, /不可用/));
+  assert.equal(toggle.disabled, false, 'a failed read leaves the control clickable so it can retry');
+  fireEvent.click(toggle);
+  await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'false'));
+  assert.match(toggle.textContent, /已关闭/);
+});
+
+test('analysis view reports a failed toggle and clears the error after a successful retry', async () => {
+  let writes = 0;
+  globalThis.fetch = async (url, init) => {
+    const s = String(url);
+    if (s.includes('/session?')) return envelope({ enabled: false });
+    if (s.endsWith('/session') && init?.method === 'PUT') {
+      writes += 1;
+      if (writes === 1) throw new Error('offline');
+      return envelope({ enabled: true });
+    }
+    if (s.includes('/logs?')) return envelope({ totalDecisions: 0, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
+    if (s.includes('/logrows?')) return envelope({ entries: [], total: 0, page: 1, pageSize: 100, pages: 1 });
+    throw new Error(`Unexpected URL ${s}`);
+  };
+  const view = render(React.createElement(AnalysisView, { sessionId: 'an-write-fail', t: translate }));
+  const toggle = await view.findByRole('button', { name: /本会话自动介入/ });
+  await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'false'));
+  fireEvent.click(toggle);
+  await view.findByText('操作失败，请重试。');
+  assert.equal(toggle.getAttribute('aria-pressed'), 'false', 'a failed write leaves the control on its previous state');
+  fireEvent.click(toggle);
+  await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'true'));
+  assert.equal(view.queryByText('操作失败，请重试。'), null, 'a successful write clears the stale error');
 });
 
 test('analysis view ignores a late session toggle after switching sessions', async () => {
@@ -664,7 +711,7 @@ test('analysis view ignores a late session toggle after switching sessions', asy
     throw new Error(`Unexpected URL ${s}`);
   };
   const view = render(React.createElement(AnalysisView, { sessionId: 'one', t: translate }));
-  const toggle = await view.findByRole('button', { name: '本会话内启用自动介入' });
+  const toggle = await view.findByRole('button', { name: /本会话自动介入/ });
   await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'false'));
   fireEvent.click(toggle);
   view.rerender(React.createElement(AnalysisView, { sessionId: 'two', t: translate }));
