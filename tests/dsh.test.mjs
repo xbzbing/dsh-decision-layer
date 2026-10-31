@@ -154,6 +154,38 @@ test('narrowing in observe mode never restricts the agent tools', async () => {
   } finally { globalThis.fetch = realFetch; }
 });
 
+test('a turn with narrowing switched off releases the previous turn restriction', async () => {
+  const path = join(directory, 'narrow-release.json');
+  await saveConfig({ apiKey: 'local-test-key', narrowSettings: { mode: 'enforce', threshold: 0.5 } }, path);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ model: 'jev-latest', answers: {
+    web_search: { type: 'noul', noul: 0.9 }, web_fetch: { type: 'noul', noul: 0.8 }, image_gen: { type: 'noul', noul: 0.05 },
+  } }));
+  const preStep = [];
+  const restrictions = [];
+  let released = 0;
+  try {
+    await apply({ tools: { register: () => {}, guard: () => () => {}, schemas: () => [
+      { name: 'read', description: '' }, { name: 'write', description: '' }, { name: 'edit', description: '' }, { name: 'bash', description: '' },
+      { name: 'web_search', description: '' }, { name: 'web_fetch', description: '' }, { name: 'image_gen', description: '' },
+    ] },
+      skills: { register: () => {} },
+      on: (event, listener) => { if (event === 'agent/pre-step') preStep.push(listener); return () => {}; },
+      effect: setup => setup(), inject: () => {} }, { configPath: path });
+    const agent = { session: { id: 'release-session' }, ctx: { tools: { restrict: filter => { restrictions.push(filter); return () => { released += 1; }; } } } };
+    const step = turn => preStep[0]({ agent, turn, step: 0, signal: AbortSignal.timeout(1000),
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'search the web' }] }] }, async () => ({ kind: 'enter', messages: [] }));
+    await step(1);
+    assert.equal(restrictions.length, 1, 'the first turn restricts');
+    assert.equal(released, 0);
+    // Turning the feature off must not leave the agent-scoped restriction in force.
+    await saveConfig({ apiKey: 'local-test-key', features: { gate: true, check: true, narrow: false, complete: true } }, path);
+    await step(2);
+    assert.equal(released, 1, 'the previous turn restriction is disposed before the feature check');
+    assert.equal(restrictions.length, 1, 'the disabled turn adds no restriction');
+  } finally { globalThis.fetch = realFetch; }
+});
+
 test('per-feature switch off skips a decision point entirely', async () => {
   const path = join(directory, 'features-off.json');
   await saveConfig({ apiKey: 'local-test-key', features: { gate: false, check: false, narrow: false, complete: false } }, path);

@@ -220,22 +220,28 @@ export async function apply(ctx, options = {}) {
       // process, before any gate/check/narrow/complete event mutates them, so a
       // resumed session continues from its saved totals instead of from zero.
       if (typeof id === 'string') await sessions.ensureLoaded(id);
-      if (typeof id === 'string' && Number.isInteger(turn) && await featureOn('narrow')) {
+      if (typeof id === 'string' && Number.isInteger(turn)) {
         const state = narrowedTurns.get(id);
         if (!state || state.turn !== turn) {
+          // Release the previous turn's restriction first: restrict is agent-scoped
+          // and stays in force until disposed, so a turn where narrowing is now off
+          // must not inherit the earlier allow-list.
           state?.dispose?.();
-          const entry = { turn, dispose: undefined };
-          narrowedTurns.set(id, entry);
-          if (narrowedTurns.size > 1024) { const oldest = narrowedTurns.keys().next().value; if (oldest !== id) { narrowedTurns.get(oldest)?.dispose?.(); narrowedTurns.delete(oldest); } }
-          try {
-            const result = await narrowing.review({
-              agent, turn, signal: payload.signal,
-              state: stepTaskText(payload.messages), tools: agentTools(ctx, agent),
-            });
-            if (result.mode === 'enforce' && result.applied && typeof agent?.ctx?.tools?.restrict === 'function') {
-              entry.dispose = agent.ctx.tools.restrict({ allow: result.keep });
-            }
-          } catch { /* narrowing is best effort; never block the step */ }
+          narrowedTurns.delete(id);
+          if (await featureOn('narrow')) {
+            const entry = { turn, dispose: undefined };
+            narrowedTurns.set(id, entry);
+            if (narrowedTurns.size > 1024) { const oldest = narrowedTurns.keys().next().value; if (oldest !== id) { narrowedTurns.get(oldest)?.dispose?.(); narrowedTurns.delete(oldest); } }
+            try {
+              const result = await narrowing.review({
+                agent, turn, signal: payload.signal,
+                state: stepTaskText(payload.messages), tools: agentTools(ctx, agent),
+              });
+              if (result.mode === 'enforce' && result.applied && typeof agent?.ctx?.tools?.restrict === 'function') {
+                entry.dispose = agent.ctx.tools.restrict({ allow: result.keep });
+              }
+            } catch { /* narrowing is best effort; never block the step */ }
+          }
         }
       }
       return next();
