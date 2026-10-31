@@ -25,18 +25,20 @@ export const DEFAULT_CORE_TOOLS = Object.freeze([
 // Tool-name prefixes that are always kept and never judged, on top of the core
 // tools. Memory/context tools like OpenViking are "keep resident, trigger on
 // demand": their relevance rarely shows in the literal task text, so per-tool
-// relevance judging would keep pruning them. `team_task_` covers the shared
-// task-board tools as a group. Users can override this list.
-export const DEFAULT_KEEP_PREFIXES = Object.freeze(['mcp__openviking', 'team_task_']);
+// relevance judging would keep pruning them. Teamwork tools (`team_task_`) are
+// deliberately NOT in this list: they are ordinary task-board capabilities and
+// should be judged like any other optional tool. Users can override this list.
+export const DEFAULT_KEEP_PREFIXES = Object.freeze(['mcp__openviking']);
 
 // Intersect the host-allowed tool set with the model's relevance verdict. Only
 // removes tools; never adds. Any missing or invalid noul keeps the tool, and a
 // verdict that would strip everything is skipped so the agent is never disabled.
-// Drop threshold: a tool is dropped only when the model is fairly confident it
-// is not needed (noul < threshold). Default 0.3 is deliberately conservative —
-// a noul near 0.5 means the model is unsure, and dropping there is the most
-// likely to strip a still-useful tool, so uncertain tools are kept.
-export function narrowTools(allowed, result, { threshold = 0.3 } = {}) {
+// Drop threshold: a tool is dropped only when its relevance probability is below
+// this value (noul < threshold). The default 0.7 leans aggressive — only tools
+// the model rates as fairly relevant survive, so the surface stays small. A noul
+// near 0.5 means the model is unsure and is dropped under this default; lower the
+// threshold to keep such may-need tools.
+export function narrowTools(allowed, result, { threshold = 0.7 } = {}) {
   const tools = Array.isArray(allowed) ? allowed.filter(name => typeof name === 'string') : [];
   const answers = isObject(result?.answers) ? result.answers : undefined;
   if (tools.length === 0 || !answers) return { applied: false, keep: [...tools], drop: [] };
@@ -96,7 +98,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     let raw = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
     const mode = raw?.mode === 'observe' ? 'observe' : 'enforce';
-    const threshold = typeof raw?.threshold === 'number' && Number.isFinite(raw.threshold) && raw.threshold >= 0 && raw.threshold <= 1 ? raw.threshold : 0.3;
+    const threshold = typeof raw?.threshold === 'number' && Number.isFinite(raw.threshold) && raw.threshold >= 0 && raw.threshold <= 1 ? raw.threshold : 0.7;
     const batchMode = raw?.batchMode === 'single' || raw?.batchMode === 'split' ? raw.batchMode : 'auto';
     // An explicit array in settings (including empty) overrides the default set.
     const prefixes = Array.isArray(raw?.keepPrefixes)

@@ -22,7 +22,7 @@
 | `checkSettings` | `lowScoreThreshold` | 1 | 低分线（评分 0–2） |
 | `checkSettings` | `trendMinConfidence` / `trendRun` / `trendSevereRun` | 0.6 / 3 / 5 | 趋势告警门槛 |
 | `checkSettings` | `rubric` | 3 档 | 评分档位（2–10 档） |
-| `narrowSettings` | `threshold` / `maxCandidates` / `batchMode` | 0.3 / 20 / `auto` | 收窄摘除线、候选上限、分批策略 |
+| `narrowSettings` | `threshold` / `maxCandidates` / `batchMode` | 0.7 / 20 / `auto` | 收窄摘除线、候选上限、分批策略 |
 | `completeSettings` | `minConfidence` / `minConditions` | 0.4 / 2 | 完成核对补完置信度、最少条件数 |
 
 - 概率类一律 `[0, 1]`，整数类给出闭区间；跨字段约束（`trendSevereRun > trendRun`）在服务端校验、配置页夹取。
@@ -35,4 +35,5 @@
 - 代价：默认值有了多个副本（服务端常量、配置页镜像、README 表格）。当前靠注释标注来源，漂移风险由测试与 review 兜。
 - 阈值可配意味着**用户可以把门控调成近乎失效**（`minConfidence: 1` 配一个低置信模型）。这是有意的：配置权在用户，插件只保证方向性可解释（调低更容易拦、调高更宽松）。
 - 门控默认值已从 0.7 下调到 0.6（2026-10-26）。本机 150 条门控观测里，`deny` 建议的置信度全部 ≤0.12，两档在现有数据上没有行为差异——下调是为「后端将来给出更高置信的 deny 时更倾向拦截」，不是对既有误判的修正。
+- 收窄摘除线已从 0.3 上调到 0.7（2026-10-31），方向是更激进地收窄：只有模型较有把握判为相关的工具才保留。同步把默认保留前缀收回到 `mcp__openviking`，`team_task_` 不再默认保留、回到常规判定。这两处都是方向性调整，尚未用决策日志标定。
 - 默认值仍是未标定的启发式，因此 0.6.x 继续标为体验版；实测校准后应新写 ADR 记录新值，而不是改写本文。

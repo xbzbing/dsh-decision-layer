@@ -25,12 +25,13 @@ async function request<T>(path: string, fetchFn: typeof fetch, init?: RequestIni
 
 // The built-in default keep-prefix; shown when the config has none stored yet so
 // the effective set is always visible and editable.
-const DEFAULT_KEEP_PREFIXES = ['mcp__openviking', 'team_task_'];
+const DEFAULT_KEEP_PREFIXES = ['mcp__openviking'];
 // The built-in optional-candidate ceiling; above it, enforce downgrades to observe.
 const DEFAULT_MAX_CANDIDATES = 20;
 // The built-in drop threshold: a tool is dropped only when its relevance
-// probability is below this; conservative by default so uncertain tools stay.
-const DEFAULT_THRESHOLD = 0.3;
+// probability is below this; 0.7 leans aggressive — only tools the model rates
+// as fairly relevant survive, so the tool surface stays small.
+const DEFAULT_THRESHOLD = 0.7;
 const DEFAULT_BATCH_MODE: BatchMode = 'auto';
 // The built-in grading levels, mirroring service/self-check.mjs DEFAULT_RUBRIC.
 const DEFAULT_RUBRIC = [
@@ -391,7 +392,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
               <small className="decision-muted">{t('narrowMaxHint')}</small></label>
             <label className="decision-field decision-field-inline">{t('narrowThresholdLabel')}
               <input className="decision-narrow-cap" type="number" min={0} max={1} step="any" value={threshold} disabled={!canEdit || !narrowOn}
-                placeholder="0.3" onChange={event => { setThreshold(event.target.value); setAdvancedDirty(true); }} />
+                placeholder="0.7" onChange={event => { setThreshold(event.target.value); setAdvancedDirty(true); }} />
               <small className="decision-muted">{t('narrowThresholdHint')}</small></label>
             <label className="decision-field decision-field-inline">{t('batchModeLabel')}
               <select className="decision-select" value={batchMode} disabled={!canEdit || !narrowOn}

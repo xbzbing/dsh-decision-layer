@@ -36,12 +36,15 @@ test('a tool missing from the answers is conservatively kept', () => {
   assert.deepEqual(result.drop, ['bash']);
 });
 
-test('the default drop threshold is a conservative 0.3', () => {
-  // With the default threshold, a tool the model is unsure about (0.4, near 0.5)
-  // is kept; only a clearly-irrelevant tool (0.1, below 0.3) is dropped.
-  const result = narrowTools(['a', 'b', 'unsure'], answers({ a: 0.9, b: 0.1, unsure: 0.4 }));
-  assert.deepEqual(result.keep.sort(), ['a', 'unsure']);
-  assert.deepEqual(result.drop, ['b']);
+test('the default drop threshold is an aggressive 0.7', () => {
+  // With the default threshold, only a tool the model rates as fairly relevant
+  // survives: 0.7 is kept (the drop is strictly below), while 0.6 and below are
+  // dropped. An unsure 0.4 is no longer protected — the default leans toward a
+  // smaller tool surface.
+  const result = narrowTools(['a', 'edge', 'near', 'unsure'],
+    answers({ a: 0.9, edge: 0.7, near: 0.6, unsure: 0.4 }));
+  assert.deepEqual(result.keep.sort(), ['a', 'edge']);
+  assert.deepEqual(result.drop.sort(), ['near', 'unsure']);
 });
 
 test('relevanceQuestions builds one noul per tool referencing the tool by name', () => {
@@ -96,11 +99,14 @@ test('narrowing defaults to enforce when no mode is configured', async () => {
   assert.equal(result.applied, true);
 });
 
-test('default core tools and keep prefixes cover DSH agent meta-abilities and team_task_', async () => {
+test('default core tools and keep prefixes cover DSH agent meta-abilities and openviking', async () => {
   let asked;
   // No coreTools/keepPrefixes overrides: exercise the shipped defaults.
   const check = createNarrowing({ settings: { mode: 'enforce' }, minKeep: 1,
-    evaluate: async question => { asked = Object.keys(question.questions); return answers({ web_search: 0.9 }); } });
+    evaluate: async question => {
+      asked = Object.keys(question.questions);
+      return answers({ web_search: 0.9, team_task_create: 0.05, team_task_list: 0.05 });
+    } });
   const result = await check.review(turn('do something', [
     { name: 'ask_user_question', description: '' }, { name: 'create_goal', description: '' }, { name: 'subagent', description: '' },
     { name: 'spawn_teammate', description: '' }, { name: 'workflow', description: '' }, { name: 'present', description: '' },
@@ -108,11 +114,13 @@ test('default core tools and keep prefixes cover DSH agent meta-abilities and te
     { name: 'mcp__openviking__find', description: '' },
     { name: 'web_search', description: '' }, { name: 'web_fetch', description: '' },
   ]));
-  // only genuinely optional tools reach the model; meta-abilities, team_task_*, and openviking do not
-  assert.deepEqual(asked.sort(), ['web_fetch', 'web_search']);
-  for (const kept of ['ask_user_question', 'create_goal', 'subagent', 'spawn_teammate', 'workflow', 'present', 'team_task_create', 'team_task_list', 'mcp__openviking__find']) {
+  // only genuinely optional tools reach the model; meta-abilities and openviking do not
+  assert.deepEqual(asked.sort(), ['team_task_create', 'team_task_list', 'web_fetch', 'web_search']);
+  for (const kept of ['ask_user_question', 'create_goal', 'subagent', 'spawn_teammate', 'workflow', 'present', 'mcp__openviking__find']) {
     assert.equal(result.keep.includes(kept), true, `${kept} must stay resident`);
   }
+  // team_task_* is no longer a default keep-prefix: it is judged and can be dropped
+  assert.deepEqual(result.drop.sort(), ['team_task_create', 'team_task_list']);
 });
 
 test('core tools are always kept and never judged for relevance', async () => {

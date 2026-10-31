@@ -390,11 +390,11 @@ test('advanced save posts the configured drop threshold clamped to [0,1]', async
   let savedBody;
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', narrowSettings: { mode: 'enforce', threshold: savedBody.narrowSettings.threshold } }); }
-    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', narrowSettings: { mode: 'enforce', threshold: 0.3 } });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai', narrowSettings: { mode: 'enforce', threshold: 0.7 } });
     throw new Error(`Unexpected URL ${url}`);
   };
   const view = render(React.createElement(ConfigForm, { t: translate }));
-  const box = await view.findByPlaceholderText('0.3');
+  const box = await view.findByPlaceholderText('0.7');
   fireEvent.change(box, { target: { value: '0.2' } });
   fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
   await waitFor(() => assert.equal(savedBody?.narrowSettings?.threshold, 0.2, 'the configured threshold is posted'));
