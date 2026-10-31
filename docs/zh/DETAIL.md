@@ -17,4 +17,4 @@
 
 <https://github.com/xbzbing/dsh-decision-layer>
 
-完整安装、配置说明与设计取舍见仓库内的 README 与 `docs/adr/`。
+安装与隐私说明见仓库内的 README；各阈值的默认值与字段说明见 `docs/adr/0006-configurable-thresholds.md`，设计取舍见 `docs/adr/`。

@@ -17,4 +17,4 @@ The backend, per-decision-point switches, and intervention thresholds are config
 
 <https://github.com/xbzbing/dsh-decision-layer>
 
-Full installation, configuration, and design trade-offs live in the repository README and `docs/adr/`.
+Installation and privacy notes live in the repository README; threshold defaults and field names are in `docs/adr/0006-configurable-thresholds.md`, and design trade-offs in `docs/adr/`.
