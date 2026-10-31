@@ -28,6 +28,8 @@ const REQUIRED = [
   'package/LICENSE',
   'package/locale/zh.json',
   'package/locale/en.json',
+  'package/docs/zh/DETAIL.md',
+  'package/docs/en/DETAIL.md',
 ];
 
 // Never ship sources, tests, or local-only notes: they are not needed at runtime

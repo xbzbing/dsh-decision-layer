@@ -20,6 +20,8 @@
     "skills",
     "lib/client.js",
     "locale/*.json",
+    "docs/zh/DETAIL.md",
+    "docs/en/DETAIL.md",
     "icon.svg",
     "cordis.patch.yml",
     "README.md",
