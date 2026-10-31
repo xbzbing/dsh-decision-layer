@@ -91,9 +91,9 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
       },
     }),
     // One newest-first page of this session's full persisted decision rows, for
-    // the analysis tab's paginated log. Rows carry only panel fields (tool name,
-    // outcome, counts) — never gate command/path, which is never logged — so this
-    // exposes nothing the recent-rows /log route does not already.
+    // the analysis tab's paginated log. Rows carry the same panel fields as /log,
+    // including the gate's already-redacted and length-bounded command/path, so
+    // this exposes nothing the recent-rows route does not already.
     route('logrows', {
       GET: async req => {
         if (typeof listRows !== 'function') { const error = new Error('log rows unavailable'); error.code = 'BAD_REQUEST'; throw error; }

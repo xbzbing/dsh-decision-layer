@@ -1,7 +1,7 @@
 // One session's automatic-intervention flag is shown by two surfaces that can be
 // mounted at the same time: the composer-dock panel and the analysis tab. Both
 // write it through the same /session route, so after either one changes it the
-// other must not keep rendering the old value. A document-level event keeps the
+// other must not keep rendering the old value. A window-level event keeps the
 // two controls in sync without polling; the persisted flag remains the single
 // source of truth and the event only mirrors a confirmed write.
 const SESSION_ENABLED_EVENT = 'dsh-decision-layer:session-enabled';

@@ -20,8 +20,8 @@ Host (Cordis, service/)
   self-check.mjs          产出自检：概率加权分、低置信噪声、每回合最多补一次
   narrowing.mjs           工具收窄：相关性 noul、核心/保留前缀、三重保护
   task-completion.mjs     完成核对：显式条件、三态判定、工具证据优先
-  loop-guard.mjs          防循环：确定性、本地、始终生效
-  config-store.mjs        配置读取/校验/整段替换；路径与默认值
+  loop-guard.mjs          防循环：确定性、本地；不受决策点开关影响，但会话开关关闭时暂停
+  config-store.mjs        配置读取/校验/整段替换；配置路径与环境变量覆盖
   session-state.mjs       每会话 enabled/计数/最近日志；ensureLoaded 续算
   state-store.mjs         会话状态快照落盘（防重启归零）
   log-store.mjs           JSONL 研究日志（按端口/日期滚动，30 天）
@@ -29,6 +29,7 @@ Host (Cordis, service/)
   log-analyze.mjs         会话聚合、趋势回测、分页、seed 重建
   manager-api.mjs         本地管理 API（只回环同源）
   quality-trend.mjs       质量趋势连续计数
+  steer-once.mjs          每个决策点各自的「每回合最多补一次」预算
 
 Client (React, src/client/)
   index.tsx               注册三个 slot + i18n
@@ -36,6 +37,8 @@ Client (React, src/client/)
   analysis-view.tsx       会话内「决策分析」tab：聚合、回测、标注、分页、会话开关
   config-form.tsx         插件详情页配置表单
   decision-log.tsx        面板与分析页共用的决策行渲染与点赞
+  cards.tsx               指标卡、Stat 与占比小工具
+  use-annotations.ts      标注读取/写入与会话日志种子
   api.ts                  /plugins/dsh-decision-layer/api 的 fetch 与类型
   session-events.ts       面板与决策分析页的会话开关同步事件
   i18n.ts                 zh 是键集权威源，en 按 zh 的类型约束
@@ -50,7 +53,7 @@ Host 侧挂接点：`ctx.tools.guard`（防循环、门控的单调拒绝）、`
 - 后端默认 `https://api.typesafe.ai`、模型 `jev-latest`；可用 `DSH_DECISION_BASE_URL` / `DSH_DECISION_API_KEY` / `DSH_DECISION_MODEL`（兼容 `TYPESAFE_BASE_URL` / `TYPESAFE_API_KEY`）提供。未配置 Key 时不发请求。
 - 决策日志：`~/.config/dsh-decision-layer/logs/decisions-<port>-YYYY-MM-DD.jsonl`；按 UTC 日期和运行实例端口滚动，批量写、30 天保留，失败只丢当批，不进入决策路径。
 - 会话快照：`~/.config/dsh-decision-layer/state/<sessionId>.json`；防抖原子写、30 天保留。恢复时优先读快照，没有快照则从历史 JSONL 按 session id 重建 seed；gate 的「实际结果」（放行/拒绝）无法从日志重建，重启后从零累计。
-- 会话级 `enabled` 默认 true；关闭只暂停自动介入（门控、自检、收窄、完成核对、防循环），手动工具与日志标注不受影响。状态写在会话快照里，面板与决策分析页通过 `session-events.ts` 的文档事件同步。
+- 会话级 `enabled` 默认 true；关闭只暂停自动介入（门控、自检、收窄、完成核对、防循环），手动工具与日志标注不受影响。状态写在会话快照里，面板与决策分析页通过 `session-events.ts` 的 window 事件同步。
 - 管理 API 前缀 `/plugins/dsh-decision-layer/api`：`config`、`probe`、`metrics`、`log`、`logs`、`logrows`、`annotate`、`session`。`GET /logs` 只返回聚合，`GET /logrows` 返回分页决策行；新增字段前先确认不会把 API Key 或超出既有范围的原始内容带回浏览器。
 - **正在运行的 GUI 装的是 npm 上的版本，不是本仓库 checkout。** 改源码不会立即出现在当前页面；发布或 `file:` 安装并重启后才生效。
 
@@ -77,7 +80,7 @@ npm run pack:assert <tgz>   # 解包断言运行时文件齐全、无源码/测�
 - **门控两档**：只有高置信 `deny` 才拦截；`allow` / `ask` / 低置信 / 异常都不介入，`ask` 不转发宿主审批。拦截经 `tools.guard` 单调执行，guard 只能 deny、不能 re-allow。
 - **收窄不扩权**：只在宿主已允许的工具集内取交集；核心工具和 `keepPrefixes` 命中的工具始终保留、不参与判定。`narrowTools` 的「不能删光」判断必须把 `keepBase`（核心 + 保留前缀）算进去；可选工具超过 `maxCandidates` 自动降级 observe；保留不足 `minKeep` 视为判定不可信、跳过。`agent.ctx.tools.restrict` 是 agent 作用域，下一回合前要释放。
 - **自检 / 完成核对每回合各自最多补一次**：两个决策点各自持有一份 `steerOnce` 预算；低置信分只记录、不打断；完成核对只处理用户明确列出的条件，以工具证据为准，回复自称完成不算证据；`insufficient` 不触发补完。
-- **防循环始终生效**：确定性本地逻辑，不走后端，不受各决策点开关影响。
+- **防循环不受决策点开关影响**：确定性本地逻辑，不走后端；会话总开关关闭时同样暂停（`loop-guard.mjs` 先查 `enabled`）。
 - **管理 API 只在回环绑定上提供服务**：只接受 `127.0.0.1` 绑定，校验 Host / Origin，响应 `no-store`，请求体有上限；非回环绑定直接拒绝。
 - **配置整段替换**：`dangerRules` / `gateSettings` / `checkSettings` / `narrowSettings` / `completeSettings` / `features` 每个 section 在 PUT 时整体替换，省略则保留原值；未知字段、越界值直接拒绝。配置每次调用现读、无缓存；坏配置会让整份校验失败，各决策点退回安全默认，所以不要把 `resolveConfig` 结果缓存到构造期。
 - **API Key 不回传**：配置 API 只回 `apiKeySet`；删除 Key 是显式动作。HTTP 地址必须针对具体 URL 确认明文传输风险，地址变更重新确认。
@@ -109,5 +112,6 @@ npm run pack:assert <tgz>   # 解包断言运行时文件齐全、无源码/测�
 - `meta.detail` 必须是包内相对 `.md` 路径（不能绝对、不能 `..`）；新增 / 改名后同步 `package.json` `files` 与 `assert-pack`，否则详情页回落到 README 或发版缺文件。
 - `session-state` 的 `enabled` 是会话级、持久化的；面板和决策分析页必须通过 `session-events.ts` 同步，不要各写一份本地状态。
 - `steerOnce` 目前是每个决策点各一份实例（self-check 与 task-completion 不共享预算）；如果产品要求同一回合跨决策点只补一次，需要把实例提升到 `dsh.mjs` 共享，而不是在各自模块里新建。
-- 决策行可能带 gate 的 `command` / `path`（`decision-log.tsx` 会渲染；`session-state` 已做长度截断和空白折叠）。`log-analyze.mjs` / `manager-api.mjs` 里「command/path never logged」的注释已过时，别据此判断 `/logrows` 不会回传这些字段。
+- 决策行可能带 gate 的 `command` / `path`（`decision-log.tsx` 会渲染；`session-state` 已做长度截断和空白折叠）。`/logrows` 会回传这些字段，新增日志字段前先确认不会把超出既有范围的原始内容带回浏览器。
+- 阈值默认值不在 `config-store.mjs`：服务端默认值在各决策点模块（如 `narrowing.mjs` 的 `DEFAULT_NARROW_THRESHOLD`），配置页镜像在 `config-form.tsx`，提示文案在 `i18n.ts`；改一个默认值要同时改这几处与测试。
 - `featureOn` / `resolveConfig` 在热路径上，任何配置读取都要容忍抛错并回退默认；`backend.evaluate` 的请求 / 响应校验是唯一 wire 契约，不要在调用点复制一份宽松版。
