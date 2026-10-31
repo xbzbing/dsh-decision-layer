@@ -180,10 +180,21 @@ const css = `
 /* Conversation-view "Decision analysis" tab. It reuses the card / stat / log
    primitives above; this block only supplies the scroll container and section
    rhythm, since the tab is not inside the modal's .decision-body wrapper. */
-.decision-analysis{height:100%;overflow:auto;color:var(--dsw-alias-label-primary,#202124);font:inherit}
+.decision-analysis{height:100%;overflow:auto;color:var(--dsw-alias-label-primary,#202124);font:inherit;--decision-analysis-accent:#1f5d50;--decision-analysis-accent-bg:rgba(31,93,80,.08);--decision-analysis-dot:#1f8a70;--decision-analysis-ring:rgba(31,138,112,.16)}
 .decision-analysis-inner{max-width:52rem;margin:0 auto;padding:1.4rem 1.5rem 3rem}
+.decision-analysis-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.decision-analysis-heading{flex:1 1 18rem;min-width:0}
 .decision-analysis-title{font-size:1.15rem;margin:0 0 .3rem}
-.decision-analysis-intro{margin:0 0 .4rem}
+.decision-analysis-intro{margin:0}
+/* The session-level automatic-intervention switch, mirrored from the dock panel.
+   A pill button with a status dot: pressed = decisions on for this session. */
+.decision-analysis-switch{display:inline-flex;align-items:center;gap:.45rem;flex:0 0 auto;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#ccd3da);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary,#59636e);padding:.38rem .85rem;font:inherit;font-size:.8rem;font-weight:500;line-height:1.3;white-space:nowrap;cursor:pointer;transition:color .15s,border-color .15s,background .15s}
+.decision-analysis-switch:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#eef1f3);color:var(--dsw-alias-label-primary,#202124)}
+.decision-analysis-switch[aria-pressed="true"]{border-color:var(--decision-analysis-accent);color:var(--decision-analysis-accent);background:var(--decision-analysis-accent-bg)}
+.decision-analysis-switch-dot{flex:0 0 auto;width:.5rem;height:.5rem;border-radius:50%;background:var(--dsw-alias-label-tertiary,#9aa5b1);transition:background .15s,box-shadow .15s}
+.decision-analysis-switch[aria-pressed="true"] .decision-analysis-switch-dot{background:var(--decision-analysis-dot);box-shadow:0 0 0 2px var(--decision-analysis-ring)}
+.decision-analysis-switch:disabled{opacity:.55;cursor:default}
+.decision-analysis-switch:focus-visible{outline:2px solid #1f5d50;outline-offset:2px}
 .decision-analysis-section{border-top:1px solid var(--dsw-alias-border-l2,#eceff1);margin-top:1.1rem;padding-top:1rem}
 .decision-analysis-section>h3{font-size:.92rem;margin:0 0 .6rem}
 .decision-analysis-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:.7rem}
@@ -209,7 +220,7 @@ const css = `
 .decision-pager button:disabled{opacity:.45;cursor:default}
 .decision-pager-status{font-size:.8rem;color:var(--dsw-alias-label-secondary,#59636e);font-variant-numeric:tabular-nums}
 @media (prefers-color-scheme:dark){
-  .decision-analysis{color:var(--dsw-alias-label-primary,#e6eaee)}
+  .decision-analysis{color:var(--dsw-alias-label-primary,#e6eaee);--decision-analysis-accent:#8fdcc6;--decision-analysis-accent-bg:rgba(95,191,165,.14);--decision-analysis-dot:#3ecf9e;--decision-analysis-ring:rgba(62,207,158,.2)}
 }
 `;
 

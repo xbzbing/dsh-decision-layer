@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots';
 import type { TranslationKey } from './i18n.js';
-import { request, type Analysis, type LogRows } from './api.js';
+import { request, type Analysis, type LogRows, type SessionState } from './api.js';
+import { announceSessionEnabled, onSessionEnabled } from './session-events.js';
 import { DecisionLogList } from './decision-log.js';
 import { CardHead, Stat, share } from './cards.js';
 import { useAnnotations } from './use-annotations.js';
@@ -11,7 +12,10 @@ import { useAnnotations } from './use-annotations.js';
 // persisted decision rows, paginated (/logrows), and shares the annotation
 // writer + row rendering with the composer-dock panel so a rating made here is
 // identical to one made there. It is read-only over logs and append-only over
-// annotations; it never touches the agent loop.
+// annotations; the one session control in the header turns this session's
+// automatic interventions on or off through the same /session flag the dock
+// panel writes, so the analysis tab is reachable even before the dock trigger
+// appears (a fresh session has no context-pressure reading yet).
 interface Props { sessionId: string; t: Translate<TranslationKey> }
 
 const LOG_PAGE_SIZE = 100;
@@ -22,7 +26,33 @@ export function AnalysisView({ sessionId, t }: Props) {
   const [logPage, setLogPage] = useState(1);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState('');
+  // Session-level automatic-intervention switch. null means "still reading";
+  // the control stays disabled until the /session read resolves.
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
   const { ratings, seed, annotate } = useAnnotations(sessionId, () => setMessage(t('annotateFailed')));
+  // The session this mounted view currently shows, checked after an async
+  // toggle so a PUT that resolves after a session switch cannot write the old
+  // session's state into the newly shown one.
+  const active = useRef(sessionId);
+
+  useEffect(() => {
+    active.current = sessionId;
+    let live = true;
+    setEnabled(null);
+    setBusy(false);
+    setMessage('');
+    void request<SessionState>(`session?sessionId=${encodeURIComponent(sessionId)}`)
+      .then(value => { if (live) setEnabled(value.enabled); })
+      .catch(() => { if (live) setMessage(t('error')); });
+    return () => { live = false; };
+  }, [sessionId]);
+
+  // The dock panel shows the same switch and can change it while this tab is
+  // open; mirror that confirmed change so the two controls never disagree.
+  useEffect(() => onSessionEnabled(change => {
+    if (change.sessionId === sessionId) setEnabled(change.enabled);
+  }), [sessionId]);
 
   useEffect(() => {
     let alive = true;
@@ -36,6 +66,28 @@ export function AnalysisView({ sessionId, t }: Props) {
       .finally(() => { if (alive) setLoaded(true); });
     return () => { alive = false; };
   }, [sessionId, seed]);
+
+  const toggleEnabled = async () => {
+    if (enabled === null || busy) return;
+    const next = !enabled;
+    const session = sessionId;
+    setBusy(true);
+    try {
+      const value = await request<SessionState>('session', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: session, enabled: next }),
+      });
+      if (active.current === session) {
+        setEnabled(value.enabled);
+        announceSessionEnabled({ sessionId: session, enabled: value.enabled });
+      }
+    } catch {
+      if (active.current === session) setMessage(t('error'));
+    } finally {
+      if (active.current === session) setBusy(false);
+    }
+  };
 
   // The decision log is a separate, paginated fetch so paging never refetches the
   // aggregate. The analysis tab shows the full persisted history (the dock panel
@@ -60,11 +112,23 @@ export function AnalysisView({ sessionId, t }: Props) {
 
   return <div className="decision-analysis" role="region" aria-label={t('analysisTitle')}>
     <div className="decision-analysis-inner">
-      <h2 className="decision-analysis-title">{t('analysisTitle')}</h2>
-      <p className="decision-muted decision-analysis-intro">{t('analysisIntro')}</p>
+      <header className="decision-analysis-head">
+        <div className="decision-analysis-heading">
+          <h2 className="decision-analysis-title">{t('analysisTitle')}</h2>
+          <p className="decision-muted decision-analysis-intro">{t('analysisIntro')}</p>
+        </div>
+        <button type="button" className="decision-analysis-switch"
+          aria-label={t('enabled')} aria-pressed={enabled === true}
+          aria-busy={enabled === null || busy} disabled={enabled === null || busy}
+          title={enabled === false ? t('analysisDecisionHintOff') : enabled === true ? t('analysisDecisionHintOn') : undefined}
+          onClick={() => void toggleEnabled()}>
+          <span className="decision-analysis-switch-dot" aria-hidden="true" />
+          <span>{enabled === null ? t('loading') : enabled ? t('analysisDecisionOn') : t('analysisDecisionOff')}</span>
+        </button>
+      </header>
 
       {loaded && (!analysis || analysis.totalDecisions === 0)
-        ? <p className="decision-empty" role="status">{t('logEmpty')}</p>
+        ? <p className="decision-empty" role="status">{enabled === false ? t('analysisDecisionDisabled') : t('logEmpty')}</p>
         : <>
           {profile && <section className="decision-analysis-section">
             <h3>{t('analysisProfile')}</h3>

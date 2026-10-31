@@ -15,6 +15,11 @@ export interface LogEntry {
   lowConfidence?: boolean;
 }
 
+// Session-scoped runtime state from /session: whether automatic interventions
+// (gate, self-check, narrowing, completion check) are enabled for this session.
+// Shared by the dock panel and the analysis tab so both write the same flag.
+export interface SessionState { enabled: boolean }
+
 // The read-only aggregate the /logs route returns over the persisted decision
 // logs for one session. It never carries raw log rows — only counts and buckets.
 export interface Analysis {

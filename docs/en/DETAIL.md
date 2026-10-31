@@ -9,7 +9,7 @@ A structured set of explicitly scoped decisions for the DeepSeek Harness agent l
 - **Task-completion review** — when the user lists multiple delivery conditions, each is judged satisfied / unsatisfied / insufficient evidence, with tool evidence primary and self-reported completion not counting.
 - **Tool narrowing** — at turn start, judges each optional tool's relevance to the task and drops the ones not needed, intersecting the host-allowed set and never expanding it.
 - **Loop guard** — denies the same call repeated consecutively past a threshold; deterministic and backend-free.
-- **Decision panel and analysis view** — shows automatic-decision metrics and the decision log, and lets you rate each decision correct / wrong / unsure.
+- **Decision panel and analysis view** — shows automatic-decision metrics and the decision log, and lets you rate each decision correct / wrong / unsure; the analysis view's header can enable or disable automatic interventions for the current session.
 
 The backend, per-decision-point switches, and intervention thresholds are configurable; defaults remain uncalibrated heuristics.
 

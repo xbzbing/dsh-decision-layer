@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots';
 import type { TranslationKey } from './i18n.js';
-import { request, type Analysis, type LogEntry } from './api.js';
+import { request, type Analysis, type LogEntry, type SessionState } from './api.js';
+import { announceSessionEnabled, onSessionEnabled } from './session-events.js';
 import { DecisionLogList } from './decision-log.js';
 import { CardHead, Stat } from './cards.js';
 import { useAnnotations } from './use-annotations.js';
@@ -11,7 +12,6 @@ interface CheckMetrics { attempts: number; failures: number; low: number; trend?
 interface NarrowMetrics { attempts: number; failures: number; applied: number; dropped: number }
 interface CompleteMetrics { attempts: number; failures: number; unsatisfied: number; satisfied: number; insufficient: number; steered: number }
 interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics; narrow?: NarrowMetrics; complete?: CompleteMetrics }
-interface Session { enabled: boolean }
 interface Probe { connected: boolean; model?: string; effectiveUrl?: string; reason?: string }
 // Host-computed context reading; shape mirrors the `contextPressure` projection
 // the official composer footer reads next to our entry.
@@ -60,13 +60,19 @@ function SessionPanel({ sessionId, t, useProjection }: Props) {
 
   useEffect(() => {
     let live = true;
-    void request<Session>(`session?sessionId=${encodeURIComponent(sessionId)}`)
+    void request<SessionState>(`session?sessionId=${encodeURIComponent(sessionId)}`)
       .then(value => { if (live) setEnabled(value.enabled); })
       .catch(() => { if (live) setMessage(t('error')); });
     void request<Metrics>(`metrics?sessionId=${encodeURIComponent(sessionId)}`)
       .then(value => { if (live) setMetrics(value); }).catch(() => {});
     return () => { live = false; };
   }, [sessionId, t]);
+
+  // The analysis tab shows the same session switch, so mirror a change made
+  // there while this panel stays mounted below the composer.
+  useEffect(() => onSessionEnabled(change => {
+    if (change.sessionId === sessionId) setEnabled(change.enabled);
+  }), [sessionId]);
 
   const checkStatus = () => {
     setStatus('checking');
@@ -96,9 +102,10 @@ function SessionPanel({ sessionId, t, useProjection }: Props) {
   const updateEnabled = async (next: boolean) => {
     setBusy(true);
     try {
-      const value = await request<Session>('session', { method: 'PUT', headers: { 'content-type': 'application/json' },
+      const value = await request<SessionState>('session', { method: 'PUT', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ sessionId, enabled: next }) });
       setEnabled(value.enabled);
+      announceSessionEnabled({ sessionId, enabled: value.enabled });
     } catch { setMessage(t('error')); }
     finally { setBusy(false); }
   };

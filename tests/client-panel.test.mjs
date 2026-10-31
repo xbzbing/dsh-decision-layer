@@ -61,6 +61,26 @@ test('switching session does not show stale enabled state or accept a late updat
   await waitFor(() => assert.equal(view.getByRole('checkbox', { name: '本会话内启用自动介入' }).checked, false));
 });
 
+test('the panel switch mirrors a change made from the analysis tab', async () => {
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: false, attempts: 0, failures: 0 });
+    if (String(url).includes('/log?')) return envelope({ entries: [] });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'sync', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  const toggle = await view.findByRole('checkbox', { name: '本会话内启用自动介入' });
+  await waitFor(() => assert.equal(toggle.checked, true));
+  // a confirmed change from the analysis tab reaches this panel without a reload
+  window.dispatchEvent(new window.CustomEvent('dsh-decision-layer:session-enabled', { detail: { sessionId: 'sync', enabled: false } }));
+  await waitFor(() => assert.equal(toggle.checked, false));
+  // another session's change is ignored
+  window.dispatchEvent(new window.CustomEvent('dsh-decision-layer:session-enabled', { detail: { sessionId: 'other', enabled: true } }));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(toggle.checked, false, 'another session\'s change must not touch this panel');
+});
+
 test('a low-confidence low self-check score is tagged as ignorable noise', async () => {
   globalThis.fetch = async url => {
     if (String(url).includes('/session?')) return envelope({ enabled: true });
@@ -481,6 +501,7 @@ test('delete key is not offered when no key is saved', async () => {
 
 test('analysis view renders the profile, trend backtest, and accuracy summary from /logs', async () => {
   globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
     if (String(url).includes('/logs?')) return envelope({ totalDecisions: 3,
       annotations: { rated: 2, good: 1, bad: 1, unsure: 0 }, ratings: { 'a-1': 'good', 'a-2': 'bad' },
       trendBacktest: { warnHits: 1, severeHits: 0, maxRun: 3 },
@@ -513,6 +534,7 @@ test('analysis view renders the profile, trend backtest, and accuracy summary fr
 test('analysis view rates a decision row through the shared /annotate route', async () => {
   let annotateBody;
   globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
     if (String(url).includes('/logs?')) return envelope({ totalDecisions: 1,
       annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {},
       trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 },
@@ -533,6 +555,7 @@ test('analysis view rates a decision row through the shared /annotate route', as
 
 test('analysis view shows the empty state when there are no decisions', async () => {
   globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
     if (String(url).includes('/logs?')) return envelope({ totalDecisions: 0, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
     if (String(url).includes('/logrows?')) return envelope({ entries: [], total: 0, page: 1, pageSize: 100, pages: 1 });
     throw new Error(`Unexpected URL ${url}`);
@@ -547,6 +570,7 @@ test('analysis view paginates the decision log and shares the page scroll', asyn
   const requested = [];
   globalThis.fetch = async url => {
     const s = String(url);
+    if (s.includes('/session?')) return envelope({ enabled: true });
     if (s.includes('/logs?')) return envelope({ totalDecisions: 150,
       annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {},
       trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 },
@@ -574,6 +598,61 @@ test('analysis view paginates the decision log and shares the page scroll', asyn
   assert.deepEqual(requested, [1, 2], 'clicking next fetches page 2');
   // on the last page, Next is disabled
   assert.equal((await view.findByRole('button', { name: '下一页' })).disabled, true);
+});
+
+test('analysis view enables this session\'s decisions from the header control', async () => {
+  let putBody;
+  globalThis.fetch = async (url, init) => {
+    const s = String(url);
+    if (s.includes('/session?')) return envelope({ enabled: false });
+    if (s.endsWith('/session') && init?.method === 'PUT') {
+      putBody = JSON.parse(init.body);
+      return envelope({ enabled: putBody.enabled });
+    }
+    if (s.includes('/logs?')) return envelope({ totalDecisions: 0, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
+    if (s.includes('/logrows?')) return envelope({ entries: [], total: 0, page: 1, pageSize: 100, pages: 1 });
+    throw new Error(`Unexpected URL ${s}`);
+  };
+  const view = render(React.createElement(AnalysisView, { sessionId: 'an-toggle', t: translate }));
+  const changes = [];
+  const record = event => changes.push(event.detail);
+  window.addEventListener('dsh-decision-layer:session-enabled', record);
+  const toggle = await view.findByRole('button', { name: '本会话内启用自动介入' });
+  await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'false'));
+  // with decisions off and no history, the empty state explains why nothing new appears
+  await view.findByText('本会话的自动介入已关闭。开启后，新的回合才会产生决策记录。');
+  fireEvent.click(toggle);
+  await waitFor(() => assert.deepEqual(putBody, { sessionId: 'an-toggle', enabled: true }));
+  await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'true'));
+  assert.match(toggle.textContent, /本会话决策已开启/);
+  // the confirmed write is broadcast so the dock panel's master switch follows
+  assert.deepEqual(changes.at(-1), { sessionId: 'an-toggle', enabled: true });
+  // and a change made in the dock panel updates this tab's control
+  window.dispatchEvent(new window.CustomEvent('dsh-decision-layer:session-enabled', { detail: { sessionId: 'an-toggle', enabled: false } }));
+  await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'false'));
+  window.removeEventListener('dsh-decision-layer:session-enabled', record);
+});
+
+test('analysis view ignores a late session toggle after switching sessions', async () => {
+  let resolveWrite;
+  globalThis.fetch = async (url, init) => {
+    const s = String(url);
+    if (s.includes('/session?')) return envelope({ enabled: s.includes('two') });
+    if (s.endsWith('/session') && init?.method === 'PUT') return new Promise(resolve => { resolveWrite = resolve; });
+    if (s.includes('/logs?')) return envelope({ totalDecisions: 0, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
+    if (s.includes('/logrows?')) return envelope({ entries: [], total: 0, page: 1, pageSize: 100, pages: 1 });
+    throw new Error(`Unexpected URL ${s}`);
+  };
+  const view = render(React.createElement(AnalysisView, { sessionId: 'one', t: translate }));
+  const toggle = await view.findByRole('button', { name: '本会话内启用自动介入' });
+  await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'false'));
+  fireEvent.click(toggle);
+  view.rerender(React.createElement(AnalysisView, { sessionId: 'two', t: translate }));
+  await waitFor(() => assert.equal(toggle.getAttribute('aria-pressed'), 'true'));
+  assert.ok(resolveWrite, 'the old session write is in flight');
+  resolveWrite(envelope({ enabled: false }));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(toggle.getAttribute('aria-pressed'), 'true', 'a late old-session write must not flip the new session');
 });
 
 test('advanced save posts every intervention threshold, the rubric, and the batch mode', async () => {
