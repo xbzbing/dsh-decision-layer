@@ -183,6 +183,14 @@ test('every decision row keeps a bounded task excerpt and turn, not just narrowi
   assert.equal(entry.turn, undefined);
 });
 
+test('the storage boundary re-masks credentials a caller forgot to redact', () => {
+  const sessions = createSessionState();
+  sessions.log('m', { kind: 'check', outcome: 'ok', subject: 'password: correct horse battery', task: 'token is sk-proj-abc123def9a14b7c' });
+  const entry = sessions.snapshot('m').log.at(-1);
+  assert.equal(entry.subject, 'password: [redacted]');
+  assert.equal(entry.task, 'token is [redacted]');
+});
+
 test('self-check log keeps a bounded, collapsed subject so a row names its request', () => {
   const sessions = createSessionState();
   sessions.log('c', { kind: 'check', outcome: 'low', score: 0, subject: '帮我\n  重构  登录模块' });

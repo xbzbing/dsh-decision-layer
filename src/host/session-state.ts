@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { redactCredentials } from './excerpt.js';
 import { advanceRun, severityOf } from './quality-trend.js';
 import type {
   CheckCounters, CompleteCounters, GateCounters, LogKind, LogRow, NarrowCounters, SessionSeed,
@@ -253,18 +254,20 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       if (typeof entry.action === 'string' && entry.action) record.action = entry.action.slice(0, 16);
       if (typeof entry.reason === 'string' && entry.reason) record.reason = entry.reason.slice(0, 32);
       // A short hint of the request a self-check judged, so a log row says which
-      // turn's output was scored (not just "self-check"). Already collapsed upstream.
-      if (typeof entry.subject === 'string' && entry.subject.trim()) record.subject = entry.subject.replace(/\s+/g, ' ').trim().slice(0, 120);
+      // turn's output was scored (not just "self-check"). Redaction is applied
+      // again here as the last boundary: taskExcerpt is the canonical rule, but a
+      // future caller that forgets it must not write a credential to disk.
+      if (typeof entry.subject === 'string' && entry.subject.trim()) record.subject = redactCredentials(entry.subject).replace(/\s+/g, ' ').trim().slice(0, 120);
       // The redacted command/path summary of a gated call, so the log row can show
       // what was evaluated (not just the tool). Already secret-stripped upstream;
       // kept to a bounded preview here. Newlines collapse to single spaces so one
       // multi-line script stays on one readable row.
       if (typeof entry.command === 'string' && entry.command.trim()) record.command = entry.command.replace(/\s+/g, ' ').trim().slice(0, 512);
       if (typeof entry.path === 'string' && entry.path.trim()) record.path = entry.path.replace(/\s+/g, ' ').trim().slice(0, 512);
-      // Every decision point may attach a bounded, already-redacted task excerpt
-      // (gate / self-check / narrowing) and the turn it belongs to. Store only the
-      // excerpt, never the full task or an arbitrary state object.
-      if (typeof entry.task === 'string' && entry.task.trim()) record.task = entry.task.replace(/\s+/g, ' ').trim().slice(0, 512);
+      // Gate / self-check / narrowing may attach a bounded task excerpt and the
+      // turn it belongs to. Store only the excerpt, never the full task or an
+      // arbitrary state object; re-mask here so no caller can bypass excerpt.ts.
+      if (typeof entry.task === 'string' && entry.task.trim()) record.task = redactCredentials(entry.task).replace(/\s+/g, ' ').trim().slice(0, 512);
       if (Number.isSafeInteger(entry.turn) && (entry.turn as number) >= 0) record.turn = entry.turn as number;
       if (typeof entry.mode === 'string' && entry.mode) record.mode = entry.mode.slice(0, 16);
       if (typeof entry.score === 'number' && Number.isFinite(entry.score)) record.score = Math.round(entry.score * 100) / 100;
