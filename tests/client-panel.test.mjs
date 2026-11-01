@@ -134,7 +134,7 @@ test('modal shows gate metrics and the decision log, not the backend form', asyn
   assert.equal(view.queryByLabelText('服务地址'), null, 'the backend form must not appear in the modal');
 });
 
-test('narrow logs show expandable task context and turn for results and failures, while legacy rows still render', async () => {
+test('task excerpts render for narrowing, gate and self-check rows, with the turn where one exists', async () => {
   const task = '修复登录页面，保留现有接口。'.repeat(12);
   globalThis.fetch = async url => {
     if (String(url).includes('/session?')) return envelope({ enabled: true });
@@ -144,6 +144,8 @@ test('narrow logs show expandable task context and turn for results and failures
       { id: 'context', at: 1, kind: 'narrow', outcome: 'applied', dropped: 1, kept: 5, tools: ['web_search'], mode: 'enforce', applied: true, task, turn: 7 },
       { id: 'failed', at: 2, kind: 'narrow', outcome: 'error', reason: 'unreachable', task: '检查构建问题', turn: 8 },
       { id: 'legacy', at: 3, kind: 'narrow', outcome: 'ok', dropped: 0, kept: 6 },
+      { id: 'gate-context', at: 4, kind: 'gate', outcome: 'deny', tool: 'shell', command: 'rm -rf dist', task: '清理构建产物', action: 'deny' },
+      { id: 'check-context', at: 5, kind: 'check', outcome: 'ok', score: 2, confidence: 1, task: '核对登录页接口错误', turn: 9 },
     ] });
     if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
     throw new Error(`Unexpected URL ${url}`);
@@ -167,6 +169,15 @@ test('narrow logs show expandable task context and turn for results and failures
   assert.match(failed.textContent, /评估失败/);
   const legacy = (await view.findByText(/保留 6/)).closest('li');
   assert.equal(legacy.querySelector('details'), null);
+  // The expandable block is no longer narrowing-only: a gate row carries the
+  // excerpt without a turn, and a self-check row carries both.
+  const gateRow = (await view.findByText(/场景（任务节选）：清理构建产物/)).closest('li');
+  assert.ok(gateRow.querySelector('details'), 'gate rows render the excerpt');
+  assert.doesNotMatch(gateRow.textContent, /回合/);
+  const checkRow = (await view.findByText(/场景（任务节选）：核对登录页接口错误/)).closest('li');
+  assert.ok(checkRow.querySelector('details'), 'self-check rows render the excerpt');
+  assert.match(checkRow.textContent, /回合 9/);
+  assert.match(checkRow.textContent, /通过/);
 });
 
 test('narrow log with too-many-candidates shows the count once and no duplicate observe tag', async () => {

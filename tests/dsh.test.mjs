@@ -295,9 +295,80 @@ test('an invalid config does not fail tool calls; the gate degrades and passes t
     assert.equal(listeners.length, 1);
     const exec = { name: 'shell', arguments: { command: 'rm -rf /tmp/build' }, callId: 'invalid-config-call', token: Symbol('token'),
       signal: AbortSignal.timeout(1000), agent: { session: { id: 'invalid-config-session' } } };
-    // the assertion that matters is that this RESOLVES at all: before the guard,
+    // what matters is that this RESOLVES at all: before the guard,
     // featureOn re-threw `Invalid gate settings` out of the hook
     const result = await listeners[0](exec, async () => ({ kind: 'allow' }));
     assert.equal(result.kind, 'allow', 'an unreadable config degrades to pass-through, not a broken tool call');
+  } finally { globalThis.fetch = realFetch; }
+});
+
+test('the real wiring feeds masked task excerpts into gate and self-check rows, lazily', async () => {
+  const path = join(directory, 'wiring-config.json');
+  await saveConfig({ apiKey: 'local-test-key' }, path);
+  const routes = [];
+  const pre = [];
+  const stops = [];
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    const answers = body.questions?.verdict
+      ? { verdict: { type: 'choice', choice: 'deny', confidence: 1, probabilities: { allow: 0, ask: 0, deny: 1 } } }
+      : { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1 } } };
+    return new Response(JSON.stringify({ model: 'jev-latest', answers }));
+  };
+  try {
+    let reads = 0;
+    const agent = { session: { id: 'wiring', deriveMessages: () => {
+      reads += 1;
+      return [
+        { role: 'user', content: [{ type: 'text', text: '清理构建产物 token=ghp_secret，然后汇报' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
+      ];
+    } } };
+    await apply({
+      tools: { register: () => {}, guard: () => () => {} },
+      skills: { register: () => {} },
+      on: (event, listener) => {
+        if (event === 'tools/pre-execute') pre.push(listener);
+        if (event === 'agent/turn-stopping') stops.push(listener);
+        return () => {};
+      },
+      effect: setup => setup(),
+      inject: (_names, install) => install({ webServer: { port: 0, host: '127.0.0.1', register: route => { routes.push(route); return () => {}; } } }),
+    }, { configPath: path });
+    assert.equal(pre.length, 1);
+    assert.equal(stops.length, 2, 'self-check and completion both listen on turn-stopping');
+
+    const dangerous = { name: 'shell', arguments: { command: 'rm -rf dist' }, callId: 'w1', signal: AbortSignal.timeout(2000), agent };
+    const denied = await pre[0](dangerous, () => 'ran');
+    assert.equal(denied.kind, 'deny');
+    assert.equal(reads, 1, 'the gate derives the task only for a dangerous call');
+    const safe = { name: 'read', arguments: { path: '/tmp/x' }, callId: 'w2', signal: AbortSignal.timeout(2000), agent };
+    assert.equal(await pre[0](safe, () => 'ran'), 'ran');
+    assert.equal(reads, 1, 'a safe call never scans the message history');
+
+    // The turn-stopping listener builds output and userText, each from the derived
+    // history, then the self-check records the excerpt it was handed.
+    await stops[0]({ agent, turn: 5, signal: AbortSignal.timeout(2000) });
+    assert.equal(reads, 3, 'two reads for output/userText, none extra for the excerpt');
+
+    const route = routes.find(item => item.path.endsWith('/log'));
+    assert.ok(route, 'the management route is registered');
+    const req = { method: 'GET', url: '/plugins/dsh-decision-layer/api/log?sessionId=wiring',
+      headers: { host: '127.0.0.1:1234' }, socket: { remoteAddress: '127.0.0.1' } };
+    const res = { status: 0, body: '', writeHead(status) { this.status = status; return this; }, end(body) { this.body = body; } };
+    await route.handler(req, res);
+    const entries = JSON.parse(res.body).value.entries;
+    const gateRow = entries.find(entry => entry.kind === 'gate');
+    const checkRow = entries.find(entry => entry.kind === 'check');
+    assert.equal(gateRow.task, '清理构建产物 token=[redacted]，然后汇报');
+    assert.equal(gateRow.turn, undefined, 'the gate has no turn number');
+    assert.equal(checkRow.task, gateRow.task);
+    assert.equal(checkRow.turn, 5);
+    // The excerpt stays local: no adjudication request carries the task text.
+    const outbound = JSON.stringify(bodies);
+    assert.doesNotMatch(outbound, /清理构建产物|ghp_secret/);
   } finally { globalThis.fetch = realFetch; }
 });

@@ -37,7 +37,7 @@ test('entries split across day-stamped files by their own timestamp', async () =
   const base = await dir();
   // Pin the clock to the fixture's own day: the flush also prunes files older
   // than the retention window, so a real clock would delete the older file once
-  // that day falls out of the window and this assertion would rot over time.
+  // that day falls out of the window and this test would rot over time.
   const store = createLogStore({ port: 3080, dir: base, now: () => new Date(Date.parse('2026-09-27T12:00:00Z')) });
   store.append({ kind: 'gate', outcome: 'ask', at: Date.parse('2026-09-26T23:00:00Z') });
   store.append({ kind: 'gate', outcome: 'ask', at: Date.parse('2026-09-27T01:00:00Z') });
