@@ -137,8 +137,13 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
     if (summary.path) args.path = summary.path;
     // Which task triggered the call, so a denial can be judged in context. The
     // excerpt is masked and bounded by taskExcerpt; the backend request above
-    // still carries only the redacted call summary.
-    const task = typeof taskText === 'function' ? taskExcerpt(taskText(exec?.agent)) : undefined;
+    // still carries only the redacted call summary. Deriving it reads the derived
+    // message history, so it is isolated: a taskText that throws must never turn
+    // a decision record (or the call itself) into a failure.
+    let task: string | undefined;
+    if (typeof taskText === 'function') {
+      try { task = taskExcerpt(taskText(exec?.agent)); } catch { task = undefined; }
+    }
     if (task) args.task = task;
     try { sessions.log(id, { kind: 'gate', outcome, tool: exec?.name, ...args, ...detail }); }
     catch { /* logging is best effort */ }

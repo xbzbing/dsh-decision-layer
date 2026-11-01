@@ -43,6 +43,22 @@ test('a recorded call carries the masked turn task excerpt, read only for danger
   assert.equal(taskReads, 1);
 });
 
+test('a throwing taskText never fails the call or the decision record', async () => {
+  const entries = [];
+  const sessions = { snapshot: () => ({ enabled: true }), record: () => {}, log: (_id, entry) => entries.push(entry) };
+  const taskText = () => { throw new Error('deriveMessages exploded'); };
+  const deny = createDangerGate({ sessions, taskText, evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 1, probabilities: { allow: 0, ask: 0, deny: 1 } } } }) });
+  const decision = await deny.preExecute(exec('shell', { command: 'rm -rf dist' }), () => 'ran');
+  assert.equal(decision?.kind, 'deny', 'the deny still happens');
+  assert.equal(entries.at(-1).kind, 'gate');
+  assert.equal(entries.at(-1).task, undefined, 'a failed excerpt is omitted, not thrown');
+  // The allow and backend-error paths must pass through, exactly as without taskText.
+  const allow = createDangerGate({ sessions, taskText, evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'allow', confidence: 1 } } }) });
+  assert.equal(await allow.preExecute(exec('shell', { command: 'rm -rf dist' }), () => 'ran'), 'ran');
+  const offline = createDangerGate({ sessions, taskText, evaluate: async () => { throw new Error('offline'); } });
+  assert.equal(await offline.preExecute(exec('shell', { command: 'rm -rf dist' }), () => 'ran'), 'ran');
+});
+
 test('high-confidence allow does not intervene (passes through)', async () => {
   const gate = createDangerGate({ evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'allow', confidence: 1, probabilities: { allow: 1, ask: 0, deny: 0 } } } }) });
   assert.equal(await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), undefined);
