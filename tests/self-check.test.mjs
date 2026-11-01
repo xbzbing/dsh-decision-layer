@@ -106,40 +106,47 @@ test('self-check logs score on evaluation and a reason on failure', async () => 
   const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
   const ok = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1 } } } }) });
   await ok.review(turn('great answer'));
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 2, confidence: 1 });
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 2, confidence: 1, turn: 1 });
   const offline = createSelfCheck({ sessions, evaluate: async () => { throw new Error('offline'); } });
   await offline.review(turn('answer'));
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'error', reason: 'unreachable' });
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'error', reason: 'unreachable', turn: 1 });
 });
 
-test('the turn request rides onto every self-check log row as a bounded subject', async () => {
+test('the turn request rides onto every self-check log row as a bounded task excerpt', async () => {
   const entries = [];
   const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
-  const withSubject = text => ({ ...turn(text), userText: '帮我\n  重构登录模块' });
+  const withTask = text => ({ ...turn(text, { turn: 4 }), userText: '帮我\n  重构登录模块' });
   const ok = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1 } } } }) });
-  await ok.review(withSubject('great answer'));
-  assert.equal(entries.at(-1).subject, '帮我 重构登录模块', 'the request is collapsed to one line');
-  // The subject is attached even when the backend fails, so a failed row still names its request.
+  await ok.review(withTask('great answer'));
+  assert.equal(entries.at(-1).task, '帮我 重构登录模块', 'the request is collapsed to one line');
+  assert.equal(entries.at(-1).turn, 4, 'the row names its turn');
+  // The excerpt is attached even when the backend fails, so a failed row still names its request.
   const offline = createSelfCheck({ sessions, evaluate: async () => { throw new Error('offline'); } });
-  await offline.review(withSubject('answer'));
-  assert.equal(entries.at(-1).subject, '帮我 重构登录模块');
+  await offline.review(withTask('answer'));
+  assert.equal(entries.at(-1).task, '帮我 重构登录模块');
   assert.equal(entries.at(-1).outcome, 'error');
 });
 
-test('the subject strips injected OpenViking memory context, keeping only the real request', async () => {
+test('the task excerpt strips injected context and masks credentials like every other row', async () => {
   const entries = [];
   const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
   const ok = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1 } } } }) });
-  // A real turn: the user's question followed by one or more injected memory blocks.
-  const withMemory = userText => ({ ...turn('great answer'), userText });
-  await ok.review(withMemory('唯一直观的是减少 token，这个能评估出来具体的数据吗？\n<openviking-context>\nRelevant memory from OpenViking.\n<memory uri="viking://x">...</memory>\n</openviking-context>\n<openviking-context>\n更多记忆\n</openviking-context>'));
-  assert.equal(entries.at(-1).subject, '唯一直观的是减少 token，这个能评估出来具体的数据吗？', 'only the real request survives');
+  const withContext = userText => ({ ...turn('great answer'), userText });
+  // A real turn: the user's question followed by injected memory / reminder blocks.
+  await ok.review(withContext('唯一直观的是减少 token，这个能评估出来具体的数据吗？\n<openviking-context>\nRelevant memory.\n</openviking-context>\n<system-reminder>internal note</system-reminder>'));
+  assert.equal(entries.at(-1).task, '唯一直观的是减少 token，这个能评估出来具体的数据吗？', 'only the real request survives');
   // A dangling, unclosed block (e.g. truncated) is also dropped.
-  await ok.review(withMemory('重构登录模块 <openviking-context> Relevant memory from OpenViking'));
-  assert.equal(entries.at(-1).subject, '重构登录模块');
-  // A turn that is only memory context yields no subject rather than noise.
-  await ok.review(withMemory('<openviking-context>only memory</openviking-context>'));
-  assert.equal(entries.at(-1).subject, undefined);
+  await ok.review(withContext('重构登录模块 <openviking-context> Relevant memory'));
+  assert.equal(entries.at(-1).task, '重构登录模块');
+  // A turn that is only injected context yields no excerpt rather than noise.
+  await ok.review(withContext('<openviking-context>only memory</openviking-context><system-reminder>internal</system-reminder>'));
+  assert.equal(entries.at(-1).task, undefined);
+  // Credential forms are masked here too (this used to be the weaker of the two copies).
+  await ok.review(withContext('修复登录 token=ghp_secret Authorization: Bearer abc123'));
+  assert.equal(entries.at(-1).task, '修复登录 token=[redacted] Authorization: [redacted]');
+  // The excerpt is bounded like the narrowing one.
+  await ok.review(withContext('文'.repeat(900)));
+  assert.equal(entries.at(-1).task.length, 512);
 });
 
 test('fractional scores are accepted and low confidence is a valid answer, not a failure', async () => {
@@ -149,7 +156,7 @@ test('fractional scores are accepted and low confidence is a valid answer, not a
   const result = await fractional.review(turn('great answer'));
   assert.equal(result.evaluated, true);
   assert.equal(result.lowScore, false, 'a fractional score above the threshold is not low');
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 1.43, confidence: 0.9 });
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 1.43, confidence: 0.9, turn: 1 });
   // A low-confidence score is still recorded as a real ok/low answer with its
   // confidence, never as an error; a low-confidence LOW score is additionally
   // flagged lowConfidence so the UI can mark it as ignorable noise.
@@ -157,7 +164,7 @@ test('fractional scores are accepted and low confidence is a valid answer, not a
   const lowConfResult = await lowConf.review(turn('answer'));
   assert.equal(lowConfResult.evaluated, true);
   assert.equal(lowConfResult.lowScore, true);
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'low', score: 0, confidence: 0.17, lowConfidence: true });
+  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'low', score: 0, confidence: 0.17, lowConfidence: true, turn: 1 });
 });
 
 test('a high-confidence low score is NOT flagged as noise; a passing score never is', async () => {

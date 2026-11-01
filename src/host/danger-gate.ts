@@ -1,5 +1,6 @@
+import { taskExcerpt } from './excerpt.js';
 import { errorReason, isObject, isProbability } from './types.js';
-import type { DangerRuleAdditions, DangerRuleSet, EvaluateInput, Evaluator, SessionsFace, ToolExec } from './types.js';
+import type { AgentLike, DangerRuleAdditions, DangerRuleSet, EvaluateInput, Evaluator, SessionsFace, ToolExec } from './types.js';
 
 const DEFAULT_COMMAND_PATTERNS: readonly RegExp[] = Object.freeze([
   /\brm\b(?=[^\n]*(?:\s-r(?:f|fr)?\b|\s--recursive\b|\s--force\b))/i,
@@ -94,9 +95,15 @@ export type DangerGateOptions = {
   sessions?: SessionsFace;
   rules?: RulesResolver;
   minConfidence?: MinConfidenceResolver;
+  /**
+   * The turn's request text, used only for the bounded, masked excerpt attached
+   * to a decision row. Called lazily when a dangerous call is recorded, so the
+   * ordinary tool path never derives messages.
+   */
+  taskText?: (agent: AgentLike | undefined) => unknown;
 };
 
-export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS_RULES, minConfidence = MIN_CONFIDENCE }: DangerGateOptions = {}) {
+export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS_RULES, minConfidence = MIN_CONFIDENCE, taskText }: DangerGateOptions = {}) {
   if (typeof evaluate !== 'function') throw new Error('Danger gate requires an evaluator');
   const resolveRules = async (): Promise<RulesInput> => {
     if (typeof rules !== 'function') return rules;
@@ -128,6 +135,11 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
     const args: Record<string, unknown> = {};
     if (summary.command) args.command = summary.command;
     if (summary.path) args.path = summary.path;
+    // Which task triggered the call, so a denial can be judged in context. The
+    // excerpt is masked and bounded by taskExcerpt; the backend request above
+    // still carries only the redacted call summary.
+    const task = typeof taskText === 'function' ? taskExcerpt(taskText(exec?.agent)) : undefined;
+    if (task) args.task = task;
     try { sessions.log(id, { kind: 'gate', outcome, tool: exec?.name, ...args, ...detail }); }
     catch { /* logging is best effort */ }
   };

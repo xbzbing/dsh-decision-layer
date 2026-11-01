@@ -171,6 +171,18 @@ test('gate log keeps a bounded, whitespace-collapsed command/path for human revi
   assert.equal(sessions.snapshot('g').log.at(-1).command.length, 512);
 });
 
+test('every decision row keeps a bounded task excerpt and turn, not just narrowing', () => {
+  const sessions = createSessionState();
+  sessions.log('g', { kind: 'gate', outcome: 'deny', tool: 'bash', task: '修\n  登录页面', turn: 3 });
+  let entry = sessions.snapshot('g').log.at(-1);
+  assert.equal(entry.task, '修 登录页面');
+  assert.equal(entry.turn, 3);
+  sessions.log('g', { kind: 'check', outcome: 'ok', task: '文'.repeat(900) });
+  entry = sessions.snapshot('g').log.at(-1);
+  assert.equal(entry.task.length, 512);
+  assert.equal(entry.turn, undefined);
+});
+
 test('self-check log keeps a bounded, collapsed subject so a row names its request', () => {
   const sessions = createSessionState();
   sessions.log('c', { kind: 'check', outcome: 'low', score: 0, subject: '帮我\n  重构  登录模块' });

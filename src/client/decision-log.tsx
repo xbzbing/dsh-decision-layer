@@ -38,6 +38,10 @@ function gateArgs({ t }: RowProps, entry: LogEntry) {
   return <code className="decision-log-cmd" title={`${label}${value}`}>{preview}</code>;
 }
 
+function turnTag(t: Translate<TranslationKey>, entry: LogEntry) {
+  return typeof entry.turn === 'number' ? <span className="decision-log-detail"> · {t('logTurn', { turn: entry.turn })}</span> : null;
+}
+
 function renderGate({ t }: RowProps, entry: LogEntry) {
   const tool = <code className="decision-log-tool">{entry.tool ?? '—'}</code>;
   const args = gateArgs({ t }, entry);
@@ -54,7 +58,7 @@ function renderGate({ t }: RowProps, entry: LogEntry) {
 }
 
 function renderCheck({ t }: RowProps, entry: LogEntry) {
-  const label = <span title={t('logCheckHint')}>{t('logCheck')}</span>;
+  const label = <><span title={t('logCheckHint')}>{t('logCheck')}</span>{turnTag(t, entry)}</>;
   // The request this self-check judged, so the reader knows which turn's output
   // was scored. Rendered as a quoted, muted prose snippet (not a monospace command
   // chip): truncated inline, full text in the tooltip.
@@ -75,7 +79,7 @@ function renderCheck({ t }: RowProps, entry: LogEntry) {
 }
 
 function renderNarrow({ t }: RowProps, entry: LogEntry) {
-  const label = <><span title={t('logNarrowHint')}>{t('logNarrow')}</span>{typeof entry.turn === 'number' ? <span className="decision-log-detail"> · {t('logTurn', { turn: entry.turn })}</span> : null}</>;
+  const label = <><span title={t('logNarrowHint')}>{t('logNarrow')}</span>{turnTag(t, entry)}</>;
   if (entry.outcome === 'error') return <>{label} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(t, entry)}` : ''}</span></>;
   const dropped = entry.dropped ?? 0;
   const kept = typeof entry.kept === 'number' ? entry.kept : undefined;
@@ -158,8 +162,8 @@ export function DecisionLogList({ entries, ratings, onRate, t, newestFirst = tru
       <span className="decision-log-time">{time(entry.at)}</span>
       <div className="decision-log-body">
         {renderBody({ t }, entry)}
-        {entry.kind === 'narrow' && entry.task ? <details className="decision-log-context">
-          <summary>{t('logNarrowTask')}{entry.task.length > 60 ? `${entry.task.slice(0, 60)}…` : entry.task}</summary>
+        {entry.task ? <details className="decision-log-context">
+          <summary>{t('logTask')}{entry.task.length > 60 ? `${entry.task.slice(0, 60)}…` : entry.task}</summary>
           <p>{entry.task}</p>
         </details> : null}
       </div>

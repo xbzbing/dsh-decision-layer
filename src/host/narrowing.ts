@@ -1,3 +1,4 @@
+import { taskExcerpt } from './excerpt.js';
 import { errorReason, isObject, isProbability } from './types.js';
 import type {
   AgentLike, AnswerMap, BatchMode, EvaluateInput, EvaluateResult, Evaluator, NarrowMode, NarrowSettings,
@@ -13,23 +14,6 @@ export const narrowApplied = (record: { applied?: unknown; reason?: unknown; out
   return record?.applied === true || record?.outcome === 'applied';
 };
 const MAX_STATE = 8 * 1024;
-
-// A human-review hint from the same task passed to relevanceQuestions, never a
-// dump of structured state. Strip injected context and common credential forms
-// before truncating, so neither the live panel nor the JSONL sink gets them.
-function taskExcerpt(state: unknown): string | undefined {
-  if (typeof state !== 'string') return undefined;
-  const text = state.slice(0, MAX_STATE)
-    .replace(/<(openviking-context|system-reminder)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<(openviking-context|system-reminder)\b[\s\S]*$/i, ' ')
-    .replace(/(\b(?:authorization|cookie|set-cookie)\s*:\s*)[^\r\n]*/gi, '$1[redacted]')
-    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
-    .replace(/((?:password|passwd|secret|token|api[ _-]*key|authorization|cookie)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi, '$1[redacted]')
-    .replace(/\b(password|passwd|secret|token|api[ _-]*key)\s+\S+/gi, '$1 [redacted]')
-    .replace(/\s+/g, ' ').trim();
-  return text ? text.slice(0, 512) : undefined;
-}
-
 // The adjudication backend hard-rejects a request carrying more than 64 questions
 // (backend.ts validateRequest). One relevance question is sent per optional tool,
 // so the candidate cap can never exceed this — otherwise evaluate() throws locally

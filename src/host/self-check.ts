@@ -1,3 +1,4 @@
+import { taskExcerpt } from './excerpt.js';
 import { createSteerOnce } from './steer-once.js';
 import { errorReason, isProbability } from './types.js';
 import type { AgentLike, CheckSettings, EvaluateInput, Evaluator, SessionsFace } from './types.js';
@@ -11,23 +12,6 @@ export const DEFAULT_RUBRIC: readonly string[] = Object.freeze([
 ]);
 
 const STEER_TEXT = '本回合自检得分偏低：请复核是否答到了用户的问题、有无遗漏或自相矛盾，并在需要时补完。';
-
-// A short, single-line hint of the request this self-check judged, so a human
-// reviewing the log knows WHICH turn's output was scored (not just "self-check").
-// Best-effort over an untrusted string: injected OpenViking memory context blocks
-// (which are not part of the user's actual request) are stripped first, then
-// whitespace collapses and the length is capped.
-function subjectOf(text: unknown): string | undefined {
-  if (typeof text !== 'string') return undefined;
-  const cleaned = text
-    // Drop any complete injected memory blocks (there can be several, multi-line).
-    .replace(/<openviking-context\b[^>]*>[\s\S]*?<\/openviking-context>/gi, ' ')
-    // Drop a dangling, unclosed block (e.g. a truncated tail) through to the end.
-    .replace(/<openviking-context\b[\s\S]*$/i, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return cleaned ? cleaned.slice(0, 120) : undefined;
-}
 
 function boundedRubric(rubric: unknown): readonly string[] {
   if (!Array.isArray(rubric)) return DEFAULT_RUBRIC;
@@ -111,24 +95,26 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
         catch { return { evaluated: false, lowScore: false, steered: false }; }
       }
       // The request this turn answered, carried onto every log row so a reviewer
-      // can tell which turn's output each self-check score belongs to.
-      const subject = subjectOf(turn?.userText);
-      const subjectDetail = subject ? { subject } : {};
+      // can tell which turn's output each self-check score belongs to. Same
+      // masked, bounded excerpt the other decision rows use.
+      const task = taskExcerpt(turn?.userText);
+      const taskDetail: { task?: string; turn?: number } = task ? { task } : {};
+      if (Number.isSafeInteger(turn?.turn) && (turn?.turn as number) >= 0) taskDetail.turn = turn?.turn;
       const { mode, rubric, lowScoreThreshold, minConfidence: confidenceFloor, trendMinConfidence, trendRun, trendSevereRun } = await resolveSettings();
       let answer;
       try {
         const result = await evaluate(scoreQuestion(output, rubric), { signal: turn?.signal });
         answer = result?.answers?.quality;
-      } catch (error) { record(turn, 'error', { ...subjectDetail, reason: errorReason(error) }); return { evaluated: false, lowScore: false, steered: false }; }
+      } catch (error) { record(turn, 'error', { ...taskDetail, reason: errorReason(error) }); return { evaluated: false, lowScore: false, steered: false }; }
       if (!answer || answer.type !== 'score' || typeof answer.score !== 'number' || !Number.isFinite(answer.score)) {
-        record(turn, 'error', { ...subjectDetail, reason: 'invalid-response' });
+        record(turn, 'error', { ...taskDetail, reason: 'invalid-response' });
         return { evaluated: false, lowScore: false, steered: false };
       }
       // A low-confidence Score is a legitimate answer, not a failure: the score
       // stays usable and is recorded as ok/low. Confidence only gates the steer,
       // because only interrupting the user warrants the model being sure.
       const confidence = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? answer.confidence : undefined;
-      const detail: { subject?: string; confidence?: number; lowConfidence?: boolean } = confidence === undefined ? { ...subjectDetail } : { ...subjectDetail, confidence };
+      const detail: { task?: string; turn?: number; confidence?: number; lowConfidence?: boolean } = confidence === undefined ? { ...taskDetail } : { ...taskDetail, confidence };
       const lowScore = answer.score <= lowScoreThreshold;
       // The trend run advances over every evaluated score; a high-confidence low
       // score is the only thing that grows it. Thresholds flow to session-state.

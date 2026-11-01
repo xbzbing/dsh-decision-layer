@@ -25,6 +25,24 @@ test('gate evaluator receives only bounded command/path metadata, never file con
 // (allow, ask, low-confidence, invalid, backend failure) does NOT intervene —
 // the call proceeds on its original path, so evaluate() returns undefined.
 
+test('a recorded call carries the masked turn task excerpt, read only for dangerous calls', async () => {
+  const entries = [];
+  let taskReads = 0;
+  const sessions = { snapshot: () => ({ enabled: true }), record: () => {}, log: (_id, entry) => entries.push(entry) };
+  const gate = createDangerGate({ sessions,
+    taskText: () => { taskReads++; return '<system-reminder>internal</system-reminder> 清理构建产物 token=ghp_secret'; },
+    evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 1, probabilities: { allow: 0, ask: 0, deny: 1 } } } }) });
+  const decision = await gate.preExecute(exec('shell', { command: 'rm -rf dist' }), () => 'ran');
+  assert.equal(decision?.kind, 'deny');
+  const row = entries.at(-1);
+  assert.equal(row.kind, 'gate');
+  assert.equal(row.task, '清理构建产物 token=[redacted]');
+  assert.equal(taskReads, 1, 'the excerpt is read once for the recorded call');
+  // A safe call never reads the task: the excerpt costs a deriveMessages scan.
+  assert.equal(await gate.preExecute(exec('read', { path: '/tmp/a' }), () => 'ran'), 'ran');
+  assert.equal(taskReads, 1);
+});
+
 test('high-confidence allow does not intervene (passes through)', async () => {
   const gate = createDangerGate({ evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'allow', confidence: 1, probabilities: { allow: 1, ask: 0, deny: 0 } } } }) });
   assert.equal(await gate.evaluate(exec('shell', { command: 'rm -rf /tmp/build' })), undefined);

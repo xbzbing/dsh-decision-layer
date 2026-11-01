@@ -149,6 +149,9 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
     // Live config-backed floor (default 0.6): a `deny` only blocks once the model
     // is at least this confident. Read per call so an edit takes effect at once.
     minConfidence: async () => (await resolveConfig({ path })).gateSettings?.minConfidence,
+    // Read lazily (only when a dangerous call is recorded) so ordinary tool calls
+    // never pay for deriveMessages().
+    taskText: agent => turnUserText(agent),
   });
   const loopGuard = createLoopGuard({ sessions });
   // Live per-feature enablement; every decision point defaults to enabled.

@@ -261,12 +261,11 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       // multi-line script stays on one readable row.
       if (typeof entry.command === 'string' && entry.command.trim()) record.command = entry.command.replace(/\s+/g, ' ').trim().slice(0, 512);
       if (typeof entry.path === 'string' && entry.path.trim()) record.path = entry.path.replace(/\s+/g, ' ').trim().slice(0, 512);
-      // Narrowing's bounded, redacted task excerpt is shared by the live log and
-      // persisted rows; do not store the full task or arbitrary state objects.
-      if (entry.kind === 'narrow') {
-        if (typeof entry.task === 'string' && entry.task.trim()) record.task = entry.task.replace(/\s+/g, ' ').trim().slice(0, 512);
-        if (Number.isSafeInteger(entry.turn) && (entry.turn as number) >= 0) record.turn = entry.turn as number;
-      }
+      // Every decision point may attach a bounded, already-redacted task excerpt
+      // (gate / self-check / narrowing) and the turn it belongs to. Store only the
+      // excerpt, never the full task or an arbitrary state object.
+      if (typeof entry.task === 'string' && entry.task.trim()) record.task = entry.task.replace(/\s+/g, ' ').trim().slice(0, 512);
+      if (Number.isSafeInteger(entry.turn) && (entry.turn as number) >= 0) record.turn = entry.turn as number;
       if (typeof entry.mode === 'string' && entry.mode) record.mode = entry.mode.slice(0, 16);
       if (typeof entry.score === 'number' && Number.isFinite(entry.score)) record.score = Math.round(entry.score * 100) / 100;
       if (typeof entry.confidence === 'number' && Number.isFinite(entry.confidence)) record.confidence = Math.round(entry.confidence * 100) / 100;
