@@ -1,8 +1,10 @@
-import { createSteerOnce } from './steer-once.mjs';
+import { createSteerOnce } from './steer-once.js';
+import { errorReason, isProbability } from './types.js';
+import type { AgentLike, CheckSettings, EvaluateInput, Evaluator, SessionsFace } from './types.js';
 
 const MAX_OUTPUT = 24 * 1024;
 
-export const DEFAULT_RUBRIC = Object.freeze([
+export const DEFAULT_RUBRIC: readonly string[] = Object.freeze([
   '明显答非所问，或存在严重遗漏 / 自相矛盾',
   '基本答到问题，但有可察觉的遗漏或不严谨',
   '完整、准确、无自相矛盾地回应了请求',
@@ -15,7 +17,7 @@ const STEER_TEXT = '本回合自检得分偏低：请复核是否答到了用户
 // Best-effort over an untrusted string: injected OpenViking memory context blocks
 // (which are not part of the user's actual request) are stripped first, then
 // whitespace collapses and the length is capped.
-function subjectOf(text) {
+function subjectOf(text: unknown): string | undefined {
   if (typeof text !== 'string') return undefined;
   const cleaned = text
     // Drop any complete injected memory blocks (there can be several, multi-line).
@@ -27,15 +29,13 @@ function subjectOf(text) {
   return cleaned ? cleaned.slice(0, 120) : undefined;
 }
 
-function boundedRubric(rubric) {
+function boundedRubric(rubric: unknown): readonly string[] {
   if (!Array.isArray(rubric)) return DEFAULT_RUBRIC;
-  const levels = rubric.filter(item => typeof item === 'string' && item.trim() && item.length <= 256).slice(0, 10);
+  const levels = rubric.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()) && item.length <= 256).slice(0, 10);
   return levels.length >= 2 ? levels : DEFAULT_RUBRIC;
 }
 
-const isProbability = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
-
-export function scoreQuestion(output, rubric = DEFAULT_RUBRIC) {
+export function scoreQuestion(output: unknown, rubric: readonly string[] = DEFAULT_RUBRIC): EvaluateInput {
   return {
     state: { answer: String(output).slice(0, MAX_OUTPUT) },
     questions: { quality: {
@@ -52,28 +52,48 @@ export function scoreQuestion(output, rubric = DEFAULT_RUBRIC) {
 // drifts silently on the next tuning pass.
 export const DEFAULT_MIN_CONFIDENCE = 0.4;
 
+export type CheckTurn = {
+  agent?: AgentLike;
+  turn?: number;
+  signal?: AbortSignal;
+  output?: unknown;
+  userText?: unknown;
+};
+
+export type CheckResult = { evaluated: boolean; lowScore: boolean; steered: boolean; score?: number };
+
+export type SelfCheckOptions = {
+  evaluate?: Evaluator;
+  sessions?: SessionsFace;
+  steer?: (agent: AgentLike, text: string) => unknown;
+  settings?: CheckSettings | (() => Promise<CheckSettings | undefined>);
+  minConfidence?: number;
+};
+
+type Trend = { confident: boolean; trendRun: number; trendSevereRun: number };
+
 // `settings` is an async resolver so rubric/mode/threshold follow live config.
 // `steer(agent, text)` performs the host-native steer; the caller owns building
 // the framework UserMessage so this module stays free of DSH message types.
-export function createSelfCheck({ evaluate, sessions, steer, settings, minConfidence = DEFAULT_MIN_CONFIDENCE } = {}) {
+export function createSelfCheck({ evaluate, sessions, steer, settings, minConfidence = DEFAULT_MIN_CONFIDENCE }: SelfCheckOptions = {}) {
   if (typeof evaluate !== 'function') throw new Error('Self-check requires an evaluator');
   const steerOnce = createSteerOnce();
   const resolveSettings = async () => {
-    let raw = {};
+    let raw: CheckSettings = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
     const mode = raw?.mode === 'steer' ? 'steer' : 'observe';
-    const lowScoreThreshold = Number.isSafeInteger(raw?.lowScoreThreshold) && raw.lowScoreThreshold >= 0 ? raw.lowScoreThreshold : 1;
+    const lowScoreThreshold = Number.isSafeInteger(raw?.lowScoreThreshold) && (raw.lowScoreThreshold as number) >= 0 ? raw.lowScoreThreshold as number : 1;
     // Confidence required before a low score actually opens the supplemental
     // prompt. The constructor argument is the fallback so a direct caller (and a
     // config without the field) keeps its own floor.
     const confidenceFloor = isProbability(raw?.minConfidence) ? raw.minConfidence : minConfidence;
-    // Quality-trend thresholds (unvalidated heuristics; see quality-trend.mjs).
+    // Quality-trend thresholds (unvalidated heuristics; see quality-trend.ts).
     const trendMinConfidence = typeof raw?.trendMinConfidence === 'number' && Number.isFinite(raw.trendMinConfidence) && raw.trendMinConfidence >= 0 && raw.trendMinConfidence <= 1 ? raw.trendMinConfidence : 0.6;
-    const trendRun = Number.isSafeInteger(raw?.trendRun) && raw.trendRun >= 2 ? raw.trendRun : 3;
-    const trendSevereRun = Number.isSafeInteger(raw?.trendSevereRun) && raw.trendSevereRun > trendRun ? raw.trendSevereRun : Math.max(trendRun + 1, 5);
+    const trendRun = Number.isSafeInteger(raw?.trendRun) && (raw.trendRun as number) >= 2 ? raw.trendRun as number : 3;
+    const trendSevereRun = Number.isSafeInteger(raw?.trendSevereRun) && (raw.trendSevereRun as number) > trendRun ? raw.trendSevereRun as number : Math.max(trendRun + 1, 5);
     return { mode, rubric: boundedRubric(raw?.rubric), lowScoreThreshold, minConfidence: confidenceFloor, trendMinConfidence, trendRun, trendSevereRun };
   };
-  const record = (turn, outcome, detail = {}, trend) => {
+  const record = (turn: CheckTurn | undefined, outcome: string, detail: Record<string, unknown> = {}, trend?: Trend): void => {
     const id = turn?.agent?.session?.id;
     if (!sessions || typeof id !== 'string' || typeof sessions.recordCheck !== 'function') return;
     try { sessions.recordCheck(id, outcome, trend); } catch { /* telemetry is best effort */ }
@@ -82,7 +102,7 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
     catch { /* logging is best effort */ }
   };
   return {
-    async review(turn) {
+    async review(turn: CheckTurn | undefined): Promise<CheckResult> {
       const output = typeof turn?.output === 'string' ? turn.output.trim() : '';
       if (!output) return { evaluated: false, lowScore: false, steered: false };
       const id = turn?.agent?.session?.id;
@@ -97,9 +117,9 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
       const { mode, rubric, lowScoreThreshold, minConfidence: confidenceFloor, trendMinConfidence, trendRun, trendSevereRun } = await resolveSettings();
       let answer;
       try {
-        const result = await evaluate(scoreQuestion(output, rubric), { signal: turn.signal });
+        const result = await evaluate(scoreQuestion(output, rubric), { signal: turn?.signal });
         answer = result?.answers?.quality;
-      } catch (error) { record(turn, 'error', { ...subjectDetail, reason: typeof error?.reason === 'string' ? error.reason : 'unreachable' }); return { evaluated: false, lowScore: false, steered: false }; }
+      } catch (error) { record(turn, 'error', { ...subjectDetail, reason: errorReason(error) }); return { evaluated: false, lowScore: false, steered: false }; }
       if (!answer || answer.type !== 'score' || typeof answer.score !== 'number' || !Number.isFinite(answer.score)) {
         record(turn, 'error', { ...subjectDetail, reason: 'invalid-response' });
         return { evaluated: false, lowScore: false, steered: false };
@@ -108,7 +128,7 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
       // stays usable and is recorded as ok/low. Confidence only gates the steer,
       // because only interrupting the user warrants the model being sure.
       const confidence = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) ? answer.confidence : undefined;
-      const detail = confidence === undefined ? { ...subjectDetail } : { ...subjectDetail, confidence };
+      const detail: { subject?: string; confidence?: number; lowConfidence?: boolean } = confidence === undefined ? { ...subjectDetail } : { ...subjectDetail, confidence };
       const lowScore = answer.score <= lowScoreThreshold;
       // The trend run advances over every evaluated score; a high-confidence low
       // score is the only thing that grows it. Thresholds flow to session-state.
@@ -123,7 +143,7 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
       // The turn budget is consumed only on a successful steer (createSteerOnce),
       // so a transient host failure does not permanently suppress this turn.
       const steered = mode === 'steer' && confident && typeof steer === 'function' && turn?.agent
-        ? steerOnce.attempt(turn, () => steer(turn.agent, STEER_TEXT))
+        ? steerOnce.attempt(turn, () => steer(turn.agent as AgentLike, STEER_TEXT))
         : false;
       return { evaluated: true, lowScore: true, steered, score: answer.score };
     },

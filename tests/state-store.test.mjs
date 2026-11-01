@@ -3,7 +3,7 @@ import { mkdtemp, readdir, rm, writeFile, readFile, utimes } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { createStateStore, safeStateId } from '../service/state-store.mjs';
+import { createStateStore, safeStateId } from '../lib/host/state-store.js';
 
 const roots = [];
 async function freshDir() {

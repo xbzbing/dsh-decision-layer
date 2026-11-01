@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createSessionState } from '../service/session-state.mjs';
+import { createSessionState } from '../lib/host/session-state.js';
 
 test('session switch defaults on and counters stay empty for manual work', () => {
   const sessions = createSessionState();

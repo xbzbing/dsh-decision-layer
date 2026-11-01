@@ -3,9 +3,14 @@
 // the trigger icon renders (normal → warn → severe). All thresholds are
 // unvalidated heuristics, tuned later on real decision logs.
 
+import type { Severity } from './types.js';
+
 export const DEFAULT_TREND_MIN_CONFIDENCE = 0.6;
 export const DEFAULT_TREND_RUN = 3;
 export const DEFAULT_TREND_SEVERE_RUN = 5;
+
+export type TrendSample = { lowScore?: boolean; confident?: boolean };
+export type TrendThresholds = { trendRun?: number; trendSevereRun?: number };
 
 // Advance the run over ONE evaluated self-check:
 //   - a good score (not low) resets the run to 0;
@@ -13,7 +18,7 @@ export const DEFAULT_TREND_SEVERE_RUN = 5;
 //   - a low-confidence low score is skipped (neither resets nor increments);
 //   - an unevaluated/absent verdict must not call this at all.
 // `sample` is { lowScore: boolean, confident: boolean }.
-export function advanceRun(run, sample) {
+export function advanceRun(run: number, sample: TrendSample | undefined): number {
   const current = Number.isSafeInteger(run) && run >= 0 ? run : 0;
   if (!sample || sample.lowScore !== true) return 0;
   if (sample.confident === true) return current + 1;
@@ -21,7 +26,7 @@ export function advanceRun(run, sample) {
 }
 
 // Map a run length to a severity, given the warn/severe thresholds.
-export function severityOf(run, { trendRun = DEFAULT_TREND_RUN, trendSevereRun = DEFAULT_TREND_SEVERE_RUN } = {}) {
+export function severityOf(run: number, { trendRun = DEFAULT_TREND_RUN, trendSevereRun = DEFAULT_TREND_SEVERE_RUN }: TrendThresholds = {}): Severity {
   const value = Number.isSafeInteger(run) && run >= 0 ? run : 0;
   if (value >= trendSevereRun) return 'severe';
   if (value >= trendRun) return 'warn';

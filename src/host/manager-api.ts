@@ -1,61 +1,91 @@
-import { loadConfig, resolveConfig, saveConfig } from './config-store.mjs';
+import { loadConfig, resolveConfig, saveConfig } from './config-store.js';
+import { isObject } from './types.js';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { Evaluator, ManagerRoute, SessionsFace } from './types.js';
 
 export const API_PREFIX = '/plugins/dsh-decision-layer/api';
 const BODY_LIMIT = 32 * 1024;
 
-function respond(res, status, value) {
+type CodedError = Error & { code?: string };
+
+const codedError = (message: string, code: string): CodedError => Object.assign(new Error(message), { code });
+
+function respond(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store',
     'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer' });
   res.end(JSON.stringify(value));
 }
 
-function authorizedBrowser(req) {
+function authorizedBrowser(req: IncomingMessage): boolean {
   const address = req.socket?.remoteAddress;
-  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address)) return false;
+  if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(address ?? '')) return false;
   const host = req.headers.host;
   if (typeof host !== 'string' || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(host)) return false;
   if (req.headers['sec-fetch-site'] === 'cross-site') return false;
   const origin = req.headers.origin;
   if (origin === undefined) return req.method === 'GET';
+  // Defensive: anything that is not a single string is rejected, even though
+  // Node folds repeated headers into one comma-joined string before we see it.
+  if (typeof origin !== 'string') return false;
   try {
     const parsed = new URL(origin);
     return ['http:', 'https:'].includes(parsed.protocol) && parsed.host === host;
   } catch { return false; }
 }
 
-async function readBody(req) {
-  if (!req.headers['content-type']?.startsWith('application/json')) throw new Error('Expected JSON');
+async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const contentType = req.headers['content-type'];
+  if (typeof contentType !== 'string' || !contentType.startsWith('application/json')) throw new Error('Expected JSON');
   let size = 0;
-  const chunks = [];
+  const chunks: Buffer[] = [];
   for await (const chunk of req) {
     size += chunk.length;
     if (size > BODY_LIMIT) throw new Error('Request too large');
     chunks.push(chunk);
   }
-  const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object');
+  const value: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  if (!isObject(value)) throw new Error('Expected object');
   return value;
 }
 
-export function createManagerRoutes({ path, sessions, backend, logStore, analyze, listRows, env = process.env, bindHost = '127.0.0.1' }) {
-  const route = (suffix, methods) => ({ kind: 'exact', path: `${API_PREFIX}/${suffix}`, handler: async (req, res) => {
+export type ManagerRouteDeps = {
+  path?: string;
+  sessions: SessionsFace;
+  backend: { evaluate: Evaluator };
+  logStore?: { appendAnnotation: (entry: Record<string, unknown>) => Promise<unknown> };
+  analyze?: (id: string) => Promise<unknown>;
+  listRows?: (id: string, options: { page: number; pageSize: number }) => Promise<unknown>;
+  env?: Record<string, string | undefined>;
+  bindHost?: string;
+};
+
+type MethodHandlers = Record<string, (req: IncomingMessage) => Promise<unknown>>;
+
+export function createManagerRoutes({ path, sessions, backend, logStore, analyze, listRows, env = process.env, bindHost = '127.0.0.1' }: ManagerRouteDeps): ManagerRoute[] {
+  const route = (suffix: string, methods: MethodHandlers): ManagerRoute => ({ kind: 'exact', path: `${API_PREFIX}/${suffix}`, handler: async (req, res) => {
     if (bindHost !== '127.0.0.1' || !authorizedBrowser(req)) return respond(res, 403, { ok: false, error: 'Local same-origin browser request required' });
-    if (!Object.hasOwn(methods, req.method)) return respond(res, 405, { ok: false, error: 'Method not allowed' });
+    const method = req.method ?? '';
+    // hasOwn keeps inherited Object keys ("toString") from matching; the
+    // typeof check narrows the indexed lookup for the stricter compiler.
+    if (!Object.hasOwn(methods, method)) return respond(res, 405, { ok: false, error: 'Method not allowed' });
+    const handler = methods[method];
+    if (typeof handler !== 'function') return respond(res, 405, { ok: false, error: 'Method not allowed' });
     try {
-      const value = await methods[req.method](req);
+      const value = await handler(req);
       return respond(res, 200, { ok: true, value });
     } catch (error) {
       // A genuine internal fault (log analysis / annotation write) is a 500; a
       // tagged or untagged validation/config error stays a client 400. Neither
       // body carries error internals.
-      if (error?.code === 'INTERNAL') return respond(res, 500, { ok: false, error: 'Internal error' });
-      if (error?.code === 'BAD_REQUEST') return respond(res, 400, { ok: false, error: error.message });
+      const coded = error as CodedError;
+      if (coded?.code === 'INTERNAL') return respond(res, 500, { ok: false, error: 'Internal error' });
+      if (coded?.code === 'BAD_REQUEST') return respond(res, 400, { ok: false, error: coded.message });
       return respond(res, 400, { ok: false, error: 'Invalid request or backend unavailable' });
     }
   } });
-  const sessionId = req => {
+  const sessionId = (req: IncomingMessage): string => {
     const id = new URL(req.url ?? '/', 'http://localhost').searchParams.get('sessionId');
-    if (!id) { const error = new Error('sessionId is required'); error.code = 'BAD_REQUEST'; throw error; }
+    if (!id) throw codedError('sessionId is required', 'BAD_REQUEST');
     return id;
   };
   return [
@@ -84,10 +114,10 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
     // / path fragments are not echoed back to the browser.
     route('logs', {
       GET: async req => {
-        if (typeof analyze !== 'function') { const error = new Error('analysis unavailable'); error.code = 'BAD_REQUEST'; throw error; }
+        if (typeof analyze !== 'function') throw codedError('analysis unavailable', 'BAD_REQUEST');
         const id = sessionId(req);
         try { return await analyze(id); }
-        catch (error) { if (error?.code === 'BAD_REQUEST') throw error; const wrapped = new Error('analysis failed'); wrapped.code = 'INTERNAL'; throw wrapped; }
+        catch (error) { if ((error as CodedError)?.code === 'BAD_REQUEST') throw error; throw codedError('analysis failed', 'INTERNAL'); }
       },
     }),
     // One newest-first page of this session's full persisted decision rows, for
@@ -96,31 +126,31 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
     // this exposes nothing the recent-rows route does not already.
     route('logrows', {
       GET: async req => {
-        if (typeof listRows !== 'function') { const error = new Error('log rows unavailable'); error.code = 'BAD_REQUEST'; throw error; }
+        if (typeof listRows !== 'function') throw codedError('log rows unavailable', 'BAD_REQUEST');
         const id = sessionId(req);
         const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
         const page = Number.parseInt(params.get('page') ?? '1', 10);
         const pageSize = Number.parseInt(params.get('pageSize') ?? '100', 10);
         try { return await listRows(id, { page: Number.isNaN(page) ? 1 : page, pageSize: Number.isNaN(pageSize) ? 100 : pageSize }); }
-        catch (error) { if (error?.code === 'BAD_REQUEST') throw error; const wrapped = new Error('log rows failed'); wrapped.code = 'INTERNAL'; throw wrapped; }
+        catch (error) { if ((error as CodedError)?.code === 'BAD_REQUEST') throw error; throw codedError('log rows failed', 'INTERNAL'); }
       },
     }),
     // Append one annotation event for a decision. Explicit user intent: validated
     // and written immediately; a write failure surfaces as an error, not silence.
     route('annotate', {
       POST: async req => {
-        if (!logStore || typeof logStore.appendAnnotation !== 'function') { const error = new Error('annotation unavailable'); error.code = 'BAD_REQUEST'; throw error; }
+        if (!logStore || typeof logStore.appendAnnotation !== 'function') throw codedError('annotation unavailable', 'BAD_REQUEST');
         const body = await readBody(req);
         const target = typeof body.target === 'string' ? body.target.trim() : '';
         const rating = body.rating;
         const session = typeof body.sessionId === 'string' ? body.sessionId.trim() : '';
-        if (!target || target.length > 128 || !['good', 'bad', 'unsure'].includes(rating) || !session || session.length > 512) {
-          const error = new Error('Invalid annotation'); error.code = 'BAD_REQUEST'; throw error;
+        if (!target || target.length > 128 || !['good', 'bad', 'unsure'].includes(rating as string) || !session || session.length > 512) {
+          throw codedError('Invalid annotation', 'BAD_REQUEST');
         }
         // A validated write that still fails is an internal fault (disk / IO), not
         // bad input: surface it as 500 so the client does not read it as a 400.
         try { await logStore.appendAnnotation({ kind: 'annotation', target, rating, sessionId: session }); }
-        catch { const error = new Error('annotation write failed'); error.code = 'INTERNAL'; throw error; }
+        catch { throw codedError('annotation write failed', 'INTERNAL'); }
         return { ok: true, target, rating };
       },
     }),
@@ -128,9 +158,15 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
       GET: async req => { const id = sessionId(req); await sessions.ensureLoaded?.(id); return sessions.snapshot(id); },
       PUT: async req => {
         const body = await readBody(req);
-        await sessions.ensureLoaded?.(body.sessionId);
-        sessions.setEnabled(body.sessionId, body.enabled);
-        return sessions.snapshot(body.sessionId);
+        // The body is untrusted HTTP input; validate before it reaches the
+        // session store so a different SessionsFace cannot silently trust it.
+        const id = body.sessionId;
+        const enabled = body.enabled;
+        if (typeof id !== 'string' || typeof enabled !== 'boolean') throw codedError('Invalid session switch', 'BAD_REQUEST');
+        await sessions.ensureLoaded?.(id);
+        if (typeof sessions.setEnabled !== 'function') throw codedError('session switch unavailable', 'BAD_REQUEST');
+        sessions.setEnabled(id, enabled);
+        return sessions.snapshot(id);
       },
     }),
   ];

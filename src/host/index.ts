@@ -1,31 +1,50 @@
 import { readFile } from 'node:fs/promises';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
-import { resolveConfig, featureEnabled } from './config-store.mjs';
-import { createBackend } from './backend.mjs';
-import { createManagerRoutes } from './manager-api.mjs';
-import { createSessionState } from './session-state.mjs';
-import { createDangerGate, normalizeDangerRules } from './danger-gate.mjs';
-import { createSelfCheck } from './self-check.mjs';
-import { createNarrowing } from './narrowing.mjs';
-import { createTaskCompletion } from './task-completion.mjs';
-import { createLoopGuard } from './loop-guard.mjs';
-import { createLogStore } from './log-store.mjs';
-import { createStateStore } from './state-store.mjs';
-import { analyzeSessionLogs, reconstructSessionSeed, listSessionDecisions } from './log-analyze.mjs';
+import { resolveConfig, featureEnabled } from './config-store.js';
+import { createBackend } from './backend.js';
+import { createManagerRoutes } from './manager-api.js';
+import { createSessionState } from './session-state.js';
+import { createDangerGate, normalizeDangerRules } from './danger-gate.js';
+import { createSelfCheck } from './self-check.js';
+import { createNarrowing } from './narrowing.js';
+import { createTaskCompletion } from './task-completion.js';
+import { createLoopGuard } from './loop-guard.js';
+import { createLogStore } from './log-store.js';
+import { createStateStore } from './state-store.js';
+import { analyzeSessionLogs, reconstructSessionSeed, listSessionDecisions } from './log-analyze.js';
+import { isObject } from './types.js';
+import type {
+  AgentLike, EvaluateInput, HostContext, NextStep, ToolCandidate, ToolExec, WebFace,
+} from './types.js';
 
 export const name = 'dsh-decision-layer';
 export const inject = ['tools', 'skills'];
 
+type LooseMessage = { role?: unknown; content?: unknown; name?: unknown; toolName?: unknown; isError?: unknown };
+
+const asMessage = (value: unknown): LooseMessage | undefined => (isObject(value) ? value as LooseMessage : undefined);
+
+// The text blocks of one message's content, joined; '' for any other shape.
+const textOf = (content: unknown): string => Array.isArray(content)
+  ? content.filter(block => isObject(block) && block.type === 'text' && typeof block.text === 'string')
+    .map(block => (block as { text: string }).text).join('')
+  : '';
+
+const derivedMessages = (agent: unknown): unknown[] | undefined => {
+  const messages = ((agent as { session?: { deriveMessages?: () => unknown } } | undefined)?.session)?.deriveMessages?.();
+  return Array.isArray(messages) ? messages : undefined;
+};
+
 // Best-effort extraction of the turn's final assistant text. The self-check
 // treats empty output as "skip", so an unreachable shape degrades safely.
-function lastAssistantText(agent) {
+function lastAssistantText(agent: unknown): string {
   try {
-    const messages = agent?.session?.deriveMessages?.();
-    if (!Array.isArray(messages)) return '';
+    const messages = derivedMessages(agent);
+    if (!messages) return '';
     for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
+      const message = asMessage(messages[i]);
       if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
-      return message.content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text).join('');
+      return textOf(message.content);
     }
     return '';
   } catch { return ''; }
@@ -33,12 +52,15 @@ function lastAssistantText(agent) {
 
 // The task text a narrowing pass judges tools against: the user messages
 // entering this step. An unreachable shape yields '', which skips narrowing.
-function stepTaskText(messages) {
+function stepTaskText(messages: unknown): string {
   try {
     if (!Array.isArray(messages)) return '';
     return messages
-      .filter(message => message?.role === 'user' && Array.isArray(message.content))
-      .flatMap(message => message.content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text))
+      .map(asMessage)
+      .filter((message): message is LooseMessage => message?.role === 'user' && Array.isArray(message.content))
+      .flatMap(message => (message.content as unknown[])
+        .filter(block => isObject(block) && block.type === 'text' && typeof block.text === 'string')
+        .map(block => (block as { text: string }).text))
       .join('\n').slice(0, 8 * 1024);
   } catch { return ''; }
 }
@@ -46,19 +68,20 @@ function stepTaskText(messages) {
 // The user's request text for this turn, used by task-completion to extract the
 // explicit conditions. Best-effort: an unreachable shape yields '', which skips
 // the check. Takes the trailing run of user messages (the prompt entering the turn).
-function turnUserText(agent) {
+function turnUserText(agent: unknown): string {
   try {
-    const messages = agent?.session?.deriveMessages?.();
-    if (!Array.isArray(messages)) return '';
-    const texts = [];
+    const messages = derivedMessages(agent);
+    if (!messages) return '';
+    const texts: string[] = [];
     let collecting = false;
     // Walk backwards: skip the turn's trailing assistant/tool messages, collect the
     // contiguous user run that started this turn, then stop at the prior assistant.
     for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
+      const message = asMessage(messages[i]);
       if (message?.role === 'user' && Array.isArray(message.content)) {
         collecting = true;
-        texts.unshift(message.content.filter(block => block?.type === 'text' && typeof block.text === 'string').map(block => block.text).join('\n'));
+        texts.unshift(message.content.filter(block => isObject(block) && block.type === 'text' && typeof block.text === 'string')
+          .map(block => (block as { text: string }).text).join('\n'));
       } else if (collecting) break;
     }
     return texts.join('\n').slice(0, 8 * 1024);
@@ -68,12 +91,13 @@ function turnUserText(agent) {
 // Tool evidence for the turn's task-completion check: the tool calls and their
 // ok/error outcome from the derived history. Names only (no arguments), bounded.
 // An unreachable shape yields [], which skips the check.
-function turnToolEvidence(agent) {
+function turnToolEvidence(agent: unknown): { tool: string; outcome: 'ok' | 'error' }[] {
   try {
-    const messages = agent?.session?.deriveMessages?.();
-    if (!Array.isArray(messages)) return [];
-    const evidence = [];
-    for (const message of messages) {
+    const messages = derivedMessages(agent);
+    if (!messages) return [];
+    const evidence: { tool: string; outcome: 'ok' | 'error' }[] = [];
+    for (const item of messages) {
+      const message = asMessage(item);
       if (message?.role !== 'tool' || !Array.isArray(message.content)) continue;
       const tool = typeof message.name === 'string' ? message.name : (typeof message.toolName === 'string' ? message.toolName : '');
       if (!tool) continue;
@@ -85,22 +109,22 @@ function turnToolEvidence(agent) {
 }
 
 // Enumerate the tool names/descriptions visible to this agent scope, best-effort.
-function agentTools(ctx, agent) {
+function agentTools(ctx: HostContext, agent: AgentLike | undefined): ToolCandidate[] {
   try {
     const schemas = typeof ctx.tools?.schemas === 'function' ? ctx.tools.schemas(agent) : undefined;
     if (!Array.isArray(schemas)) return [];
     return schemas
-      .filter(schema => schema && typeof schema.name === 'string')
+      .filter((schema): schema is { name: string; description?: unknown } => isObject(schema) && typeof schema.name === 'string')
       .map(schema => ({ name: schema.name, description: typeof schema.description === 'string' ? schema.description : '' }));
   } catch { return []; }
 }
 
-export async function apply(ctx, options = {}) {
+export async function apply(ctx: HostContext, options: { configPath?: string } = {}): Promise<void> {
   const path = options.configPath;
   const backend = createBackend({ config: () => resolveConfig({ path }) });
   // The research log sink is attached once the web server reveals the instance
   // port (used in the file name); until then decision logs stay in memory only.
-  let logStore;
+  let logStore: ReturnType<typeof createLogStore> | undefined;
   // Durable per-session mirror of the live decision counters/log, keyed by
   // session id (not port), so a resumed session's panel survives an instance
   // restart instead of resetting to zero. Independent of the JSONL research log.
@@ -135,7 +159,7 @@ export async function apply(ctx, options = {}) {
   // decision point keeps its own safe fallback (the gate falls back to 0.6 and
   // the built-in rules), so the safety net stays armed instead of the agent
   // losing every tool.
-  const featureOn = async key => {
+  const featureOn = async (key: 'gate' | 'check' | 'narrow' | 'complete'): Promise<boolean> => {
     try { return featureEnabled((await resolveConfig({ path })).features, key); }
     catch { return true; }
   };
@@ -143,15 +167,15 @@ export async function apply(ctx, options = {}) {
     if (typeof ctx.tools.guard === 'function') {
       // Deterministic loop guard runs with no backend; then the dangerous-gate
       // monotonic denial. Guards can only deny, never re-allow.
-      ctx.tools.guard(exec => loopGuard.check(exec));
-      ctx.tools.guard(exec => gate.guardReason(exec));
+      ctx.tools.guard((exec: ToolExec) => loopGuard.check(exec));
+      ctx.tools.guard((exec: ToolExec) => gate.guardReason(exec));
     }
-    const install = () => {
-      const disposePre = ctx.on('tools/pre-execute', async (exec, next) => {
+    const install = (): (() => void) => {
+      const disposePre = ctx.on('tools/pre-execute', async (exec: ToolExec, next: NextStep) => {
         if (!(await featureOn('gate'))) return next();
         return gate.preExecute(exec, next);
       });
-      const disposePost = ctx.on('tools/post-execute', async (exec, result, next) => {
+      const disposePost = ctx.on('tools/post-execute', async (exec: ToolExec, result: unknown, next: NextStep) => {
         gate.observeResult(exec, result);
         return next();
       });
@@ -164,12 +188,14 @@ export async function apply(ctx, options = {}) {
       evaluate: (input, request) => backend.evaluate(input, request),
       sessions,
       settings: async () => (await resolveConfig({ path })).checkSettings,
-      steer: (agent, text) => agent.steer(createUserMessage({
-        content: [{ type: 'text', text }],
-        source: { kind: 'user' },
-      })),
+      steer: (agent, text) => {
+        // The host's agent always has steer; if it does not, fail loudly so
+        // createSteerOnce treats it as a failed steer and keeps the turn budget.
+        if (typeof agent.steer !== 'function') throw new Error('Agent cannot be steered');
+        return agent.steer(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }));
+      },
     });
-    const installCheck = () => ctx.on('agent/turn-stopping', async payload => {
+    const installCheck = () => ctx.on('agent/turn-stopping', async (payload: TurnStoppingPayload) => {
       if (!(await featureOn('check'))) return;
       return selfCheck.review({
         agent: payload.agent, turn: payload.turn, signal: payload.signal,
@@ -184,14 +210,16 @@ export async function apply(ctx, options = {}) {
       evaluate: (input, request) => backend.evaluate(input, request),
       sessions,
       settings: async () => (await resolveConfig({ path })).completeSettings,
-      steer: (agent, text) => agent.steer(createUserMessage({
-        content: [{ type: 'text', text }],
-        source: { kind: 'user' },
-      })),
+      steer: (agent, text) => {
+        // The host's agent always has steer; if it does not, fail loudly so
+        // createSteerOnce treats it as a failed steer and keeps the turn budget.
+        if (typeof agent.steer !== 'function') throw new Error('Agent cannot be steered');
+        return agent.steer(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }));
+      },
     });
     // Independent turn-stopping listener, separate from the self-check: it checks
     // whether the user's explicit conditions have supporting tool evidence.
-    const installCompletion = () => ctx.on('agent/turn-stopping', async payload => {
+    const installCompletion = () => ctx.on('agent/turn-stopping', async (payload: TurnStoppingPayload) => {
       if (!(await featureOn('complete'))) return;
       return taskCompletion.review({
         agent: payload.agent, turn: payload.turn, signal: payload.signal,
@@ -211,8 +239,8 @@ export async function apply(ctx, options = {}) {
     // Narrow once per turn, on its first step, and only enforce a restriction in
     // enforce mode. The restriction is agent-scoped and lifted before the next
     // turn's pass so a later turn is judged against the full host-allowed set.
-    const narrowedTurns = new Map();
-    const installNarrowingHook = () => ctx.on('agent/pre-step', async (payload, next) => {
+    const narrowedTurns = new Map<string, { turn: number; dispose: (() => void) | undefined }>();
+    const installNarrowingHook = () => ctx.on('agent/pre-step', async (payload: PreStepPayload, next: NextStep) => {
       const agent = payload?.agent;
       const id = agent?.session?.id;
       const turn = payload?.turn;
@@ -229,9 +257,12 @@ export async function apply(ctx, options = {}) {
           state?.dispose?.();
           narrowedTurns.delete(id);
           if (await featureOn('narrow')) {
-            const entry = { turn, dispose: undefined };
+            const entry: { turn: number; dispose: (() => void) | undefined } = { turn: turn as number, dispose: undefined };
             narrowedTurns.set(id, entry);
-            if (narrowedTurns.size > 1024) { const oldest = narrowedTurns.keys().next().value; if (oldest !== id) { narrowedTurns.get(oldest)?.dispose?.(); narrowedTurns.delete(oldest); } }
+            if (narrowedTurns.size > 1024) {
+              const oldest = narrowedTurns.keys().next().value as string;
+              if (oldest !== id) { narrowedTurns.get(oldest)?.dispose?.(); narrowedTurns.delete(oldest); }
+            }
             try {
               const result = await narrowing.review({
                 agent, turn, signal: payload.signal,
@@ -249,11 +280,11 @@ export async function apply(ctx, options = {}) {
     if (typeof ctx.effect === 'function') ctx.effect(installNarrowingHook);
     else installNarrowingHook();
   }
-  const rawSkill = await readFile(new URL('../skills/decision-layer/SKILL.md', import.meta.url), 'utf8');
+  const rawSkill = await readFile(new URL('../../skills/decision-layer/SKILL.md', import.meta.url), 'utf8');
   const content = rawSkill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
   ctx.skills.register({ name: 'decision-layer', description: '显式发起结构化裁决，辅助明确边界的选择与评分。', content, source: 'bundled' });
 
-  const output = { schema: { type: 'object', additionalProperties: true }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] };
+  const output = { schema: { type: 'object', additionalProperties: true }, render: (_args: unknown, value: unknown) => [{ type: 'text', text: JSON.stringify(value) }] };
   ctx.tools.register({
     name: 'decision_evaluate', description: '对 state 和 questions 执行一次显式结构化裁决，不修改 agent 行为。',
     parameters: { type: 'object', required: ['state', 'questions'], properties: {
@@ -261,7 +292,7 @@ export async function apply(ctx, options = {}) {
       questions: { type: 'object', additionalProperties: { type: 'object', additionalProperties: true } },
     }, additionalProperties: false },
     output, timeoutMs: 25_000,
-    execute: (args, exec) => backend.evaluate(args, { signal: exec.signal }),
+    execute: (args, exec) => backend.evaluate(args as EvaluateInput, { signal: exec.signal }),
   });
   ctx.tools.register({
     name: 'decision_check_connection', description: '向裁决端点发送一次轻量连通测试，不增加自动裁决指标。',
@@ -274,15 +305,18 @@ export async function apply(ctx, options = {}) {
     },
   });
 
-  ctx.inject(['webServer'], web => {
+  ctx.inject(['webServer'], (web: WebFace) => {
     logStore = createLogStore({ port: web.webServer.port });
     const port = web.webServer.port;
-    const analyze = async sessionId => analyzeSessionLogs(sessionId, {
+    const analyze = async (sessionId: string) => analyzeSessionLogs(sessionId, {
       port,
       trendConfig: (await resolveConfig({ path })).checkSettings,
     });
-    const listRows = (sessionId, { page, pageSize } = {}) => listSessionDecisions(sessionId, { port, page, pageSize });
+    const listRows = (sessionId: string, { page, pageSize }: { page?: number; pageSize?: number } = {}) => listSessionDecisions(sessionId, { port, page, pageSize });
     const unregister = createManagerRoutes({ path, sessions, backend, logStore, analyze, listRows, bindHost: web.webServer.host }).map(route => web.webServer.register(route));
     return () => { unregister.forEach(dispose => dispose()); const store = logStore; logStore = undefined; void store?.dispose(); };
   });
 }
+
+type TurnStoppingPayload = { agent?: AgentLike; turn?: number; signal?: AbortSignal };
+type PreStepPayload = { agent?: AgentLike; turn?: number; signal?: AbortSignal; messages?: unknown };

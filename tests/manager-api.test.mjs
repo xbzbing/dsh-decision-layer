@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { after, test } from 'node:test';
-import { createManagerRoutes } from '../service/manager-api.mjs';
-import { createSessionState } from '../service/session-state.mjs';
+import { createManagerRoutes } from '../lib/host/manager-api.js';
+import { createSessionState } from '../lib/host/session-state.js';
 
 const directory = await mkdtemp(join(tmpdir(), 'decision-http-'));
 after(() => rm(directory, { recursive: true, force: true }));

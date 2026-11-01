@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createTaskCompletion, extractConditions, completionQuestions } from '../service/task-completion.mjs';
+import { createTaskCompletion, extractConditions, completionQuestions } from '../lib/host/task-completion.js';
 
 const turn = (userText, { output = '完成了', evidence = [{ tool: 'bash', outcome: 'ok' }], sessionId = 's1', turnNo = 1 } = {}) =>
   ({ agent: { session: { id: sessionId } }, turn: turnNo, signal: AbortSignal.timeout(1000), userText, output, evidence });

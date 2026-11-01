@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createLogStore } from '../service/log-store.mjs';
+import { createLogStore } from '../lib/host/log-store.js';
 
 const dir = async () => mkdtemp(join(tmpdir(), 'decision-logs-'));
 

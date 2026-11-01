@@ -1,11 +1,14 @@
-const DEFAULT_COMMAND_PATTERNS = Object.freeze([
+import { errorReason, isObject, isProbability } from './types.js';
+import type { DangerRuleAdditions, DangerRuleSet, EvaluateInput, Evaluator, SessionsFace, ToolExec } from './types.js';
+
+const DEFAULT_COMMAND_PATTERNS: readonly RegExp[] = Object.freeze([
   /\brm\b(?=[^\n]*(?:\s-r(?:f|fr)?\b|\s--recursive\b|\s--force\b))/i,
   /\bgit\s+push\b[^\n]*(?:\s-f\b|\s--force(?:-with-lease)?\b)/i,
   /\b(?:drop|truncate)\s+(?:table|database)\b/i,
   /\bkubectl\s+delete\b/i,
   /\b(?:prod|production)\b[^\n]*\b(?:write|deploy|config|secret)\b/i,
 ]);
-const DEFAULT_PATH_PATTERNS = Object.freeze([/(?:^|[\\/])(?:etc|production|prod)[\\/]/i, /(?:^|[\\/])\.env(?:$|\.)/i]);
+const DEFAULT_PATH_PATTERNS: readonly RegExp[] = Object.freeze([/(?:^|[\\/])(?:etc|production|prod)[\\/]/i, /(?:^|[\\/])\.env(?:$|\.)/i]);
 const COMMAND_KEYS = new Set(['command', 'cmd', 'script', 'query']);
 const PATH_KEYS = new Set(['path', 'file_path', 'filePath', 'target', 'file', 'filename', 'directory']);
 const MAX_RULES = 64;
@@ -13,21 +16,19 @@ const MAX_PATTERN_LENGTH = 128;
 const MAX_METADATA_LENGTH = 2048;
 export const MIN_CONFIDENCE = 0.6;
 
-const isProbability = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
-
-export const DEFAULT_DANGEROUS_RULES = Object.freeze({
+export const DEFAULT_DANGEROUS_RULES: DangerRuleSet = Object.freeze({
   toolNames: Object.freeze(['bash', 'pwsh', 'shell', 'exec', 'terminal', 'run_command', 'write', 'edit', 'str_replace_editor', 'file_write', 'write_file']),
   commandPatterns: DEFAULT_COMMAND_PATTERNS,
   pathPatterns: DEFAULT_PATH_PATTERNS,
 });
 
-const redact = value => value.slice(0, MAX_METADATA_LENGTH)
+const redact = (value: string): string => value.slice(0, MAX_METADATA_LENGTH)
   .replace(/(password|passwd|secret|token|api[_-]?key)\s*[:=]\s*\S+/gi, '$1=[redacted]')
   .replace(/(password|passwd|secret|token|api[_-]?key)\s+\S+/gi, '$1 [redacted]');
-const literalPattern = value => new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-const boundedList = value => Array.isArray(value) ? value.filter(item => typeof item === 'string' && item.trim() && item.length <= MAX_PATTERN_LENGTH).slice(0, MAX_RULES) : [];
+const literalPattern = (value: string): RegExp => new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+const boundedList = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && Boolean(item.trim()) && item.length <= MAX_PATTERN_LENGTH).slice(0, MAX_RULES) : [];
 
-function collectMetadata(value, depth = 0, commands = [], paths = []) {
+function collectMetadata(value: unknown, depth = 0, commands: string[] = [], paths: string[] = []): { commands: string[]; paths: string[] } | undefined {
   if (depth > 4 || value === null || typeof value !== 'object') return;
   for (const [key, item] of Object.entries(value)) {
     const normalized = key.toLowerCase();
@@ -40,16 +41,18 @@ function collectMetadata(value, depth = 0, commands = [], paths = []) {
   return { commands, paths };
 }
 
-export function summarizeExecution(exec) {
-  const commands = [];
-  const paths = [];
+export function summarizeExecution(exec: ToolExec | undefined): { tool: string; command: string; path: string; inspectable: boolean } {
+  const commands: string[] = [];
+  const paths: string[] = [];
   const collected = collectMetadata(exec?.arguments, 0, commands, paths);
   return { tool: typeof exec?.name === 'string' ? exec.name.slice(0, 128) : '',
     command: commands.join('\n').slice(0, MAX_METADATA_LENGTH), path: paths.join('\n').slice(0, MAX_METADATA_LENGTH),
     inspectable: Boolean(collected) };
 }
 
-export function normalizeDangerRules(input = {}) {
+export type RulesInput = DangerRuleSet | DangerRuleAdditions;
+
+export function normalizeDangerRules(input: DangerRuleAdditions = {}): DangerRuleSet {
   const addTools = boundedList(input.addToolNames);
   const removeTools = new Set(boundedList(input.removeToolNames));
   const tools = [...new Set([...DEFAULT_DANGEROUS_RULES.toolNames, ...addTools])].filter(tool => !removeTools.has(tool));
@@ -58,8 +61,12 @@ export function normalizeDangerRules(input = {}) {
   return { toolNames: tools, commandPatterns: commands, pathPatterns: paths };
 }
 
-export function classifyDangerous(exec, rules = DEFAULT_DANGEROUS_RULES) {
-  const normalized = Array.isArray(rules.toolNames) ? rules : normalizeDangerRules(rules);
+// A set of compiled rules is distinguishable from the configured additions by
+// its `toolNames` array; only the additions get normalized.
+const isRuleSet = (rules: RulesInput): rules is DangerRuleSet => Array.isArray((rules as DangerRuleSet).toolNames);
+
+export function classifyDangerous(exec: ToolExec | undefined, rules: RulesInput = DEFAULT_DANGEROUS_RULES): { dangerous: boolean; reason: string } {
+  const normalized = isRuleSet(rules) ? rules : normalizeDangerRules(rules);
   const summary = summarizeExecution(exec);
   if (!normalized.toolNames.includes(summary.tool)) return { dangerous: false, reason: 'Tool is outside the dangerous-call rules' };
   if (!summary.inspectable) return { dangerous: true, reason: 'Dangerous call arguments could not be inspected' };
@@ -68,7 +75,7 @@ export function classifyDangerous(exec, rules = DEFAULT_DANGEROUS_RULES) {
   return { dangerous: byCommand || byPath || (!summary.command && !summary.path), reason: 'Dangerous tool call requires a host decision' };
 }
 
-function suggestionQuestion(exec) {
+function suggestionQuestion(exec: ToolExec | undefined): EvaluateInput {
   return {
     state: summarizeExecution(exec),
     questions: { verdict: {
@@ -78,9 +85,20 @@ function suggestionQuestion(exec) {
   };
 }
 
-export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS_RULES, minConfidence = MIN_CONFIDENCE } = {}) {
+type GateDecision = { kind: 'deny'; reason: string; modelSuggestion: string };
+type RulesResolver = RulesInput | (() => Promise<RulesInput | undefined>);
+type MinConfidenceResolver = number | (() => Promise<number | undefined>);
+
+export type DangerGateOptions = {
+  evaluate?: Evaluator;
+  sessions?: SessionsFace;
+  rules?: RulesResolver;
+  minConfidence?: MinConfidenceResolver;
+};
+
+export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS_RULES, minConfidence = MIN_CONFIDENCE }: DangerGateOptions = {}) {
   if (typeof evaluate !== 'function') throw new Error('Danger gate requires an evaluator');
-  const resolveRules = async () => {
+  const resolveRules = async (): Promise<RulesInput> => {
     if (typeof rules !== 'function') return rules;
     try { return (await rules()) ?? DEFAULT_DANGEROUS_RULES; } catch { return DEFAULT_DANGEROUS_RULES; }
   };
@@ -88,26 +106,26 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
   // mirroring `rules`, so changing it takes effect without reloading the plugin.
   // An invalid or failed resolution falls back to the built-in floor rather than
   // to 0 — a broken config must never turn the gate into "block every deny".
-  const resolveMinConfidence = async () => {
+  const resolveMinConfidence = async (): Promise<number> => {
     if (typeof minConfidence !== 'function') return isProbability(minConfidence) ? minConfidence : MIN_CONFIDENCE;
     try {
       const value = await minConfidence();
       return isProbability(value) ? value : MIN_CONFIDENCE;
     } catch { return MIN_CONFIDENCE; }
   };
-  const deniedCalls = new WeakSet();
-  const evaluatedCalls = new WeakSet();
-  const record = (exec, outcome, detail = {}) => {
+  const deniedCalls = new WeakSet<object>();
+  const evaluatedCalls = new WeakSet<object>();
+  const record = (exec: ToolExec | undefined, outcome: string, detail: Record<string, unknown> = {}): void => {
     const id = exec?.agent?.session?.id;
     if (!sessions || typeof id !== 'string') return;
-    try { sessions.record(id, 'gate', outcome); } catch { /* metrics cannot change the security decision */ }
+    try { sessions.record?.(id, 'gate', outcome); } catch { /* metrics cannot change the security decision */ }
     if (typeof sessions.log !== 'function') return;
     // Attach the same redacted, bounded command/path summary that was sent to the
     // backend, so a human reviewing the log sees WHAT was gated (e.g. the actual
     // `rm -rf ...`), not just the tool name. Secrets are already stripped by
     // summarizeExecution; session-state caps the length for storage.
     const summary = summarizeExecution(exec);
-    const args = {};
+    const args: Record<string, unknown> = {};
     if (summary.command) args.command = summary.command;
     if (summary.path) args.path = summary.path;
     try { sessions.log(id, { kind: 'gate', outcome, tool: exec?.name, ...args, ...detail }); }
@@ -122,38 +140,44 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
   // host approval and can no longer be mis-rendered as "the user rejected".
   // `passThrough` records the non-intervention for observability and returns
   // undefined so preExecute falls through to next().
-  const passThrough = (exec, outcome, detail = {}) => {
+  const passThrough = (exec: ToolExec | undefined, outcome: string, detail: Record<string, unknown> = {}): undefined => {
     record(exec, outcome, { action: 'pass', ...detail });
     if (exec && typeof exec === 'object') evaluatedCalls.add(exec);
     return undefined;
   };
-  return {
-    classify: exec => classifyDangerous(exec, typeof rules === 'function' ? DEFAULT_DANGEROUS_RULES : rules),
-    guardReason(exec) {
-      if (!exec || !deniedCalls.has(exec)) return undefined;
+  const gate = {
+    classify: (exec: ToolExec | undefined) => classifyDangerous(exec, typeof rules === 'function' ? DEFAULT_DANGEROUS_RULES : rules),
+    guardReason(exec: unknown): string | undefined {
+      if (!isObject(exec) || !deniedCalls.has(exec)) return undefined;
       deniedCalls.delete(exec);
       return 'Dangerous call rejected by decision policy';
     },
-    observeResult(exec, result) {
-      if (!evaluatedCalls.has(exec) || !sessions || typeof sessions.recordActual !== 'function') return;
-      const id = exec?.agent?.session?.id;
+    observeResult(exec: ToolExec | undefined, result: unknown): void {
+      if (!exec || typeof exec !== 'object' || !evaluatedCalls.has(exec) || !sessions || typeof sessions.recordActual !== 'function') return;
+      const id = exec.agent?.session?.id;
       if (typeof id !== 'string') return;
-      try { sessions.recordActual(id, result?.isError ? 'deny' : 'allow'); } catch { /* telemetry is best effort */ }
+      const isError = isObject(result) && result.isError === true;
+      try { sessions.recordActual(id, isError ? 'deny' : 'allow'); } catch { /* telemetry is best effort */ }
       evaluatedCalls.delete(exec);
     },
-    async evaluate(exec) {
+    async evaluate(exec: ToolExec): Promise<GateDecision | undefined> {
       let result;
       try {
         result = await evaluate(suggestionQuestion(exec), { signal: exec.signal });
       } catch (error) {
         // Backend failure: no verdict, so do not intervene (pass through).
-        return passThrough(exec, 'error', { reason: typeof error?.reason === 'string' ? error.reason : 'unreachable' });
+        return passThrough(exec, 'error', { reason: errorReason(error) });
       }
-      const answer = result?.answers?.verdict;
-      const choice = answer?.choice;
-      if (!['allow', 'ask', 'deny'].includes(choice)) return passThrough(exec, 'error', { reason: 'invalid-response' });
+      // The backend validates the wire shape, but an injected evaluator (a test
+      // or an embedder) may hand us a bare verdict: read the two fields it can
+      // act on instead of requiring the protocol's `type` discriminator, which
+      // is not part of the gate's contract with the host.
+      const answer = result?.answers?.verdict as { choice?: unknown; confidence?: unknown } | undefined;
+      const choice = typeof answer?.choice === 'string' ? answer.choice : undefined;
+      const confidence = typeof answer?.confidence === 'number' ? answer.confidence : undefined;
+      if (choice === undefined || !['allow', 'ask', 'deny'].includes(choice)) return passThrough(exec, 'error', { reason: 'invalid-response' });
       const minConfidenceNow = await resolveMinConfidence();
-      const confident = typeof answer.confidence === 'number' && Number.isFinite(answer.confidence) && answer.confidence >= minConfidenceNow;
+      const confident = confidence !== undefined && Number.isFinite(confidence) && confidence >= minConfidenceNow;
       // Only a high-confidence deny blocks the call.
       if (choice === 'deny' && confident) {
         record(exec, 'deny', { suggestion: 'deny', action: 'deny' });
@@ -161,11 +185,11 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
         return { kind: 'deny', reason: 'Dangerous call rejected by decision policy', modelSuggestion: choice };
       }
       // Uncertain (low confidence) or a non-deny verdict → do not intervene.
-      const detail = { suggestion: choice };
-      if (!confident) { detail.reason = 'low-confidence'; if (typeof answer.confidence === 'number' && Number.isFinite(answer.confidence)) detail.confidence = answer.confidence; }
+      const detail: { suggestion: string; reason?: string; confidence?: number } = { suggestion: choice };
+      if (!confident) { detail.reason = 'low-confidence'; if (confidence !== undefined && Number.isFinite(confidence)) detail.confidence = confidence; }
       return passThrough(exec, 'allow', detail);
     },
-    async preExecute(exec, next) {
+    async preExecute(exec: ToolExec, next: () => unknown): Promise<unknown> {
       const classification = classifyDangerous(exec, await resolveRules());
       if (!classification.dangerous) return next();
       const id = exec?.agent?.session?.id;
@@ -175,8 +199,9 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
           if (sessions.snapshot(id).enabled === false) return next();
         } catch { passThrough(exec, 'error', { reason: 'unreachable' }); return next(); }
       }
-      const decision = await this.evaluate(exec);
+      const decision = await gate.evaluate(exec);
       return decision ?? next();
     },
   };
+  return gate;
 }

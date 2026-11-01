@@ -2,8 +2,9 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/p
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isObject } from './types.js';
 
-export function stateDir() {
+export function stateDir(): string {
   return join(homedir(), '.config', 'dsh-decision-layer', 'state');
 }
 
@@ -12,27 +13,35 @@ export function stateDir() {
 // `session-<uuid>`, which pass; anything with separators, leading dot, `..`, or
 // an unreasonable length is skipped (that session simply stays in-memory only).
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
-export function safeStateId(id) {
+export function safeStateId(id: unknown): string | undefined {
   return typeof id === 'string' && SAFE_ID.test(id) && !id.includes('..') ? id : undefined;
 }
+
+export type StateStoreOptions = {
+  dir?: string;
+  flushIntervalMs?: number;
+  retentionDays?: number;
+  now?: () => number;
+};
 
 // Durable per-session mirror of the live decision counters + recent log. One
 // small JSON file per session id (`<id>.json`), written debounced and atomically
 // (unique tmp + rename), pruned by age on an occasional flush. This is separate
 // from the JSONL research log: it exists only so a resumed session's live panel
-// (dock count, metric cards, recent log) survives an instance restart instead of
-// resetting to zero. All IO is best-effort — a failure never throws into the
-// decision path; at worst the panel loses the last few seconds of counters.
+// (dock count, metric cards, recent log) keeps its totals across an instance
+// restart instead of resetting to zero. All IO is best-effort — a failure never
+// throws into the decision path; at worst the panel loses the last few seconds
+// of counters.
 export function createStateStore({ dir = stateDir(), flushIntervalMs = 2000,
-  retentionDays = 30, now = () => Date.now() } = {}) {
-  const pending = new Map(); // id -> latest live state reference awaiting a flush
-  let timer;
+  retentionDays = 30, now = () => Date.now() }: StateStoreOptions = {}) {
+  const pending = new Map<string, Record<string, unknown>>(); // id -> latest live state awaiting a flush
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let flushing = false;
   let lastPrune = 0;
 
-  const fileFor = id => join(dir, `${id}.json`);
+  const fileFor = (id: string): string => join(dir, `${id}.json`);
 
-  const writeOne = async (id, state) => {
+  const writeOne = async (id: string, state: Record<string, unknown>): Promise<void> => {
     const temporary = join(dir, `${id}.${randomUUID()}.tmp`);
     try {
       await writeFile(temporary, `${JSON.stringify({ v: 1, at: now(), state })}\n`, { mode: 0o600, flag: 'wx' });
@@ -42,8 +51,8 @@ export function createStateStore({ dir = stateDir(), flushIntervalMs = 2000,
     }
   };
 
-  const prune = async () => {
-    let names;
+  const prune = async (): Promise<void> => {
+    let names: string[];
     try { names = await readdir(dir); } catch { return; }
     const cutoff = now() - retentionDays * 24 * 60 * 60 * 1000;
     await Promise.all(names.map(async name => {
@@ -55,7 +64,7 @@ export function createStateStore({ dir = stateDir(), flushIntervalMs = 2000,
     }));
   };
 
-  const flush = async () => {
+  const flush = async (): Promise<void> => {
     if (flushing || pending.size === 0) return;
     flushing = true;
     // Snapshot ids now; each state is JSON.stringify'd at write time so the file
@@ -73,26 +82,26 @@ export function createStateStore({ dir = stateDir(), flushIntervalMs = 2000,
 
   return {
     // Read a session's persisted state, or undefined when there is no usable file.
-    async load(id) {
+    async load(id: unknown): Promise<Record<string, unknown> | undefined> {
       const safe = safeStateId(id);
       if (!safe) return undefined;
       try {
-        const parsed = JSON.parse(await readFile(fileFor(safe), 'utf8'));
-        if (parsed && typeof parsed === 'object' && parsed.state && typeof parsed.state === 'object' && !Array.isArray(parsed.state)) {
+        const parsed: unknown = JSON.parse(await readFile(fileFor(safe), 'utf8'));
+        if (isObject(parsed) && isObject(parsed.state)) {
           return parsed.state;
         }
       } catch { /* missing or malformed: no seed, start empty */ }
       return undefined;
     },
     // Register the latest live state for a session and schedule a debounced flush.
-    save(id, state) {
+    save(id: unknown, state: unknown): void {
       const safe = safeStateId(id);
-      if (!safe || state === null || typeof state !== 'object') return;
-      pending.set(safe, state);
+      if (!safe || state === null || typeof state !== 'object' || Array.isArray(state)) return;
+      pending.set(safe, state as Record<string, unknown>);
       if (!timer) timer = setTimeout(() => { timer = undefined; void flush(); }, flushIntervalMs);
     },
     flush,
-    dispose() {
+    dispose(): Promise<void> {
       if (timer) { clearTimeout(timer); timer = undefined; }
       return flush();
     },

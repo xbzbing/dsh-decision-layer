@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { narrowTools, relevanceQuestions, createNarrowing } from '../service/narrowing.mjs';
-import { createSessionState } from '../service/session-state.mjs';
+import { narrowTools, relevanceQuestions, createNarrowing } from '../lib/host/narrowing.js';
+import { createSessionState } from '../lib/host/session-state.js';
 
 const answers = probs => ({ answers: Object.fromEntries(Object.entries(probs).map(([tool, noul]) => [tool, { type: 'noul', noul }])) });
 const turn = (state, tools, { sessionId = 's1', turn = 1 } = {}) => ({ agent: { session: { id: sessionId } }, turn, signal: AbortSignal.timeout(1000), state, tools });

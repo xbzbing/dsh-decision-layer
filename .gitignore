@@ -1,7 +1,7 @@
 node_modules/
 dist/
-# Build output — not committed (docs/adr/0012). The release pipeline builds it
-# before `npm pack`; `npm run build:client` builds it locally.
+# Build output — not committed (docs/adr/0012, docs/adr/0015). The release
+# pipeline builds it before `npm pack`; `npm run build` builds it locally.
 lib/
 *.log
 .DS_Store

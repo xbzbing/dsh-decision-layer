@@ -2,41 +2,37 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { isObject as safeObject, isProbability as probability } from './types.js';
+import type {
+  CheckSettings, CompleteSettings, ConfigView, DangerRuleAdditions, FeatureKey, Features,
+  GateSettings, NarrowSettings, ResolvedConfig,
+} from './types.js';
 
 export const DEFAULT_URL = 'https://api.typesafe.ai';
 export const DEFAULT_MODEL = 'jev-latest';
 
-export function configPath(env = process.env) {
+export function configPath(env: Record<string, string | undefined> = process.env): string {
   return env.DSH_DECISION_CONFIG_PATH?.trim() || join(homedir(), '.config', 'dsh-decision-layer', 'config.json');
 }
 
-function safeObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-async function readStored(path) {
+async function readStored(path: string): Promise<Record<string, unknown>> {
   try {
-    const value = JSON.parse(await readFile(path, 'utf8'));
+    const value: unknown = JSON.parse(await readFile(path, 'utf8'));
     if (!safeObject(value)) throw new Error('Invalid decision configuration');
     return value;
   } catch (error) {
-    if (error?.code === 'ENOENT') return {};
+    if ((error as { code?: string } | undefined)?.code === 'ENOENT') return {};
     throw error;
   }
 }
 
-function safeText(value) {
+function safeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-// A confidence/threshold/probability: any finite number in [0, 1].
-function probability(value) {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
-}
-
-function checkedUrl(value) {
+function checkedUrl(value: string): string {
   if (!value) return '';
-  let url;
+  let url: URL;
   try { url = new URL(value); } catch { throw new Error('Invalid URL'); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
     throw new Error('Invalid URL: expected an HTTP(S) address without credentials, query or fragment');
@@ -44,16 +40,18 @@ function checkedUrl(value) {
   return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
 }
 
-function validRules(value) {
+const RULE_FIELDS = ['addToolNames', 'removeToolNames', 'addCommandPatterns', 'addPathPatterns'] as const;
+
+function validRules(value: unknown): DangerRuleAdditions | undefined {
   if (!safeObject(value)) return undefined;
-  const fields = ['addToolNames', 'removeToolNames', 'addCommandPatterns', 'addPathPatterns'];
-  if (Object.keys(value).some(key => !fields.includes(key))) throw new Error('Invalid danger rules');
-  const rules = {};
-  for (const field of fields) {
-    if (value[field] !== undefined && (!Array.isArray(value[field]) || value[field].length > 64 || value[field].some(item => typeof item !== 'string' || !item.trim() || item.length > 128))) {
+  if (Object.keys(value).some(key => !RULE_FIELDS.includes(key as typeof RULE_FIELDS[number]))) throw new Error('Invalid danger rules');
+  const rules: DangerRuleAdditions = {};
+  for (const field of RULE_FIELDS) {
+    const raw = value[field];
+    if (raw !== undefined && (!Array.isArray(raw) || raw.length > 64 || raw.some(item => typeof item !== 'string' || !item.trim() || item.length > 128))) {
       throw new Error('Invalid danger rules');
     }
-    if (value[field] !== undefined) rules[field] = value[field].map(item => item.trim());
+    if (raw !== undefined) rules[field] = (raw as string[]).map(item => item.trim());
   }
   return rules;
 }
@@ -68,11 +66,11 @@ function validRules(value) {
 // REJECTED rather than ignored, which makes the whole resolve reject (see the
 // contract note on saveConfig). Callers that read config on a hot path must
 // therefore tolerate a throw and fall back to a safe default — see `featureOn`
-// in dsh.mjs and `resolveMinConfidence` in danger-gate.mjs.
-function validGate(value) {
+// in index.ts and `resolveMinConfidence` in danger-gate.ts.
+function validGate(value: unknown): GateSettings | undefined {
   if (!safeObject(value)) return undefined;
   if (Object.keys(value).some(key => key !== 'minConfidence')) throw new Error('Invalid gate settings');
-  const gate = {};
+  const gate: GateSettings = {};
   if (value.minConfidence !== undefined) {
     if (!probability(value.minConfidence)) throw new Error('Invalid gate settings');
     gate.minConfidence = value.minConfidence;
@@ -80,10 +78,12 @@ function validGate(value) {
   return gate;
 }
 
-function validCheck(value) {
+const CHECK_FIELDS = ['mode', 'rubric', 'lowScoreThreshold', 'minConfidence', 'trendMinConfidence', 'trendRun', 'trendSevereRun'] as const;
+
+function validCheck(value: unknown): CheckSettings | undefined {
   if (!safeObject(value)) return undefined;
-  if (Object.keys(value).some(key => !['mode', 'rubric', 'lowScoreThreshold', 'minConfidence', 'trendMinConfidence', 'trendRun', 'trendSevereRun'].includes(key))) throw new Error('Invalid self-check settings');
-  const check = {};
+  if (Object.keys(value).some(key => !CHECK_FIELDS.includes(key as typeof CHECK_FIELDS[number]))) throw new Error('Invalid self-check settings');
+  const check: CheckSettings = {};
   if (value.mode !== undefined) {
     if (value.mode !== 'observe' && value.mode !== 'steer') throw new Error('Invalid self-check settings');
     check.mode = value.mode;
@@ -92,11 +92,11 @@ function validCheck(value) {
     if (!Array.isArray(value.rubric) || value.rubric.length > 10 || value.rubric.some(item => typeof item !== 'string' || !item.trim() || item.length > 256)) {
       throw new Error('Invalid self-check settings');
     }
-    check.rubric = value.rubric.map(item => item.trim());
+    check.rubric = (value.rubric as string[]).map(item => item.trim());
   }
   if (value.lowScoreThreshold !== undefined) {
-    if (!Number.isSafeInteger(value.lowScoreThreshold) || value.lowScoreThreshold < 0 || value.lowScoreThreshold > 9) throw new Error('Invalid self-check settings');
-    check.lowScoreThreshold = value.lowScoreThreshold;
+    if (!Number.isSafeInteger(value.lowScoreThreshold) || (value.lowScoreThreshold as number) < 0 || (value.lowScoreThreshold as number) > 9) throw new Error('Invalid self-check settings');
+    check.lowScoreThreshold = value.lowScoreThreshold as number;
   }
   // Confidence required before a low score actually triggers the supplemental
   // prompt. Below this the score is still logged; only interrupting the user
@@ -113,12 +113,12 @@ function validCheck(value) {
     check.trendMinConfidence = value.trendMinConfidence;
   }
   if (value.trendRun !== undefined) {
-    if (!Number.isSafeInteger(value.trendRun) || value.trendRun < 2 || value.trendRun > 10) throw new Error('Invalid self-check settings');
-    check.trendRun = value.trendRun;
+    if (!Number.isSafeInteger(value.trendRun) || (value.trendRun as number) < 2 || (value.trendRun as number) > 10) throw new Error('Invalid self-check settings');
+    check.trendRun = value.trendRun as number;
   }
   if (value.trendSevereRun !== undefined) {
-    if (!Number.isSafeInteger(value.trendSevereRun) || value.trendSevereRun < 2 || value.trendSevereRun > 20) throw new Error('Invalid self-check settings');
-    check.trendSevereRun = value.trendSevereRun;
+    if (!Number.isSafeInteger(value.trendSevereRun) || (value.trendSevereRun as number) < 2 || (value.trendSevereRun as number) > 20) throw new Error('Invalid self-check settings');
+    check.trendSevereRun = value.trendSevereRun as number;
   }
   // The severe threshold must sit strictly above the warn threshold; check against
   // the effective warn value (explicit or default 3) so the pair is always ordered.
@@ -129,10 +129,12 @@ function validCheck(value) {
   return check;
 }
 
-function validNarrow(value) {
+const NARROW_FIELDS = ['mode', 'threshold', 'keepPrefixes', 'maxCandidates', 'batchMode'] as const;
+
+function validNarrow(value: unknown): NarrowSettings | undefined {
   if (!safeObject(value)) return undefined;
-  if (Object.keys(value).some(key => !['mode', 'threshold', 'keepPrefixes', 'maxCandidates', 'batchMode'].includes(key))) throw new Error('Invalid narrowing settings');
-  const narrow = {};
+  if (Object.keys(value).some(key => !NARROW_FIELDS.includes(key as typeof NARROW_FIELDS[number]))) throw new Error('Invalid narrowing settings');
+  const narrow: NarrowSettings = {};
   if (value.mode !== undefined) {
     if (value.mode !== 'observe' && value.mode !== 'enforce') throw new Error('Invalid narrowing settings');
     narrow.mode = value.mode;
@@ -149,14 +151,14 @@ function validNarrow(value) {
       value.keepPrefixes.some(item => typeof item !== 'string' || !item.trim() || item.length > 128)) {
       throw new Error('Invalid narrowing settings');
     }
-    narrow.keepPrefixes = value.keepPrefixes.map(item => item.trim());
+    narrow.keepPrefixes = (value.keepPrefixes as string[]).map(item => item.trim());
   }
   // Optional-candidate ceiling: above this count, enforce is downgraded to
   // observe so a large tool surface is never mass-pruned. 1–200; unset uses the
   // narrowing default (20).
   if (value.maxCandidates !== undefined) {
-    if (!Number.isSafeInteger(value.maxCandidates) || value.maxCandidates < 1 || value.maxCandidates > 200) throw new Error('Invalid narrowing settings');
-    narrow.maxCandidates = value.maxCandidates;
+    if (!Number.isSafeInteger(value.maxCandidates) || (value.maxCandidates as number) < 1 || (value.maxCandidates as number) > 200) throw new Error('Invalid narrowing settings');
+    narrow.maxCandidates = value.maxCandidates as number;
   }
   // Per-request batching strategy for the relevance pass, chosen by backend
   // context capacity. 'single' sends every tool in one systemone request (best
@@ -166,7 +168,7 @@ function validNarrow(value) {
   // tries 'single' first and falls back to 'split' only after a context-overflow
   // http-error, so Jev stays at one call and tev1 self-corrects.
   if (value.batchMode !== undefined) {
-    if (!['auto', 'single', 'split'].includes(value.batchMode)) throw new Error('Invalid narrowing settings');
+    if (value.batchMode !== 'auto' && value.batchMode !== 'single' && value.batchMode !== 'split') throw new Error('Invalid narrowing settings');
     narrow.batchMode = value.batchMode;
   }
   return narrow;
@@ -174,24 +176,24 @@ function validNarrow(value) {
 
 // Per-feature enable flags for the decision points. Every flag defaults to
 // enabled; only an explicit `false` disables its decision point.
-export const FEATURE_KEYS = Object.freeze(['gate', 'check', 'narrow', 'complete']);
+export const FEATURE_KEYS: readonly FeatureKey[] = Object.freeze(['gate', 'check', 'narrow', 'complete']);
 
 // Task-completion checking settings: observe-only by default; steer opts into a
 // single supplemental prompt on low completion. minConditions is the minimum
 // number of explicit conditions a turn must have for the check to run at all;
 // minConfidence is how sure the model must be that a condition is unmet before
 // it actually opens the supplemental step.
-function validComplete(value) {
+function validComplete(value: unknown): CompleteSettings | undefined {
   if (!safeObject(value)) return undefined;
   if (Object.keys(value).some(key => !['mode', 'minConditions', 'minConfidence'].includes(key))) throw new Error('Invalid task-completion settings');
-  const complete = {};
+  const complete: CompleteSettings = {};
   if (value.mode !== undefined) {
     if (value.mode !== 'observe' && value.mode !== 'steer') throw new Error('Invalid task-completion settings');
     complete.mode = value.mode;
   }
   if (value.minConditions !== undefined) {
-    if (!Number.isSafeInteger(value.minConditions) || value.minConditions < 2 || value.minConditions > 20) throw new Error('Invalid task-completion settings');
-    complete.minConditions = value.minConditions;
+    if (!Number.isSafeInteger(value.minConditions) || (value.minConditions as number) < 2 || (value.minConditions as number) > 20) throw new Error('Invalid task-completion settings');
+    complete.minConditions = value.minConditions as number;
   }
   // Range 0–1; unset uses the built-in 0.4.
   if (value.minConfidence !== undefined) {
@@ -201,26 +203,26 @@ function validComplete(value) {
   return complete;
 }
 
-function validFeatures(value) {
+function validFeatures(value: unknown): Features | undefined {
   if (!safeObject(value)) return undefined;
-  if (Object.keys(value).some(key => !FEATURE_KEYS.includes(key))) throw new Error('Invalid feature settings');
-  const features = {};
+  if (Object.keys(value).some(key => !FEATURE_KEYS.includes(key as FeatureKey))) throw new Error('Invalid feature settings');
+  const features: Features = {};
   for (const key of FEATURE_KEYS) {
     if (value[key] !== undefined) {
       if (typeof value[key] !== 'boolean') throw new Error('Invalid feature settings');
-      features[key] = value[key];
+      features[key] = value[key] as boolean;
     }
   }
   return features;
 }
 
 // Resolve one decision point's enablement, defaulting to enabled when unset.
-export function featureEnabled(features, key) {
+export function featureEnabled(features: Features | undefined, key: FeatureKey): boolean {
   return !(safeObject(features) && features[key] === false);
 }
 
-function view(stored) {
-  const result = {
+function view(stored: Record<string, unknown>): ConfigView {
+  const result: ConfigView = {
     url: safeText(stored.url),
     model: safeText(stored.model),
     apiKeySet: Boolean(safeText(stored.apiKey)),
@@ -235,14 +237,14 @@ function view(stored) {
   return result;
 }
 
-export async function loadConfig(path = configPath()) {
+export async function loadConfig(path: string = configPath()): Promise<ConfigView> {
   return view(await readStored(path));
 }
 
-export async function resolveConfig({ path = configPath(), env = process.env } = {}) {
+export async function resolveConfig({ path = configPath(), env = process.env }: { path?: string; env?: Record<string, string | undefined> } = {}): Promise<ResolvedConfig> {
   const stored = await readStored(path);
   const url = checkedUrl(safeText(stored.url) || safeText(env.DSH_DECISION_BASE_URL) || safeText(env.TYPESAFE_BASE_URL) || DEFAULT_URL);
-  const resolved = {
+  const resolved: ResolvedConfig = {
     url,
     apiKey: safeText(stored.apiKey) || safeText(env.DSH_DECISION_API_KEY) || safeText(env.TYPESAFE_API_KEY),
     model: safeText(stored.model) || safeText(env.DSH_DECISION_MODEL) || DEFAULT_MODEL,
@@ -257,6 +259,9 @@ export async function resolveConfig({ path = configPath(), env = process.env } =
   return resolved;
 }
 
+const SAVE_FIELDS = ['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'gateSettings', 'checkSettings', 'narrowSettings', 'completeSettings', 'features'] as const;
+const TEXT_FIELDS = ['url', 'apiKey', 'model', 'confirmHttpUrl'] as const;
+
 // Write the configuration atomically. Contract for the nested settings sections
 // (dangerRules, gateSettings, checkSettings, narrowSettings, completeSettings,
 // features): a POSTED section REPLACES the stored one wholesale; an OMITTED
@@ -264,20 +269,20 @@ export async function resolveConfig({ path = configPath(), env = process.env } =
 // must send the whole section, and a caller that wants to change a field inside
 // a section it does not own must read first and send `{...previous, edit}`.
 // Merge-per-field was considered and rejected: it would make a stored field
-// impossible to unset. service/manager-api.mjs forwards the raw body, so this
-// contract holds for API clients too, not just the config page.
-export async function saveConfig(input, path = configPath()) {
-  if (!safeObject(input) || Object.keys(input).some(key => !['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'gateSettings', 'checkSettings', 'narrowSettings', 'completeSettings', 'features'].includes(key))) {
+// impossible to unset. manager-api.ts forwards the raw body, so this contract
+// holds for API clients too, not just the config page.
+export async function saveConfig(input: Record<string, unknown>, path: string = configPath()): Promise<ConfigView> {
+  if (!safeObject(input) || Object.keys(input).some(key => !SAVE_FIELDS.includes(key as typeof SAVE_FIELDS[number]))) {
     throw new Error('Invalid configuration fields');
   }
-  for (const key of ['url', 'apiKey', 'model', 'confirmHttpUrl']) {
+  for (const key of TEXT_FIELDS) {
     if (input[key] !== undefined && typeof input[key] !== 'string') throw new Error(`Invalid ${key}`);
   }
   const previous = await readStored(path);
   const url = checkedUrl(safeText(input.url === undefined ? previous.url : input.url));
   const apiKey = safeText(input.apiKey === undefined ? previous.apiKey : input.apiKey);
   const model = safeText(input.model === undefined ? previous.model : input.model);
-  if (model.length > 128 || /[\r\n]/.test(input.model ?? '') || /[\r\n]/.test(input.apiKey ?? '')) {
+  if (model.length > 128 || /[\r\n]/.test((input.model ?? '') as string) || /[\r\n]/.test((input.apiKey ?? '') as string)) {
     throw new Error('Invalid model or API key');
   }
   const dangerRules = input.dangerRules === undefined ? previous.dangerRules : validRules(input.dangerRules);
@@ -291,7 +296,7 @@ export async function saveConfig(input, path = configPath()) {
   if (url.startsWith('http://') && !confirmed && previous.httpApprovedUrl !== url) {
     throw new Error('HTTP URL requires explicit confirmation');
   }
-  const next = { url, apiKey, model, httpApprovedUrl: url.startsWith('http://') ? url : '' };
+  const next: Record<string, unknown> = { url, apiKey, model, httpApprovedUrl: url.startsWith('http://') ? url : '' };
   if (dangerRules !== undefined) next.dangerRules = dangerRules;
   if (gateSettings !== undefined) next.gateSettings = gateSettings;
   if (checkSettings !== undefined) next.checkSettings = checkSettings;

@@ -3,8 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { saveConfig } from '../service/config-store.mjs';
-import { apply, inject, name } from '../service/dsh.mjs';
+import { saveConfig } from '../lib/host/config-store.js';
+import { apply, inject, name } from '../lib/host/index.js';
 
 const directory = await mkdtemp(join(tmpdir(), 'decision-plugin-'));
 after(() => rm(directory, { recursive: true, force: true }));

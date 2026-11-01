@@ -6,19 +6,23 @@
 // `attempt(turn, run)` calls `run()` (which performs the host steer and may
 // throw) and records the turn key only after `run()` returns without throwing.
 // Returns true iff a steer was actually performed this call.
-export function createSteerOnce({ maxTurns = 4096 } = {}) {
-  const steeredTurns = new Set();
-  const keyOf = turn => {
+
+export type SteerTurn = { agent?: { session?: { id?: string } }; turn?: number };
+
+export function createSteerOnce({ maxTurns = 4096 }: { maxTurns?: number } = {}) {
+  const steeredTurns = new Set<string>();
+  const keyOf = (turn: SteerTurn | undefined): string | undefined => {
     const id = turn?.agent?.session?.id;
-    return typeof id === 'string' && Number.isInteger(turn?.turn) ? `${id}:${turn.turn}` : undefined;
+    const index = turn?.turn;
+    return typeof id === 'string' && Number.isInteger(index) ? `${id}:${index}` : undefined;
   };
   return {
-    attempt(turn, run) {
+    attempt(turn: SteerTurn | undefined, run: () => void): boolean {
       const key = keyOf(turn);
       if (key === undefined || steeredTurns.has(key)) return false;
       try { run(); } catch { return false; }
       steeredTurns.add(key);
-      if (steeredTurns.size > maxTurns) steeredTurns.delete(steeredTurns.values().next().value);
+      if (steeredTurns.size > maxTurns) steeredTurns.delete(steeredTurns.values().next().value as string);
       return true;
     },
   };

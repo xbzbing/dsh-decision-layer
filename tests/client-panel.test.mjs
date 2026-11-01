@@ -856,7 +856,7 @@ test('the posted advanced body is accepted by the real config store and round-tr
   const { mkdtemp, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
-  const { saveConfig, resolveConfig } = await import('../service/config-store.mjs');
+  const { saveConfig, resolveConfig } = await import('../lib/host/config-store.js');
   let savedBody;
   globalThis.fetch = async (url, init) => {
     if (String(url).endsWith('/config') && init?.method === 'PUT') { savedBody = JSON.parse(init.body); return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' }); }

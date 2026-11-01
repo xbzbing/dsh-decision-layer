@@ -7,8 +7,8 @@
 // hooks, no tools, and never touches DSH runtime state.
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createBackend } from '../../service/backend.mjs';
-import { resolveConfig } from '../../service/config-store.mjs';
+import { createBackend } from '../../lib/host/backend.js';
+import { resolveConfig } from '../../lib/host/config-store.js';
 
 const REQUEST_LIMIT = 256 * 1024;
 const MAX_QUESTIONS = 64;

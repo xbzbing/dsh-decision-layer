@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createSelfCheck, DEFAULT_RUBRIC, scoreQuestion } from '../service/self-check.mjs';
+import { createSelfCheck, DEFAULT_RUBRIC, scoreQuestion } from '../lib/host/self-check.js';
 
 const turn = (text, { sessionId = 's1', turn = 1 } = {}) => ({ agent: { id: sessionId, session: { id: sessionId } }, turn, signal: AbortSignal.timeout(1000), output: text });
 const lowScore = { answers: { quality: { type: 'score', score: 0, confidence: 1, probabilities: { '0': 1, '1': 0, '2': 0 } } } };

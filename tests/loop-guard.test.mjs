@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createLoopGuard, fingerprintCall } from '../service/loop-guard.mjs';
+import { createLoopGuard, fingerprintCall } from '../lib/host/loop-guard.js';
 
 const exec = (name, args, sessionId = 's1') => ({ name, arguments: args, agent: { session: { id: sessionId } } });
 

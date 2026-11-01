@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { classifyDangerous, createDangerGate, DEFAULT_DANGEROUS_RULES } from '../service/danger-gate.mjs';
+import { classifyDangerous, createDangerGate, DEFAULT_DANGEROUS_RULES } from '../lib/host/danger-gate.js';
 
 const exec = (name, args) => ({ name, arguments: args, signal: AbortSignal.timeout(1000), agent: { session: { id: 's1' } }, callId: 'call-1' });
 

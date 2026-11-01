@@ -23,8 +23,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # package.json engines: >=20.11. Node 20 is retired on hosted runners,
-        # so the floor is covered by 22.
+        # package.json engines declares >=20.11; hosted runners no longer offer
+        # Node 20, so CI exercises the supported 22/24 line instead of the floor.
         node: ['22.x', '24.x']
     steps:
       - uses: actions/checkout@v7
@@ -34,11 +34,21 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
-      # `lib/` is not committed (docs/adr/0012), so the client bundle is built
-      # here. `build:client` also runs `tsc` in strict mode — there is no
-      # separate typecheck step because the bundle build *is* the typecheck.
-      - name: Build client bundle and typecheck
-        run: npm ci && npm run build:client
+      # `lib/` is not committed (docs/adr/0012, docs/adr/0015), so both halves
+      # are built here. `npm run check` = build + tests: the host build runs
+      # `tsc` for declarations (that is the host typecheck) and `build.mjs`
+      # type-checks the client before bundling it.
+      - name: Build both halves, typecheck, and test
+        run: npm ci && npm run check
 
-      - name: Tests
-        run: npm test
+      # The tarball layout is part of this plugin's contract (main/exports/files,
+      # host modules, client bundle). Pack it from the same build and run the
+      # release assertion, so a broken manifest fails in the PR instead of at
+      # release time. One Node line is enough: the check is artifact-shaped.
+      - name: Package assertions
+        if: matrix.node == '24.x'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          npm pack --pack-destination dist
+          node scripts/assert-pack.mjs dist/*.tgz

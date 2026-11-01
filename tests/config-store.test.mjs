@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { rm } from 'node:fs/promises';
-import { loadConfig, saveConfig, resolveConfig, configPath, featureEnabled } from '../service/config-store.mjs';
+import { loadConfig, saveConfig, resolveConfig, configPath, featureEnabled } from '../lib/host/config-store.js';
 
 const temporary = await mkdtemp(join(tmpdir(), 'decision-layer-test-'));
 after(() => rm(temporary, { recursive: true, force: true }));

@@ -2,16 +2,16 @@ import { createReadStream } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
-import { logsDir } from './log-store.mjs';
+import { logsDir } from './log-store.js';
 
 // Stream the persisted decision JSONL logs line by line, yielding one parsed
 // record per line. Files are read sequentially so a large corpus is never fully
 // buffered. A malformed line is skipped, not fatal. Only this port's files are
 // read when `port` is given (matching the log-store naming); otherwise all
 // `decisions-*.jsonl` files are read.
-export async function* createReadableStream({ dir = logsDir(), port } = {}) {
-  const prefix = Number.isInteger(port) && port > 0 ? `decisions-${port}-` : 'decisions-';
-  let names;
+export async function* createReadableStream({ dir = logsDir(), port }: { dir?: string; port?: number } = {}): AsyncGenerator<unknown> {
+  const prefix = Number.isInteger(port) && (port as number) > 0 ? `decisions-${port}-` : 'decisions-';
+  let names: string[];
   try { names = await readdir(dir); } catch { return; }
   const files = names.filter(name => name.startsWith(prefix) && name.endsWith('.jsonl')).sort();
   for (const name of files) {

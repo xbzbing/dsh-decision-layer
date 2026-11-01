@@ -1,93 +1,118 @@
 import { randomUUID } from 'node:crypto';
-import { advanceRun, severityOf } from './quality-trend.mjs';
+import { advanceRun, severityOf } from './quality-trend.js';
+import type {
+  CheckCounters, CompleteCounters, GateCounters, LogKind, LogRow, NarrowCounters, SessionSeed,
+  SessionSinkRow, SessionSnapshot, SessionState, Severity,
+} from './types.js';
 
-function sessionKey(value) {
+const KINDS: readonly string[] = ['gate', 'check', 'narrow', 'complete'];
+const SEVERITIES: readonly Severity[] = ['normal', 'warn', 'severe'];
+
+function sessionKey(value: unknown): string {
   if (typeof value !== 'string' || !value.trim() || value.length > 512) throw new Error('Invalid session ID');
   return value.trim();
 }
 
-function emptyState() {
-  return { enabled: true, attempts: 0, failures: 0,
+// The live state and the persisted seed share one counter shape; only the
+// master switch is live-only, so the seed builder can fill everything else.
+function emptyCounters(): SessionSeed {
+  return { attempts: 0, failures: 0,
     gate: { attempts: 0, failures: 0, ask: 0, deny: 0, allow: 0, actual: { allow: 0, deny: 0, error: 0 } },
     check: { attempts: 0, failures: 0, low: 0, run: 0, severity: 'normal' },
     narrow: { attempts: 0, failures: 0, applied: 0, dropped: 0 },
     complete: { attempts: 0, failures: 0, unsatisfied: 0, satisfied: 0, insufficient: 0, steered: 0 }, log: [] };
 }
 
-function safeTool(value) {
+function emptyState(): SessionState {
+  return { enabled: true, ...emptyCounters() };
+}
+
+function safeTool(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, 128) : undefined;
 }
 
-const toCount = value => (Number.isSafeInteger(value) && value >= 0 ? value : 0);
+const toCount = (value: unknown): number => (Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : 0);
+
+const asRecord = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
 // Rebuild a trusted in-memory state from a persisted (untrusted) snapshot. Every
 // counter is coerced into the emptyState() shape with a non-negative-integer
 // guard and the trend severity into its enum, so a stale or tampered file can
 // never inject an out-of-shape value into the live counters. The recent log is
 // kept as plain records (newest-last); callers trim it to the log cap.
-function coerceState(raw) {
+function coerceState(raw: unknown): SessionState {
   const state = emptyState();
-  if (!raw || typeof raw !== 'object') return state;
-  if (typeof raw.enabled === 'boolean') state.enabled = raw.enabled;
-  state.attempts = toCount(raw.attempts);
-  state.failures = toCount(raw.failures);
-  const g = raw.gate;
-  if (g && typeof g === 'object') {
+  const record = asRecord(raw);
+  if (!record) return state;
+  if (typeof record.enabled === 'boolean') state.enabled = record.enabled;
+  state.attempts = toCount(record.attempts);
+  state.failures = toCount(record.failures);
+  const g = asRecord(record.gate);
+  if (g) {
     state.gate.attempts = toCount(g.attempts); state.gate.failures = toCount(g.failures);
     state.gate.ask = toCount(g.ask); state.gate.deny = toCount(g.deny); state.gate.allow = toCount(g.allow);
-    const a = g.actual;
-    if (a && typeof a === 'object') { state.gate.actual.allow = toCount(a.allow); state.gate.actual.deny = toCount(a.deny); state.gate.actual.error = toCount(a.error); }
+    const a = asRecord(g.actual);
+    if (a) { state.gate.actual.allow = toCount(a.allow); state.gate.actual.deny = toCount(a.deny); state.gate.actual.error = toCount(a.error); }
   }
-  const c = raw.check;
-  if (c && typeof c === 'object') {
+  const c = asRecord(record.check);
+  if (c) {
     state.check.attempts = toCount(c.attempts); state.check.failures = toCount(c.failures); state.check.low = toCount(c.low);
     state.check.run = toCount(c.run);
-    state.check.severity = ['normal', 'warn', 'severe'].includes(c.severity) ? c.severity : 'normal';
+    state.check.severity = typeof c.severity === 'string' && SEVERITIES.includes(c.severity as Severity) ? c.severity as Severity : 'normal';
   }
-  const n = raw.narrow;
-  if (n && typeof n === 'object') {
+  const n = asRecord(record.narrow);
+  if (n) {
     state.narrow.attempts = toCount(n.attempts); state.narrow.failures = toCount(n.failures);
     state.narrow.applied = toCount(n.applied); state.narrow.dropped = toCount(n.dropped);
   }
-  const k = raw.complete;
-  if (k && typeof k === 'object') {
+  const k = asRecord(record.complete);
+  if (k) {
     state.complete.attempts = toCount(k.attempts); state.complete.failures = toCount(k.failures);
     state.complete.unsatisfied = toCount(k.unsatisfied); state.complete.satisfied = toCount(k.satisfied);
     state.complete.insufficient = toCount(k.insufficient); state.complete.steered = toCount(k.steered);
   }
-  if (Array.isArray(raw.log)) {
-    state.log = raw.log
-      .filter(entry => entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.kind === 'string')
-      .map(entry => ({ ...entry }));
+  if (Array.isArray(record.log)) {
+    state.log = record.log
+      .filter((entry): entry is Record<string, unknown> => Boolean(asRecord(entry)) && typeof (entry as Record<string, unknown>).kind === 'string')
+      .map(entry => ({ ...entry })) as LogRow[];
   }
   return state;
 }
 
-export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onLog, loadState, persistState } = {}) {
+export type SessionStateOptions = {
+  maxSessions?: number;
+  maxLogEntries?: number;
+  onLog?: (entry: SessionSinkRow) => void;
+  loadState?: (id: string) => Promise<unknown> | unknown;
+  persistState?: (id: string, state: SessionState) => unknown;
+};
+
+export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onLog, loadState, persistState }: SessionStateOptions = {}) {
   if (!Number.isSafeInteger(maxSessions) || maxSessions < 1) throw new Error('Invalid session limit');
   if (!Number.isSafeInteger(maxLogEntries) || maxLogEntries < 1) throw new Error('Invalid log limit');
-  const sessions = new Map();
+  const sessions = new Map<string, SessionState>();
   const sink = typeof onLog === 'function' ? onLog : undefined;
   const load = typeof loadState === 'function' ? loadState : undefined;
   const persist = typeof persistState === 'function' ? persistState : undefined;
   // Memoize rehydration per id so a session is seeded from disk at most once per
   // process. Bounded like `sessions`; dropping a memo entry only risks a
   // redundant disk read that no-ops (ensureLoaded never clobbers live state).
-  const loaded = new Map();
+  const loaded = new Map<string, Promise<void>>();
   // Mirror the latest live state to the durable store after every mutation.
   // Best-effort: a persistence fault must never surface in the decision path.
-  const bump = (key, state) => { if (persist) { try { persist(key, state); } catch { /* best effort */ } } };
+  const bump = (key: string, state: SessionState): void => { if (persist) { try { persist(key, state); } catch { /* best effort */ } } };
   // FIFO eviction: when the map is full, drop the oldest-inserted session before
   // admitting a new one (Map preserves insertion order, so the first key is the
   // oldest). This mirrors loop-guard / narrowing and means the store never
   // "fills up" — there is no capacity-exceeded state. An evicted session's
   // in-memory counters/log are gone, but the persisted JSONL log is unaffected;
   // a later call rebuilds an empty state for it.
-  const writable = id => {
+  const writable = (id: unknown): SessionState => {
     const key = sessionKey(id);
     let state = sessions.get(key);
     if (!state) {
-      if (sessions.size >= maxSessions) sessions.delete(sessions.keys().next().value);
+      if (sessions.size >= maxSessions) sessions.delete(sessions.keys().next().value as string);
       state = emptyState();
       sessions.set(key, state);
     }
@@ -100,37 +125,37 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
     // when no loadState was given or the session already has live state. Callers
     // should await this before the first snapshot/record of a resumed session
     // (the plugin does so at the turn's first step and in the panel routes).
-    async ensureLoaded(id) {
+    async ensureLoaded(id: unknown): Promise<void> {
       if (!load) return;
-      let key;
+      let key: string;
       try { key = sessionKey(id); } catch { return; }
       const existing = loaded.get(key);
       if (existing) return existing;
       const promise = (async () => {
         if (sessions.has(key)) return; // live events already created state; keep it
-        let raw;
+        let raw: unknown;
         try { raw = await load(key); } catch { raw = undefined; }
         if (!raw) return;
         if (sessions.has(key)) return; // a concurrent mutation won the race; do not clobber
         const state = coerceState(raw);
         if (state.log.length > maxLogEntries) state.log.splice(0, state.log.length - maxLogEntries);
-        if (sessions.size >= maxSessions) sessions.delete(sessions.keys().next().value);
+        if (sessions.size >= maxSessions) sessions.delete(sessions.keys().next().value as string);
         sessions.set(key, state);
       })();
-      if (loaded.size >= maxSessions) loaded.delete(loaded.keys().next().value);
+      if (loaded.size >= maxSessions) loaded.delete(loaded.keys().next().value as string);
       loaded.set(key, promise);
       return promise;
     },
-    setEnabled(id, enabled) {
+    setEnabled(id: unknown, enabled: unknown): void {
       if (typeof enabled !== 'boolean') throw new Error('Invalid enabled value');
       const state = writable(id);
       state.enabled = enabled;
       bump(sessionKey(id), state);
     },
-    snapshot(id) {
+    snapshot(id: unknown): SessionSnapshot {
       const stored = sessions.get(sessionKey(id));
       const state = stored ?? emptyState();
-      const value = { enabled: state.enabled, hasAutomaticDecisions: state.attempts > 0, attempts: state.attempts, failures: state.failures };
+      const value: SessionSnapshot = { enabled: state.enabled, hasAutomaticDecisions: state.attempts > 0, attempts: state.attempts, failures: state.failures };
       if (state.gate.attempts > 0) value.gate = { ...state.gate, actual: { ...state.gate.actual } };
       if (state.check.attempts > 0) value.check = { attempts: state.check.attempts, failures: state.check.failures, low: state.check.low, trend: { run: state.check.run, severity: state.check.severity } };
       if (state.narrow.attempts > 0) value.narrow = { ...state.narrow };
@@ -138,78 +163,90 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       if (state.log.length > 0) value.log = state.log.map(entry => ({ ...entry }));
       return value;
     },
-    record(id, kind, outcome) {
+    record(id: unknown, kind: string, outcome: string): void {
       if (kind !== 'gate' || !['allow', 'ask', 'deny', 'error'].includes(outcome)) throw new Error('Invalid automatic decision');
       const state = writable(id);
       state.attempts++;
       state.gate.attempts++;
       if (outcome === 'error') { state.failures++; state.gate.failures++; }
-      else state.gate[outcome]++;
+      else if (outcome === 'allow') state.gate.allow++;
+      else if (outcome === 'ask') state.gate.ask++;
+      else state.gate.deny++;
       bump(sessionKey(id), state);
     },
-    recordActual(id, outcome) {
+    recordActual(id: unknown, outcome: string): void {
       if (!['allow', 'deny', 'error'].includes(outcome)) throw new Error('Invalid actual decision');
       const state = writable(id);
-      state.gate.actual[outcome]++;
+      const actual: GateCounters['actual'] = state.gate.actual;
+      if (outcome === 'allow') actual.allow++;
+      else if (outcome === 'deny') actual.deny++;
+      else actual.error++;
       bump(sessionKey(id), state);
     },
-    recordCheck(id, outcome, trend) {
+    recordCheck(id: unknown, outcome: string, trend?: Record<string, unknown>): void {
       if (!['ok', 'low', 'error'].includes(outcome)) throw new Error('Invalid self-check outcome');
       const state = writable(id);
+      const check: CheckCounters = state.check;
       state.attempts++;
-      state.check.attempts++;
-      if (outcome === 'error') { state.failures++; state.check.failures++; }
+      check.attempts++;
+      if (outcome === 'error') { state.failures++; check.failures++; }
       else {
-        if (outcome === 'low') state.check.low++;
+        if (outcome === 'low') check.low++;
         // Advance the quality-trend run over this evaluated score. A good score
         // resets the run; a high-confidence low score grows it; a low-confidence
         // low score neither resets nor grows. `trend` carries the per-sample flags
         // and the configured thresholds; absent trend leaves the run unchanged.
         if (trend && typeof trend === 'object') {
-          state.check.run = advanceRun(state.check.run, { lowScore: outcome === 'low', confident: trend.confident === true });
-          state.check.severity = severityOf(state.check.run, { trendRun: trend.trendRun, trendSevereRun: trend.trendSevereRun });
+          check.run = advanceRun(check.run, { lowScore: outcome === 'low', confident: trend.confident === true });
+          check.severity = severityOf(check.run, {
+            trendRun: typeof trend.trendRun === 'number' ? trend.trendRun : undefined,
+            trendSevereRun: typeof trend.trendSevereRun === 'number' ? trend.trendSevereRun : undefined,
+          });
         }
       }
       bump(sessionKey(id), state);
     },
-    recordNarrow(id, outcome, dropped = 0, applied = outcome === 'applied') {
+    recordNarrow(id: unknown, outcome: string, dropped = 0, applied = outcome === 'applied'): void {
       if (!['ok', 'applied', 'error'].includes(outcome)) throw new Error('Invalid narrowing outcome');
       const state = writable(id);
+      const narrow: NarrowCounters = state.narrow;
       state.attempts++;
-      state.narrow.attempts++;
-      if (outcome === 'error') { state.failures++; state.narrow.failures++; }
+      narrow.attempts++;
+      if (outcome === 'error') { state.failures++; narrow.failures++; }
       else if (outcome === 'applied') {
         // A vetoed pass (low-keep, too many candidates) still dropped tools on
         // paper, but the restriction never took effect; only count real ones.
-        if (applied) state.narrow.applied++;
-        if (Number.isSafeInteger(dropped) && dropped > 0) state.narrow.dropped += dropped;
+        if (applied) narrow.applied++;
+        if (Number.isSafeInteger(dropped) && dropped > 0) narrow.dropped += dropped;
       }
       bump(sessionKey(id), state);
     },
     // Task-completion checking. `ok`/`unsatisfied` are real evaluations; `error`
     // is an unevaluated failure counted as a failure, never as "unsatisfied".
     // The per-condition three-state tallies come from `detail`.
-    recordComplete(id, outcome, detail = {}) {
+    recordComplete(id: unknown, outcome: string, detail: Record<string, unknown> = {}): void {
       if (!['ok', 'unsatisfied', 'error'].includes(outcome)) throw new Error('Invalid task-completion outcome');
       const state = writable(id);
+      const complete: CompleteCounters = state.complete;
       state.attempts++;
-      state.complete.attempts++;
-      if (outcome === 'error') { state.failures++; state.complete.failures++; }
+      complete.attempts++;
+      if (outcome === 'error') { state.failures++; complete.failures++; }
       else {
-        if (Number.isSafeInteger(detail.satisfied) && detail.satisfied > 0) state.complete.satisfied += detail.satisfied;
-        if (Number.isSafeInteger(detail.unsatisfied) && detail.unsatisfied > 0) state.complete.unsatisfied += detail.unsatisfied;
-        if (Number.isSafeInteger(detail.insufficient) && detail.insufficient > 0) state.complete.insufficient += detail.insufficient;
-        if (detail.steered === true) state.complete.steered++;
+        if (Number.isSafeInteger(detail.satisfied) && (detail.satisfied as number) > 0) complete.satisfied += detail.satisfied as number;
+        if (Number.isSafeInteger(detail.unsatisfied) && (detail.unsatisfied as number) > 0) complete.unsatisfied += detail.unsatisfied as number;
+        if (Number.isSafeInteger(detail.insufficient) && (detail.insufficient as number) > 0) complete.insufficient += detail.insufficient as number;
+        if (detail.steered === true) complete.steered++;
       }
       bump(sessionKey(id), state);
     },
-    log(id, entry) {
+    log(id: unknown, entry: Record<string, unknown>): void {
       if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) throw new Error('Invalid log entry');
-      if (!['gate', 'check', 'narrow', 'complete'].includes(entry.kind)) throw new Error('Invalid log entry');
+      const kind = entry.kind;
+      if (typeof kind !== 'string' || !KINDS.includes(kind)) throw new Error('Invalid log entry');
       // Every decision record carries a stable unique id, generated here so the
       // in-memory panel copy and the persisted sink record share the same id.
       // Later annotation events reference this id to attribute a rating to one decision.
-      const record = { id: randomUUID(), at: Date.now(), kind: entry.kind, outcome: typeof entry.outcome === 'string' ? entry.outcome.slice(0, 32) : '' };
+      const record: LogRow = { id: randomUUID(), at: Date.now(), kind: kind as LogKind, outcome: typeof entry.outcome === 'string' ? entry.outcome.slice(0, 32) : '' };
       const tool = safeTool(entry.tool);
       if (tool) record.tool = tool;
       if (typeof entry.suggestion === 'string' && entry.suggestion) record.suggestion = entry.suggestion.slice(0, 16);
@@ -228,23 +265,23 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       // persisted rows; do not store the full task or arbitrary state objects.
       if (entry.kind === 'narrow') {
         if (typeof entry.task === 'string' && entry.task.trim()) record.task = entry.task.replace(/\s+/g, ' ').trim().slice(0, 512);
-        if (Number.isSafeInteger(entry.turn) && entry.turn >= 0) record.turn = entry.turn;
+        if (Number.isSafeInteger(entry.turn) && (entry.turn as number) >= 0) record.turn = entry.turn as number;
       }
       if (typeof entry.mode === 'string' && entry.mode) record.mode = entry.mode.slice(0, 16);
       if (typeof entry.score === 'number' && Number.isFinite(entry.score)) record.score = Math.round(entry.score * 100) / 100;
       if (typeof entry.confidence === 'number' && Number.isFinite(entry.confidence)) record.confidence = Math.round(entry.confidence * 100) / 100;
-      if (Number.isSafeInteger(entry.dropped) && entry.dropped >= 0) record.dropped = entry.dropped;
-      if (Number.isSafeInteger(entry.kept) && entry.kept >= 0) record.kept = entry.kept;
+      if (Number.isSafeInteger(entry.dropped) && (entry.dropped as number) >= 0) record.dropped = entry.dropped as number;
+      if (Number.isSafeInteger(entry.kept) && (entry.kept as number) >= 0) record.kept = entry.kept as number;
       if (typeof entry.applied === 'boolean') record.applied = entry.applied;
-      if (Number.isSafeInteger(entry.candidates) && entry.candidates >= 0) record.candidates = entry.candidates;
-      if (Number.isSafeInteger(entry.conditions) && entry.conditions >= 0) record.conditions = entry.conditions;
-      if (Number.isSafeInteger(entry.satisfied) && entry.satisfied >= 0) record.satisfied = entry.satisfied;
-      if (Number.isSafeInteger(entry.unsatisfied) && entry.unsatisfied >= 0) record.unsatisfied = entry.unsatisfied;
-      if (Number.isSafeInteger(entry.insufficient) && entry.insufficient >= 0) record.insufficient = entry.insufficient;
+      if (Number.isSafeInteger(entry.candidates) && (entry.candidates as number) >= 0) record.candidates = entry.candidates as number;
+      if (Number.isSafeInteger(entry.conditions) && (entry.conditions as number) >= 0) record.conditions = entry.conditions as number;
+      if (Number.isSafeInteger(entry.satisfied) && (entry.satisfied as number) >= 0) record.satisfied = entry.satisfied as number;
+      if (Number.isSafeInteger(entry.unsatisfied) && (entry.unsatisfied as number) >= 0) record.unsatisfied = entry.unsatisfied as number;
+      if (Number.isSafeInteger(entry.insufficient) && (entry.insufficient as number) >= 0) record.insufficient = entry.insufficient as number;
       if (entry.steered === true) record.steered = true;
       if (entry.lowConfidence === true) record.lowConfidence = true;
       if (Array.isArray(entry.tools)) {
-        const names = entry.tools.filter(name => typeof name === 'string' && name.trim()).slice(0, 12).map(name => name.trim().slice(0, 64));
+        const names = (entry.tools as unknown[]).filter((name): name is string => typeof name === 'string' && Boolean(name.trim())).slice(0, 12).map(name => name.trim().slice(0, 64));
         if (names.length > 0) record.tools = names;
       }
       const state = writable(id);
@@ -253,9 +290,9 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       // Full, untruncated record for the research log sink (all dropped tool
       // names, keyed by session id). The in-memory panel record above stays capped.
       if (sink) {
-        const full = { ...record, sessionId: sessionKey(id) };
+        const full: SessionSinkRow = { ...record, sessionId: sessionKey(id) };
         if (Array.isArray(entry.tools)) {
-          const allNames = entry.tools.filter(name => typeof name === 'string' && name.trim()).map(name => name.trim());
+          const allNames = (entry.tools as unknown[]).filter((name): name is string => typeof name === 'string' && Boolean(name.trim())).map(name => name.trim());
           if (allNames.length > 0) full.tools = allNames;
         }
         try { sink(full); } catch { /* persistence is best effort */ }

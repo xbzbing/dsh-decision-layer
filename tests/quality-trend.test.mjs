@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { advanceRun, severityOf, DEFAULT_TREND_RUN, DEFAULT_TREND_SEVERE_RUN } from '../service/quality-trend.mjs';
+import { advanceRun, severityOf, DEFAULT_TREND_RUN, DEFAULT_TREND_SEVERE_RUN } from '../lib/host/quality-trend.js';
 
 test('a good score resets the run to zero', () => {
   assert.equal(advanceRun(4, { lowScore: false, confident: false }), 0);

@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
+import type { SessionsFace, ToolExec } from './types.js';
 
 const MAX_FINGERPRINT_INPUT = 16 * 1024;
 
-export function fingerprintCall(exec) {
+export function fingerprintCall(exec: ToolExec | undefined): string {
   const name = typeof exec?.name === 'string' ? exec.name : '';
   let args = '';
   try { args = JSON.stringify(exec?.arguments ?? null); } catch { args = ''; }
@@ -12,20 +13,24 @@ export function fingerprintCall(exec) {
 // Deterministic, backend-free loop guard: it denies only a run of the SAME tool
 // call repeated consecutively past a threshold. Any different intervening call
 // resets the run, so a legitimate identical call reached again later is allowed.
-export function createLoopGuard({ threshold = 3, maxSessions = 1024, sessions } = {}) {
+export function createLoopGuard({ threshold = 3, maxSessions = 1024, sessions }: {
+  threshold?: number;
+  maxSessions?: number;
+  sessions?: SessionsFace;
+} = {}) {
   if (!Number.isSafeInteger(threshold) || threshold < 2) throw new Error('Invalid loop threshold');
-  const runs = new Map();
-  const runFor = id => {
+  const runs = new Map<string, { key: string | undefined; count: number }>();
+  const runFor = (id: string) => {
     let run = runs.get(id);
     if (!run) {
-      if (runs.size >= maxSessions) runs.delete(runs.keys().next().value);
+      if (runs.size >= maxSessions) runs.delete(runs.keys().next().value as string);
       run = { key: undefined, count: 0 };
       runs.set(id, run);
     }
     return run;
   };
   return {
-    check(exec) {
+    check(exec: ToolExec | undefined): string | undefined {
       const id = exec?.agent?.session?.id;
       if (typeof id !== 'string') return undefined;
       // The master switch pauses automatic intervention (mirrors the danger gate):
@@ -44,7 +49,7 @@ export function createLoopGuard({ threshold = 3, maxSessions = 1024, sessions } 
       }
       return undefined;
     },
-    runLength(id) {
+    runLength(id: string): number {
       return runs.get(id)?.count ?? 0;
     },
   };

@@ -61,7 +61,7 @@ const zh = {
 };
 
 // The English dictionary is typed against the Chinese one, so a key added to
-// only one language is a `tsc` error (build:client runs tsc) instead of a
+// only one language is a `tsc` error (build.mjs runs tsc) instead of a
 // blank string shipping to English users.
 const en: Record<keyof typeof zh, string> = {
   summary: 'A danger-call gate, output self-check, and loop guard driven by a pluggable adjudication model.',

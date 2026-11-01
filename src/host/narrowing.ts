@@ -1,10 +1,13 @@
-const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-const probability = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+import { errorReason, isObject, isProbability } from './types.js';
+import type {
+  AgentLike, AnswerMap, BatchMode, EvaluateInput, EvaluateResult, Evaluator, NarrowMode, NarrowSettings,
+  SessionsFace, ToolCandidate,
+} from './types.js';
 
 // Whether a narrowing pass actually restricted the tool set. `applied` is the
 // authoritative field; a vetoed pass (low-keep, too many candidates) is never
 // applied, and rows logged before `applied` existed are read from their reason.
-export const narrowApplied = record => {
+export const narrowApplied = (record: { applied?: unknown; reason?: unknown; outcome?: unknown } | undefined): boolean => {
   if (record?.applied === false) return false;
   if (record?.reason === 'low-keep' || record?.reason === 'too-many-candidates') return false;
   return record?.applied === true || record?.outcome === 'applied';
@@ -14,7 +17,7 @@ const MAX_STATE = 8 * 1024;
 // A human-review hint from the same task passed to relevanceQuestions, never a
 // dump of structured state. Strip injected context and common credential forms
 // before truncating, so neither the live panel nor the JSONL sink gets them.
-function taskExcerpt(state) {
+function taskExcerpt(state: unknown): string | undefined {
   if (typeof state !== 'string') return undefined;
   const text = state.slice(0, MAX_STATE)
     .replace(/<(openviking-context|system-reminder)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
@@ -26,8 +29,9 @@ function taskExcerpt(state) {
     .replace(/\s+/g, ' ').trim();
   return text ? text.slice(0, 512) : undefined;
 }
+
 // The adjudication backend hard-rejects a request carrying more than 64 questions
-// (backend.mjs validateRequest). One relevance question is sent per optional tool,
+// (backend.ts validateRequest). One relevance question is sent per optional tool,
 // so the candidate cap can never exceed this — otherwise evaluate() throws locally
 // before any network call and the failure is mislabeled as a backend error.
 const MAX_QUESTIONS = 64;
@@ -38,7 +42,7 @@ const MAX_QUESTIONS = 64;
 // the DSH agent meta-abilities (ask the user, goals, skills, delivery, images,
 // background jobs, teammates, subagents): their relevance rarely shows in a
 // single turn's task text, so per-tool judging would keep pruning them.
-export const DEFAULT_CORE_TOOLS = Object.freeze([
+export const DEFAULT_CORE_TOOLS: readonly string[] = Object.freeze([
   'read', 'write', 'edit', 'bash', 'glob', 'grep', 'ls', 'todo_write',
   'ask_user_question', 'create_goal', 'update_goal', 'get_goal', 'exit_plan_mode',
   'skill', 'present', 'read_image', 'workflow',
@@ -53,7 +57,7 @@ export const DEFAULT_CORE_TOOLS = Object.freeze([
 // relevance judging would keep pruning them. Teamwork tools (`team_task_`) are
 // deliberately NOT in this list: they are ordinary task-board capabilities and
 // should be judged like any other optional tool. Users can override this list.
-export const DEFAULT_KEEP_PREFIXES = Object.freeze(['mcp__openviking']);
+export const DEFAULT_KEEP_PREFIXES: readonly string[] = Object.freeze(['mcp__openviking']);
 
 // Intersect the host-allowed tool set with the model's relevance verdict. Only
 // removes tools; never adds. Any missing or invalid noul keeps the tool, and a
@@ -67,17 +71,17 @@ export const DEFAULT_KEEP_PREFIXES = Object.freeze(['mcp__openviking']);
 // 0.5 means the model is unsure and is dropped under this default; lower the
 // threshold to keep such may-need tools.
 export const DEFAULT_NARROW_THRESHOLD = 0.7;
-export function narrowTools(allowed, result, { threshold = DEFAULT_NARROW_THRESHOLD, keepBase = 0 } = {}) {
-  const tools = Array.isArray(allowed) ? allowed.filter(name => typeof name === 'string') : [];
-  const answers = isObject(result?.answers) ? result.answers : undefined;
+export function narrowTools(allowed: unknown, result: unknown, { threshold = DEFAULT_NARROW_THRESHOLD, keepBase = 0 }: { threshold?: number; keepBase?: number } = {}): { applied: boolean; keep: string[]; drop: string[] } {
+  const tools = Array.isArray(allowed) ? (allowed as unknown[]).filter((name): name is string => typeof name === 'string') : [];
+  const answers = isObject(result) && isObject(result.answers) ? result.answers : undefined;
   if (tools.length === 0 || !answers) return { applied: false, keep: [...tools], drop: [] };
   const base = Number.isSafeInteger(keepBase) && keepBase > 0 ? keepBase : 0;
 
-  const keep = [];
-  const drop = [];
+  const keep: string[] = [];
+  const drop: string[] = [];
   for (const name of tools) {
     const answer = answers[name];
-    if (isObject(answer) && answer.type === 'noul' && probability(answer.noul) && answer.noul < threshold) drop.push(name);
+    if (isObject(answer) && answer.type === 'noul' && isProbability(answer.noul) && answer.noul < threshold) drop.push(name);
     else keep.push(name);
   }
   if (drop.length === 0 || keep.length + base === 0) return { applied: false, keep: [...tools], drop: [] };
@@ -87,13 +91,13 @@ export function narrowTools(allowed, result, { threshold = DEFAULT_NARROW_THRESH
 // Build one Noul relevance question per candidate tool. The state carries the
 // current task; each question references the tool being judged. Noul answers
 // have no confidence field, so relevance is read straight from the probability.
-export function relevanceQuestions(state, tools) {
+export function relevanceQuestions(state: unknown, tools: readonly ToolCandidate[]): EvaluateInput {
   const task = typeof state === 'string' ? state.slice(0, MAX_STATE)
     : isObject(state) ? state : '';
   return {
     state: task,
     questions: Object.fromEntries(tools.map(tool => [tool.name, {
-      type: 'noul',
+      type: 'noul' as const,
       instructions: {
         tool: { name: tool.name, description: typeof tool.description === 'string' ? tool.description.slice(0, 512) : '' },
         question: '完成当前任务是否会用到 `tool` 描述的这个工具？',
@@ -101,6 +105,46 @@ export function relevanceQuestions(state, tools) {
     }])),
   };
 }
+
+type NarrowDetail = {
+  dropped?: number;
+  kept?: number;
+  mode?: NarrowMode;
+  tools?: string[];
+  applied?: boolean;
+  reason?: string;
+  candidates?: number;
+};
+
+export type NarrowTurn = {
+  agent?: AgentLike;
+  turn?: number;
+  signal?: AbortSignal;
+  state?: unknown;
+  tools?: unknown;
+};
+
+export type NarrowResult = {
+  evaluated: boolean;
+  applied: boolean;
+  keep: string[];
+  drop: string[];
+  mode: NarrowMode;
+  overCap?: boolean;
+  trustworthy?: boolean;
+};
+
+export type NarrowingOptions = {
+  evaluate?: Evaluator;
+  sessions?: SessionsFace;
+  settings?: NarrowSettings | (() => Promise<NarrowSettings | undefined>);
+  coreTools?: readonly string[];
+  keepPrefixes?: readonly string[];
+  minCandidates?: number;
+  maxCandidates?: number;
+  minKeep?: number;
+  splitConcurrency?: number;
+};
 
 // Orchestrates one relevance pass over the host-allowed tools. Pure of DSH
 // runtime types: the caller supplies the candidate tools and the task state,
@@ -114,7 +158,7 @@ export function relevanceQuestions(state, tools) {
 //   C. if narrowing would leave fewer than `minKeep` tools total, the verdict is
 //      treated as untrustworthy and no restriction is applied.
 export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFAULT_CORE_TOOLS,
-  keepPrefixes = DEFAULT_KEEP_PREFIXES, minCandidates = 2, maxCandidates = 20, minKeep = 5, splitConcurrency = 8 } = {}) {
+  keepPrefixes = DEFAULT_KEEP_PREFIXES, minCandidates = 2, maxCandidates = 20, minKeep = 5, splitConcurrency = 8 }: NarrowingOptions = {}) {
   if (typeof evaluate !== 'function') throw new Error('Narrowing requires an evaluator');
   const core = new Set(Array.isArray(coreTools) ? coreTools.filter(name => typeof name === 'string') : []);
   const defaultPrefixes = Array.isArray(keepPrefixes) ? keepPrefixes.filter(prefix => typeof prefix === 'string' && prefix) : [];
@@ -125,32 +169,32 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
   // (tev1, ~2050-token prompt) self-corrects after the first failure.
   let adaptiveSplit = false;
   const resolveSettings = async () => {
-    let raw = {};
+    let raw: NarrowSettings = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
-    const mode = raw?.mode === 'observe' ? 'observe' : 'enforce';
+    const mode: NarrowMode = raw?.mode === 'observe' ? 'observe' : 'enforce';
     const threshold = typeof raw?.threshold === 'number' && Number.isFinite(raw.threshold) && raw.threshold >= 0 && raw.threshold <= 1 ? raw.threshold : DEFAULT_NARROW_THRESHOLD;
-    const batchMode = raw?.batchMode === 'single' || raw?.batchMode === 'split' ? raw.batchMode : 'auto';
+    const batchMode: BatchMode = raw?.batchMode === 'single' || raw?.batchMode === 'split' ? raw.batchMode : 'auto';
     // An explicit array in settings (including empty) overrides the default set.
     const prefixes = Array.isArray(raw?.keepPrefixes)
-      ? raw.keepPrefixes.filter(prefix => typeof prefix === 'string' && prefix)
+      ? raw.keepPrefixes.filter(prefix => typeof prefix === 'string' && Boolean(prefix))
       : defaultPrefixes;
     // A configured optional-candidate ceiling overrides the constructor default,
     // clamped to the backend's per-request question limit so the judged set is
     // never large enough to be rejected before it is sent.
-    const configuredCap = Number.isSafeInteger(raw?.maxCandidates) && raw.maxCandidates >= 1 ? raw.maxCandidates : maxCandidates;
+    const configuredCap = Number.isSafeInteger(raw?.maxCandidates) && (raw.maxCandidates as number) >= 1 ? raw.maxCandidates as number : maxCandidates;
     const cap = Math.min(configuredCap, MAX_QUESTIONS);
     return { mode, threshold, prefixes, cap, batchMode };
   };
-  const record = (turn, outcome, detail = {}) => {
+  const record = (turn: NarrowTurn | undefined, outcome: string, detail: NarrowDetail = {}): void => {
     const id = turn?.agent?.session?.id;
     if (!sessions || typeof id !== 'string') return;
-    try { if (typeof sessions.recordNarrow === 'function') sessions.recordNarrow(id, outcome, detail.dropped ?? 0, narrowApplied({ ...detail, outcome })); }
+    try { sessions.recordNarrow?.(id, outcome, detail.dropped ?? 0, narrowApplied({ ...detail, outcome })); }
     catch { /* telemetry is best effort */ }
     if (typeof sessions.log !== 'function') return;
     try {
       const task = taskExcerpt(turn?.state);
-      const context = task ? { task } : {};
-      if (Number.isSafeInteger(turn?.turn) && turn.turn >= 0) context.turn = turn.turn;
+      const context: Record<string, unknown> = task ? { task } : {};
+      if (Number.isSafeInteger(turn?.turn) && (turn?.turn as number) >= 0) context.turn = turn?.turn;
       sessions.log(id, { kind: 'narrow', outcome, ...context, ...detail });
     }
     catch { /* logging is best effort */ }
@@ -161,8 +205,8 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
   // prompt limit. A tool whose request fails is omitted from the merged answers,
   // which narrowTools treats as "keep" (best effort). Returns null only when
   // every tool failed, so the caller can still report a backend error.
-  const evaluateSplit = async (state, tools, signal) => {
-    const answers = Object.create(null);
+  const evaluateSplit = async (state: unknown, tools: readonly ToolCandidate[], signal: AbortSignal | undefined): Promise<{ model: string; answers: AnswerMap } | null> => {
+    const answers: AnswerMap = Object.create(null) as AnswerMap;
     let anyOk = false;
     for (let i = 0; i < tools.length; i += concurrency) {
       const group = tools.slice(i, i + concurrency);
@@ -170,22 +214,24 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
         try {
           const reply = await evaluate(relevanceQuestions(state, [tool]), { signal });
           const answer = reply?.answers?.[tool.name];
-          return isObject(answer) ? [tool.name, answer] : undefined;
+          return isObject(answer) ? [tool.name, answer] as const : undefined;
         } catch { return undefined; }
       }));
       for (const pair of settled) { if (pair) { answers[pair[0]] = pair[1]; anyOk = true; } }
     }
     return anyOk ? { model: 'split', answers } : null;
   };
-  const skip = { evaluated: false, applied: false, keep: [], drop: [], mode: 'observe' };
+  const skip: NarrowResult = { evaluated: false, applied: false, keep: [], drop: [], mode: 'observe' };
   return {
-    async review(turn) {
-      const tools = Array.isArray(turn?.tools) ? turn.tools.filter(tool => tool && typeof tool.name === 'string') : [];
+    async review(turn: NarrowTurn | undefined): Promise<NarrowResult> {
+      const tools: ToolCandidate[] = Array.isArray(turn?.tools)
+        ? turn.tools.filter((tool): tool is ToolCandidate => isObject(tool) && typeof tool.name === 'string')
+        : [];
       const names = tools.map(tool => tool.name);
       const { mode, threshold, prefixes, cap, batchMode } = await resolveSettings();
       // A: core tools and keep-prefix matches are always kept and never sent to
       // the model for judging (e.g. mcp__openviking memory tools stay resident).
-      const alwaysKeep = name => core.has(name) || prefixes.some(prefix => name.startsWith(prefix));
+      const alwaysKeep = (name: string): boolean => core.has(name) || prefixes.some(prefix => name.startsWith(prefix));
       const keptNames = names.filter(alwaysKeep);
       const optional = tools.filter(tool => !alwaysKeep(tool.name));
       if (optional.length < minCandidates) return { ...skip, keep: names };
@@ -202,7 +248,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
       // backend's question limit) so the pass is logged without throwing, but the
       // result is observe-only and applies no restriction.
       const overCap = optional.length > cap;
-      const effectiveMode = overCap ? 'observe' : mode;
+      const effectiveMode: NarrowMode = overCap ? 'observe' : mode;
       const judged = overCap ? optional.slice(0, cap) : optional;
       const judgedNames = judged.map(tool => tool.name);
       // Choose per-request strategy by backend context capacity. 'split' (or an
@@ -210,17 +256,19 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
       // prompt exceeds a small-context limit. 'single'/'auto' first try one
       // whole-batch request; under 'auto', a context-overflow http-error flips
       // this instance to split from then on and retries the same tools split.
-      let result;
+      let result: { answers: AnswerMap } | null = null;
       if (batchMode === 'split' || adaptiveSplit) {
-        result = await evaluateSplit(turn.state, judged, turn.signal);
+        result = await evaluateSplit(turn?.state, judged, turn?.signal);
         if (!result) { record(turn, 'error', { reason: 'unreachable', mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
       } else {
-        try { result = await evaluate(relevanceQuestions(turn.state, judged), { signal: turn.signal }); }
-        catch (error) {
-          const reason = typeof error?.reason === 'string' ? error.reason : 'unreachable';
+        try {
+          const reply: EvaluateResult = await evaluate(relevanceQuestions(turn?.state, judged), { signal: turn?.signal });
+          result = reply;
+        } catch (error) {
+          const reason = errorReason(error);
           if (batchMode === 'auto' && reason === 'http-error') {
             adaptiveSplit = true;
-            result = await evaluateSplit(turn.state, judged, turn.signal);
+            result = await evaluateSplit(turn?.state, judged, turn?.signal);
             if (!result) { record(turn, 'error', { reason, mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
           } else {
             record(turn, 'error', { reason, mode: effectiveMode });
@@ -235,7 +283,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
       const trustworthy = keep.length >= minKeep;
       const applied = narrowed.applied && trustworthy && !overCap && mode === 'enforce';
       const dropped = drop.length;
-      const detail = { dropped, kept: keep.length, mode: effectiveMode, tools: drop, applied };
+      const detail: NarrowDetail = { dropped, kept: keep.length, mode: effectiveMode, tools: drop, applied };
       // The optional-candidate count (excludes core tools and keep-prefix matches),
       // recorded so the "too many candidates" reason shows the number that tripped it.
       if (overCap) { detail.reason = 'too-many-candidates'; detail.candidates = optional.length; }

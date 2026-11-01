@@ -1,12 +1,11 @@
-import { createSteerOnce } from './steer-once.mjs';
+import { createSteerOnce } from './steer-once.js';
+import { errorReason, isObject, isProbability } from './types.js';
+import type { AgentLike, CompleteSettings, EvaluateInput, Evaluator, SessionsFace } from './types.js';
 
 const MAX_STATE = 8 * 1024;
 const MAX_CONDITION = 512;
 const MAX_CONDITIONS = 20;
 const MAX_EVIDENCE = 40;
-
-const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-const probability = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 
 const STEER_TEXT = '本回合任务完成核对发现有明确交付条件尚未满足：请对照用户列出的条件逐项复核，补完未完成的部分。';
 
@@ -14,11 +13,11 @@ const STEER_TEXT = '本回合任务完成核对发现有明确交付条件尚未
 // Only structured forms are recognized — numbered lists, bullet lists, and a
 // single line of comma/、-separated multiple commands. Implicit or inferred
 // expectations are deliberately out of scope for the first version.
-export function extractConditions(userText) {
+export function extractConditions(userText: unknown): string[] {
   const text = typeof userText === 'string' ? userText : '';
   if (!text.trim()) return [];
-  const conditions = [];
-  const push = value => {
+  const conditions: string[] = [];
+  const push = (value: string): void => {
     const item = value.trim().replace(/\s+/g, ' ').slice(0, MAX_CONDITION);
     if (item && !conditions.includes(item)) conditions.push(item);
   };
@@ -26,10 +25,10 @@ export function extractConditions(userText) {
   let matchedStructured = false;
   for (const line of lines) {
     // Numbered: `1. `, `1) `, `1、`, `（1）`, `(1)`; or bullets: `- `, `* `, `• `.
-    const numbered = line.match(/^\s*(?:[（(]?\d+[)）.、]|\d+\s*[.)、])\s+(.*)$/);
-    const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
-    if (numbered && numbered[1].trim()) { push(numbered[1]); matchedStructured = true; }
-    else if (bullet && bullet[1].trim()) { push(bullet[1]); matchedStructured = true; }
+    const numbered = line.match(/^\s*(?:[（(]?\d+[)）.、]|\d+\s*[.)、])\s+(.*)$/)?.[1];
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/)?.[1];
+    if (numbered?.trim()) { push(numbered); matchedStructured = true; }
+    else if (bullet?.trim()) { push(bullet); matchedStructured = true; }
   }
   // Fallback: a single instruction line joining multiple commands with 、/,/，
   // and enough parts to look like an explicit multi-step ask (e.g. "改配置、跑测试、说明失败原因").
@@ -47,11 +46,11 @@ export function extractConditions(userText) {
 // conditions, the turn's tool evidence, and the final reply. Tool evidence is
 // primary; the reply's own claims are explicitly NOT treated as proof, so the
 // model can answer insufficient_evidence when only the reply asserts completion.
-export function completionQuestions(conditions, evidence, answer) {
-  const items = Array.isArray(conditions) ? conditions.slice(0, MAX_CONDITIONS) : [];
+export function completionQuestions(conditions: unknown, evidence: unknown, answer: unknown): EvaluateInput {
+  const items = Array.isArray(conditions) ? (conditions as string[]).slice(0, MAX_CONDITIONS) : [];
   const tools = Array.isArray(evidence)
     ? evidence.filter(item => isObject(item) && typeof item.tool === 'string').slice(0, MAX_EVIDENCE)
-      .map(item => ({ tool: item.tool.slice(0, 128), outcome: item.outcome === 'error' ? 'error' : 'ok' }))
+      .map(item => ({ tool: ((item as { tool: string }).tool).slice(0, 128), outcome: (item as { outcome?: unknown }).outcome === 'error' ? 'error' as const : 'ok' as const }))
     : [];
   const state = {
     conditions: items.map((text, index) => ({ id: `c${index}`, text })),
@@ -60,7 +59,7 @@ export function completionQuestions(conditions, evidence, answer) {
     note: '工具证据（toolEvidence）是判定依据；finalReply 自称完成不作为证据。缺少证据时选 insufficient_evidence。',
   };
   const questions = Object.fromEntries(items.map((text, index) => [`c${index}`, {
-    type: 'choice',
+    type: 'choice' as const,
     instructions: {
       condition: text,
       question: '根据当前工具证据与最终回复，这个交付条件的完成情况属于哪一种？',
@@ -80,25 +79,44 @@ export function completionQuestions(conditions, evidence, answer) {
 // drifts silently on the next tuning pass.
 export const DEFAULT_MIN_CONFIDENCE = 0.4;
 
+export type CompletionTurn = {
+  agent?: AgentLike;
+  turn?: number;
+  signal?: AbortSignal;
+  output?: unknown;
+  userText?: unknown;
+  evidence?: unknown;
+};
+
+export type CompletionResult = { evaluated: boolean; steered: boolean; satisfied?: number; unsatisfied?: number; insufficient?: number };
+
+export type TaskCompletionOptions = {
+  evaluate?: Evaluator;
+  sessions?: SessionsFace;
+  steer?: (agent: AgentLike, text: string) => unknown;
+  settings?: CompleteSettings | (() => Promise<CompleteSettings | undefined>);
+  minConfidence?: number;
+};
+
 // Orchestrates one task-completion pass at turn end. Read-only by default: it
 // records a per-condition verdict and only steers when explicitly configured,
 // the model is confident, and at least one condition is not satisfied. A steer
 // opens a supplemental step; it never rewrites the already-committed reply.
-export function createTaskCompletion({ evaluate, sessions, steer, settings, minConfidence = DEFAULT_MIN_CONFIDENCE } = {}) {
+export function createTaskCompletion({ evaluate, sessions, steer, settings, minConfidence = DEFAULT_MIN_CONFIDENCE }: TaskCompletionOptions = {}) {
   if (typeof evaluate !== 'function') throw new Error('Task completion requires an evaluator');
   const steerOnce = createSteerOnce();
   const resolveSettings = async () => {
-    let raw = {};
+    let raw: CompleteSettings = {};
     try { raw = (typeof settings === 'function' ? await settings() : settings) ?? {}; } catch { raw = {}; }
     const mode = raw?.mode === 'steer' ? 'steer' : 'observe';
-    const minConditions = Number.isSafeInteger(raw?.minConditions) && raw.minConditions >= 2 ? raw.minConditions : 2;
+    const minConditions = Number.isSafeInteger(raw?.minConditions) && (raw.minConditions as number) >= 2 ? raw.minConditions as number : 2;
     // Confidence required before an unmet condition actually opens the
     // supplemental step; the constructor argument is the fallback when the
     // config does not set it.
-    const confidenceFloor = probability(raw?.minConfidence) ? raw.minConfidence : minConfidence;
+    const confidenceFloor = isProbability(raw?.minConfidence) ? raw.minConfidence : minConfidence;
     return { mode, minConditions, minConfidence: confidenceFloor };
   };
-  const record = (turn, outcome, detail = {}) => {
+  const record = (turn: CompletionTurn | undefined, outcome: string, detail: Record<string, unknown> = {}): void => {
     const id = turn?.agent?.session?.id;
     if (!sessions || typeof id !== 'string' || typeof sessions.recordComplete !== 'function') return;
     try { sessions.recordComplete(id, outcome, detail); } catch { /* telemetry is best effort */ }
@@ -106,9 +124,9 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
     try { sessions.log(id, { kind: 'complete', outcome, ...detail }); }
     catch { /* logging is best effort */ }
   };
-  const skip = { evaluated: false, steered: false };
+  const skip: CompletionResult = { evaluated: false, steered: false };
   return {
-    async review(turn) {
+    async review(turn: CompletionTurn | undefined): Promise<CompletionResult> {
       const output = typeof turn?.output === 'string' ? turn.output.trim() : '';
       const { mode, minConditions, minConfidence: confidenceFloor } = await resolveSettings();
       const conditions = extractConditions(turn?.userText);
@@ -120,12 +138,12 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
         try { if (sessions.snapshot(id).enabled === false) return { ...skip }; }
         catch { return { ...skip }; }
       }
-      let answers;
+      let answers: Record<string, unknown> | undefined;
       try {
-        const result = await evaluate(completionQuestions(conditions, evidence, output), { signal: turn.signal });
+        const result = await evaluate(completionQuestions(conditions, evidence, output), { signal: turn?.signal });
         answers = isObject(result?.answers) ? result.answers : undefined;
       } catch (error) {
-        record(turn, 'error', { reason: typeof error?.reason === 'string' ? error.reason : 'unreachable' });
+        record(turn, 'error', { reason: errorReason(error) });
         return { ...skip };
       }
       if (!answers) { record(turn, 'error', { reason: 'invalid-response' }); return { ...skip }; }
@@ -142,18 +160,18 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
         if (answer.choice === 'satisfied') satisfied++;
         else if (answer.choice === 'unsatisfied') {
           unsatisfied++;
-          if (probability(answer.confidence)) unsatisfiedMinConf = Math.min(unsatisfiedMinConf, answer.confidence);
+          if (isProbability(answer.confidence)) unsatisfiedMinConf = Math.min(unsatisfiedMinConf, answer.confidence);
         }
         else insufficient++;
       }
       const outcome = unsatisfied > 0 ? 'unsatisfied' : 'ok';
-      const detail = { conditions: conditions.length, satisfied, unsatisfied, insufficient };
+      const detail: { conditions: number; satisfied: number; unsatisfied: number; insufficient: number; steered?: boolean } = { conditions: conditions.length, satisfied, unsatisfied, insufficient };
       // A steer is only for a confident finding that a listed condition is not met.
       const confident = unsatisfied > 0 && unsatisfiedMinConf >= confidenceFloor;
       // The turn budget is consumed only on a successful steer (createSteerOnce),
       // so a transient host failure does not permanently suppress this turn.
       const steered = mode === 'steer' && confident && typeof steer === 'function' && turn?.agent
-        ? steerOnce.attempt(turn, () => steer(turn.agent, STEER_TEXT))
+        ? steerOnce.attempt(turn, () => steer(turn.agent as AgentLike, STEER_TEXT))
         : false;
       if (steered) detail.steered = true;
       record(turn, outcome, detail);

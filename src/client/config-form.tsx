@@ -33,7 +33,7 @@ const DEFAULT_MAX_CANDIDATES = 20;
 // as fairly relevant survive, so the tool surface stays small.
 const DEFAULT_THRESHOLD = 0.7;
 const DEFAULT_BATCH_MODE: BatchMode = 'auto';
-// The built-in grading levels, mirroring service/self-check.mjs DEFAULT_RUBRIC.
+// The built-in grading levels, mirroring src/host/self-check.ts DEFAULT_RUBRIC.
 const DEFAULT_RUBRIC = [
   '明显答非所问，或存在严重遗漏 / 自相矛盾',
   '基本答到问题，但有可察觉的遗漏或不严谨',

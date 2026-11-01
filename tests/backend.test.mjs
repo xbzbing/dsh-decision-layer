@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createBackend, validateRequest } from '../service/backend.mjs';
+import { createBackend, validateRequest } from '../lib/host/backend.js';
 
 const payload = { state: { task: 'Summarize this short note' }, questions: { relevant: { type: 'noul', instructions: 'Is this relevant?' } } };
 const response = { model: 'jev-latest', answers: { relevant: { type: 'noul', noul: 0.9 } }, usage: { input_tokens: 9, output_tokens: 2 } };

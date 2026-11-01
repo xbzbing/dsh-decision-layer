@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { foldSession, buildProfile, backtestTrend, annotationSummary, analyzeSession, analyzeSessionLogs, buildSeed, reconstructSessionSeed, listSessionDecisions } from '../service/log-analyze.mjs';
+import { foldSession, buildProfile, backtestTrend, annotationSummary, analyzeSession, analyzeSessionLogs, buildSeed, reconstructSessionSeed, listSessionDecisions } from '../lib/host/log-analyze.js';
 
 const rec = (over) => ({ sessionId: 's1', at: 1, ...over });
 

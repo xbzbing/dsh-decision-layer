@@ -85,9 +85,9 @@ jobs:
           fi
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
-      # `lib/` is not committed, so the bundle must be built before packing; the
-      # assertion is what turns "forgot to build" from a silent broken release
-      # into a failed pipeline.
+      # `lib/` is not committed, so the host tree and client bundle must be built
+      # before packing; the assertion is what turns "forgot to build" from a silent
+      # broken release into a failed pipeline.
       - name: Gate (build + tests + pack + assert)
         if: steps.state.outputs.npm != 'done' || steps.state.outputs.tag != 'done' || steps.state.outputs.gh != 'done'
         run: |
