@@ -1,7 +1,7 @@
 # ADR-0011：决策数据落盘：JSONL 日志 + 会话快照
 
 - 状态：Accepted（2026-10-26）
-- 相关：`service/log-store.mjs`、`service/state-store.mjs`、`service/log-analyze.mjs`、`src/client/analysis-view.tsx`、ADR-0013
+- 相关：`src/host/log-store.ts`、`src/host/state-store.ts`、`src/host/log-analyze.ts`、`src/client/analysis-view.tsx`、ADR-0013
 
 ## Context
 
@@ -13,7 +13,7 @@
 
 两条独立的落盘，都是**尽力而为**——失败只丢当批，绝不抛进决策路径：
 
-- **决策日志（JSONL）**：`~/.config/dsh-decision-layer/logs/decisions-<端口>-YYYY-MM-DD.jsonl`，按运行实例端口 + UTC 日期滚动，批量刷新（默认 5s 或 200 条），保留 30 天。含脱敏后的命令/路径、置信度、得分、请求主题。
+- **决策日志（JSONL）**：`~/.config/dsh-decision-layer/logs/decisions-<端口>-YYYY-MM-DD.jsonl`，按运行实例端口 + UTC 日期滚动，批量刷新（默认 5s 或 200 条），保留 30 天。含脱敏后的命令/路径、置信度、得分、各决策点的回合号与任务节选（最多 512 字符，剥离宿主注入块并遮蔽常见凭据，统一由 `src/host/excerpt.ts` 生成）。
 - **会话状态快照**：`~/.config/dsh-decision-layer/state/<sessionId>.json`，按会话 id（不是端口）镜像面板计数与最近日志，防抖原子写，保留 30 天。
 - **恢复优先级**：快照 → 否则从日志跨全部端口按 sessionId 重建种子。唯一无法重建的是门控的「实际结果」（观测到的 allow/deny），重启后从零累计。
 - 分析页只做只读聚合（过程画像、趋势回测、判断准确度）；人工标注只追加，不改任何决策行为。
@@ -24,4 +24,5 @@
 - 代价一：端口参与日志文件名，端口变了要靠「跨端口按 sessionId 重建」补齐；快照被清理时退化为日志重建。
 - 代价二：保留期 30 天，超期不可追；长周期趋势研究需要另外导出。
 - 日志已做脱敏（密钥替换、长度上限），但**命令与路径本身是敏感信息**：共享日志文件等于共享操作痕迹，这一点必须在文档里讲清。
+- 任务节选只落本地；随裁决请求外发的仍是各决策点各自的输入（收窄的任务文本、完成核对的条件、自检的最终回复、门控的命令/路径摘要），两者不要混为一谈。
 - 测试必须注入时钟（`now`），否则「保留期清理」会让带固定日期的 fixture 随时间腐坏——已有一个测试因此翻红（见 ADR-0013）。

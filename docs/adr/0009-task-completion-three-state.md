@@ -1,7 +1,7 @@
 # ADR-0009：完成核对：确定性提取 + 三态判定
 
 - 状态：Accepted（2026-10-26）
-- 相关：`service/task-completion.mjs`、`service/dsh.mjs` 的 `installCompletion`、ADR-0008
+- 相关：`src/host/task-completion.ts`、`src/host/index.ts` 的 `installCompletion`、ADR-0008
 
 ## Context
 

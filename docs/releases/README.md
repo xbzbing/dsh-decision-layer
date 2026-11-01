@@ -30,8 +30,8 @@ dsh plugin --profile web add https://github.com/xbzbing/dsh-decision-layer/relea
 
 ## 验证
 
-- `npm run check` 全绿：<N> 单测 + client 构建
-- `scripts/assert-pack.mjs`：产物含 `lib/client.js`，无源码/测试泄漏
+- `npm run check` 全绿：<N> 单测 + host/client 构建
+- `scripts/assert-pack.mjs`：产物含 `lib/host/` 与 `lib/client.js`，无源码/测试泄漏
 - <关键回归：修了什么；去掉该修复后哪条测试转红>
 
 [完整变更记录 <PREV>...<TAG>](https://github.com/xbzbing/dsh-decision-layer/compare/<PREV>...<TAG>)
@@ -56,8 +56,8 @@ dsh plugin --profile web add https://github.com/xbzbing/dsh-decision-layer/relea
 
 ## Verification
 
-- `npm run check` green: <N> unit tests + client build
-- `scripts/assert-pack.mjs`: the tarball carries `lib/client.js` and leaks no sources
+- `npm run check` green: <N> unit tests + host and client build
+- `scripts/assert-pack.mjs`: the tarball carries `lib/host/` and `lib/client.js` and leaks no sources
 - <key regression: what was fixed and which test turns red without it>
 
 [Full changelog <PREV>...<TAG>](https://github.com/xbzbing/dsh-decision-layer/compare/<PREV>...<TAG>)

@@ -1,7 +1,7 @@
 # ADR-0007：工具收窄的三重保护
 
 - 状态：Accepted（2026-10-26）
-- 相关：`service/narrowing.mjs`、`service/dsh.mjs` 的 `installNarrowingHook`、ADR-0002、ADR-0006
+- 相关：`src/host/narrowing.ts`、`src/host/index.ts` 的 `installNarrowingHook`、ADR-0002、ADR-0006
 
 ## Context
 

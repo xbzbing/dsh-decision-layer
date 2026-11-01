@@ -1,7 +1,7 @@
 # ADR-0005：配置整段替换、读取无缓存
 
 - 状态：Accepted（2026-10-26）
-- 相关：`service/config-store.mjs` 的 `saveConfig`、`service/dsh.mjs`、`src/client/config-form.tsx`、ADR-0004、ADR-0006
+- 相关：`src/host/config-store.ts` 的 `saveConfig`、`src/host/index.ts`、`src/client/config-form.tsx`、ADR-0004、ADR-0006
 
 ## Context
 
@@ -19,7 +19,7 @@
 - **按块整段替换**：请求里出现的 section 完全替换磁盘上的同名 section；未出现的 section 保留原值。块内不 merge。
 - 因此调用方要么提交**完整块**，要么先读再展开 `{ ...previous, edit }`。配置页采用后者：提交时把已载入的字段全部展开，连它「不认识」的字段也原样带回。
 - **读取无缓存**：`resolveConfig` 每次 `readFile` + `JSON.parse`。改配置即时生效，无需重启 host。
-- 校验严格且集中在 `config-store.mjs`：未知字段、越界值、类型不符一律抛错；读侧调用方按 ADR-0004 容错。
+- 校验严格且集中在 `src/host/config-store.ts`：未知字段、越界值、类型不符一律抛错；读侧调用方按 ADR-0004 容错。
 - 写入原子：临时文件 + `rename`，文件权限 600、目录 700。
 
 ## Consequences

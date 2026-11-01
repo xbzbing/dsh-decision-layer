@@ -4,17 +4,20 @@
 
 ## 定位
 
-DSH Web 插件的双半结构：`service/` 是 Cordis 插件（纯 ESM，无构建），`src/client/` 是 React + TypeScript，构建成单个 `lib/client.js`。所有介入都是「模型只给建议、宿主决定行为」：任何决策点失败都必须放行，不能阻断 agent。Host 挂接点在 `service/dsh.mjs` 的 `apply()`，client 由 `src/client/index.tsx` 注册 slot。
+DSH Web 插件的双半结构：`src/host/` 是 Cordis 插件（TypeScript，逐文件编译到 `lib/host/*.js`），`src/client/` 是 React + TypeScript，打包成单个 `lib/client.js`。两半都由 `npm run build` 产出，产物不入库（ADR-0015）。所有介入都是「模型只给建议、宿主决定行为」：任何决策点失败都必须放行，不能阻断 agent。Host 挂接点在 `src/host/index.ts` 的 `apply()`，client 由 `src/client/index.tsx` 注册 slot。
 
 ## 构建与验证
 
 ```bash
-npm run build:client        # tsc 严格类型检查 + esbuild -> lib/client.js（不入库）
-npm test                    # node --test tests/*.test.mjs
-npm run check               # 两者，提交前必须通过，与 CI 等价
+npm run build               # tsc 严格类型检查 + esbuild -> lib/host/*.js 与 lib/client.js（不入库）
+npm run typecheck           # 两半各自的 tsconfig（NodeNext / bundler），不改产物
+npm test                    # 先 build，再 node --test tests/*.test.mjs（测试导入 lib/host）
+npm run check               # 等价于 npm test，提交前必须通过，与 CI 一致
 ```
 
-- Host 改动重启 `dsh web` 生效；client 改动必须重建 `lib/client.js` 再刷新页面。
+- 测试导入的是构建产物 `lib/host/*.js`，不是 `src/host/*.ts`；改完 host 源码必须先构建，否则测到旧代码。
+- `tsc` 出错先看 `tsconfig.host.json` / `tsconfig.client.json`，两者都继承根 `tsconfig.json`。
+- 两半改动都要 `npm run build`，再重启 `dsh web`（client 改动另需刷新页面）；漏建会加载旧产物或找不到入口。
 - 改行为先补/改测试；修 bug 必须带回归测试，不要删测试换绿色。
 - 发布走 `.github/workflows/release.yml`：版本号变更推入 main 即自动门禁、打 tag、用 OIDC 发 npm 与 Release；不要手工打 tag 或 `npm publish`。版本号用 `npm version <v> --no-git-tag-version`，同时新增 `docs/releases/v<v>.md`。
 
@@ -31,19 +34,21 @@ npm run check               # 两者，提交前必须通过，与 CI 等价
 
 ## 代码约定
 
-- Host 用 `.mjs`，相对导入带 `.mjs`；client 用 TypeScript 严格模式，相对导入带 `.js`。
+- Host 用 TypeScript 严格模式（`src/host/*.ts`），相对导入带 `.js`（编译产物同名）；client 同样。共享类型放 `src/host/types.ts`，跨模块形状不要各写一份。
 - 可见文案全部走 `src/client/i18n.ts`；`zh` 是键集权威源，新增 key 必须同步 `en`（缺 key 会 tsc 报错）。
 - 样式集中在 `src/client/styles.ts` 的单个 `<style data-plugin>`，用 `--dsw-alias-*` 主题变量，不硬编码颜色。
-- 不新增依赖；平台模块（React、`@deepseek-ai/*`）保持 external，由宿主提供。
-- 安装身份三处必须一致：`package.json.name`、`cordis.patch.yml` 的 row `name`、`scripts/build-client.mjs` 产出的 ModuleLoader `id`。任一不一致，面板会整个消失。
+- 不新增运行期依赖（编译期的 `@types/node` 除外）；平台模块（React、`@deepseek-ai/*`）保持 external，由宿主提供。
+- 安装身份三处必须一致：`package.json.name`、`cordis.patch.yml` 的 row `name`、`build.mjs` 里 `PLUGIN_ID` 产出的 ModuleLoader `id`。任一不一致，面板会整个消失。
+- `package.json` 的 `main` / `exports["."]` 指向 `./lib/host/index.js`；`files` 必须含 `lib/host`，否则安装后 host 半不存在。
 
 ## 会静默出错的坑
 
 - 已安装的 profile 加载的是包内副本，不跟随本仓库源码：改源码要重新安装（发版后 `@latest`，或 `dsh plugin --profile web add file:/绝对路径/...`）再重启；仅刷新页面只更新 client 半。
+- `src/host/index.ts` 用 `new URL('../../skills/decision-layer/SKILL.md', import.meta.url)` 找打包内的 skill：源码在 `src/host/`、产物在 `lib/host/`，两层 `..` 才对；改了目录层级会静默丢掉 skill。
 - `meta.detail` 必须是包内相对 `.md` 路径（不能绝对、不能 `..`）；新增或改名要同步 `package.json` 的 `files` 与 `scripts/assert-pack.mjs`，否则详情页回落到 README。
 - 会话开关有两个界面（dock 面板、决策分析页），必须经 `session-events.ts` 同步，不要各存一份本地状态。
-- 决策行会带 gate 的 `command` / `path`，`/logrows` 也会回传；新增日志字段前先确认不会把超出既有范围的原文带到浏览器。
-- 阈值默认值不在 `config-store.mjs`：服务端在各决策点模块（如 `narrowing.mjs` 的 `DEFAULT_NARROW_THRESHOLD`），配置页镜像在 `config-form.tsx`，文案在 `i18n.ts`；改默认值要同时改这几处与测试。
+- 决策行会带 gate 的 `command` / `path` 与各决策点的任务节选，`/logrows` 也会回传；新增日志字段前先确认不会把超出既有范围的原文带到浏览器。任务节选必须走 `src/host/excerpt.ts` 的 `taskExcerpt`（剥离注入块 + 遮蔽凭据 + 512 上限），不要在各决策点另写一份。
+- 阈值默认值不在 `src/host/config-store.ts`：服务端在各决策点模块（如 `src/host/narrowing.ts` 的 `DEFAULT_NARROW_THRESHOLD`），配置页镜像在 `config-form.tsx`，文案在 `i18n.ts`；改默认值要同时改这几处与测试。
 - `featureOn` / `resolveConfig` 在热路径上，读取必须容忍抛错并回退默认；`backend.evaluate` 的请求/响应校验是唯一 wire 契约，不要在调用点复制宽松版。
 
 ## 提交

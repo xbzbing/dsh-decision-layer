@@ -1,7 +1,7 @@
 # ADR-0004：失败即放行，但爆炸半径必须有界
 
 - 状态：Accepted（2026-10-26）
-- 相关：`service/dsh.mjs` 的 `featureOn`、`service/danger-gate.mjs` 的 `resolveMinConfidence`、`service/config-store.mjs`、`tests/dsh.test.mjs`、ADR-0005
+- 相关：`src/host/index.ts` 的 `featureOn`、`src/host/danger-gate.ts` 的 `resolveMinConfidence`、`src/host/config-store.ts`、`tests/dsh.test.mjs`、ADR-0005
 
 ## Context
 

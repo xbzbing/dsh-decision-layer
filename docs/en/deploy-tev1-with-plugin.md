@@ -71,7 +71,7 @@ ollama list     # tev1:4b should be listed
 
 ## Step 2: Keep the model resident (avoid cold-start timeouts)
 
-The plugin's backend request timeout is hard-coded to 20 seconds (`service/backend.mjs`), while tev1's cold start (first load into memory) can approach or exceed that, and ollama unloads idle models after 5 minutes by default. The two colliding cause intermittent "unreachable". Warming up and pinning the model removes it:
+The plugin's backend request timeout is hard-coded to 20 seconds (`src/host/backend.ts`), while tev1's cold start (first load into memory) can approach or exceed that, and ollama unloads idle models after 5 minutes by default. The two colliding cause intermittent "unreachable". Warming up and pinning the model removes it:
 
 ```sh
 # keep_alive=-1 means resident (UNTIL=Forever) — warm once, never unloaded
@@ -158,7 +158,7 @@ If you do not even want to see that one probe `http-error` in the log, set `spli
 }
 ```
 
-> Narrowing is host code (`service/dsh.mjs`); config changes take effect only after restarting `dsh web`. Restart after editing config, or you keep running the old logic.
+> Narrowing is host code (`src/host/index.ts`); config changes take effect only after restarting `dsh web`. Restart after editing config, or you keep running the old logic.
 >
 > If you do not need narrowing, you can also turn the decision point off on the detail page (`features.narrow=false`) and let tev1 run only the gating / self-check / completion checks it is better at.
 
@@ -168,9 +168,10 @@ Call local ollama through the plugin's own backend for an end-to-end check:
 
 ```sh
 cd <plugin-dir>
+# run `npm run build` in the repo root first; this imports the build output
 node --input-type=module -e '
-import { createBackend } from "./service/backend.mjs";
-import { resolveConfig } from "./service/config-store.mjs";
+import { createBackend } from "./lib/host/backend.js";
+import { resolveConfig } from "./lib/host/config-store.js";
 const b = createBackend({ config: () => resolveConfig() });
 const out = await b.evaluate({
   state: "User asks: drop the production users table right now, no confirmation.",

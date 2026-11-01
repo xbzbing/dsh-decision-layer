@@ -22,13 +22,13 @@ dsh plugin --profile web add dsh-decision-layer@latest
 dsh plugin --profile web add https://github.com/xbzbing/dsh-decision-layer/releases/download/v<版本>/dsh-decision-layer-<版本>.tgz
 ```
 
-> 仓库不再提交构建产物 `lib/client.js`（[ADR-0012](<docs/adr/0012-distribution-via-github-actions.md>)），因此**不带 ref 的 `github:xbzbing/dsh-decision-layer` 安装不可用**——那样拿到的是没有 `lib/` 的源码树，host 半仍能加载，但面板不会出现。GitHub 侧请用上面的 Release 附件。
+> 仓库不再提交构建产物 `lib/`（[ADR-0012](<docs/adr/0012-distribution-via-github-actions.md>)），因此**不带 ref 的 `github:xbzbing/dsh-decision-layer` 安装不可用**——那样拿到的是没有 `lib/host/` 与 `lib/client.js` 的源码树，插件加载不了。GitHub 侧请用上面的 Release 附件。
 
 也可从源码本地构建后用 `file:` 安装：
 
 ```sh
 npm ci --ignore-scripts
-npm run build:client
+npm run build
 dsh plugin --profile web add file:/绝对路径/dsh-decision-layer
 ```
 
@@ -37,8 +37,8 @@ dsh plugin --profile web add file:/绝对路径/dsh-decision-layer
 ## 功能
 
 - **手动裁决**：`decision_evaluate` 工具与 `decision-layer` skill 可显式提交 `noul` / `score` / `choice` 问题，`decision_check_connection` 做连通测试；手动调用不计入自动裁决指标，也不改变 agent 行为。
-- **危险门控**：破坏性工具调用执行前用脱敏摘要请后端裁决，只有高置信「拒绝」才拦截；放行、询问、低置信、后端失败或响应不合法一律不介入，按宿主原路径执行。危险规则与拦截置信度门槛可配。
-- **产出自检与质量趋势**：回合结束给最终回复打分（0–2），默认只记录；可开启低分补完，同一回合最多补一次。连续多次高置信低分时，dock 触发器图标会从灰变橙、变红作为提醒。
+- **危险门控**：破坏性工具调用执行前用脱敏摘要请后端裁决，只有高置信「拒绝」才拦截；放行、询问、低置信、后端失败或响应不合法一律不介入，按宿主原路径执行。危险规则与拦截置信度门槛可配。门控日志带脱敏命令 / 路径与本轮任务节选，便于回看拦截是否合理。
+- **产出自检与质量趋势**：回合结束给最终回复打分（0–2），默认只记录；可开启低分补完，同一回合最多补一次。连续多次高置信低分时，dock 触发器图标会从灰变橙、变红作为提醒。自检日志带回合号与同一套任务节选，便于对照是哪一轮被打分。
 - **工具收窄**：回合开始时按任务相关性摘掉可选工具，只在宿主已允许的集合内取交集、不扩权；核心工具与保留前缀命中的工具始终保留，可选工具过多时自动降为仅观察、保留过少时视为判定不可信并跳过，对小上下文后端自动分批。默认真正生效，也可切到仅观察。收窄日志附带回合号和可展开的任务节选，便于对照被摘除的工具评估判断是否合理；旧日志不会补录场景。
 - **任务完成核对**：用户明确列出多个交付条件时，逐项判定「已满足 / 未满足 / 证据不足」，以工具证据为准；默认只观察，可配补完。
 - **防循环**：同一调用连续重复超过阈值即拒绝，确定性本地逻辑，不依赖后端；不受各决策点开关影响，但会话总开关关闭时同样暂停。
@@ -58,7 +58,7 @@ dsh plugin --profile web add file:/绝对路径/dsh-decision-layer
 
 user 消息的文本里可能含有宿主注入的上下文，例如工作区指令（AGENTS.md）、运行时信息和记忆片段。这些内容会离开本机，远程服务提供方可能记录、留存或用于其他用途，具体取决于其服务条款；脱敏和截断只降低风险，不等于匿名化。
 
-本地还会落盘两类数据，各保留 30 天：决策日志在 `~/.config/dsh-decision-layer/logs/`，会话快照在 `~/.config/dsh-decision-layer/state/`，其中包含脱敏后的命令 / 路径、请求主题摘要，以及收窄时的回合号和任务节选（最多 512 字符，过滤记忆 / 系统提醒注入块并遮蔽常见凭据写法）。这些摘要会展示在本地会话面板和决策分析页，可按需自行清理。
+本地还会落盘两类数据，各保留 30 天：决策日志在 `~/.config/dsh-decision-layer/logs/`，会话快照在 `~/.config/dsh-decision-layer/state/`，其中包含脱敏后的命令 / 路径，以及各决策点的回合号与任务节选（最多 512 字符，过滤记忆 / 系统提醒注入块并遮蔽常见凭据写法）。任务节选只写入本地日志 / 快照并展示在本地会话面板和决策分析页，不随裁决请求外发（外发内容以上一节逐项列出为准），可按需自行清理。
 
 **会话内容敏感时，推荐改用本地部署的模型**，让裁决数据不出本机。`tev1` 可经 ollama 原生的 `/v1/systemone` 端点直接接入，部署步骤见 [用本地 tev1 配合插件（部署指南）](<docs/zh/deploy-tev1-with-plugin.md>)；其他本地模型只要提供兼容 `/v1/systemone` 的端点，同样可以在配置页把服务地址指向本机。
 
@@ -68,8 +68,8 @@ user 消息的文本里可能含有宿主注入的上下文，例如工作区指
 
 ## 开发
 
-服务端使用 Node.js `>=20.11`（`.mjs`，无需构建）；客户端用 TypeScript + esbuild 构建。`npm test` 跑本地测试，`npm run build:client` 生成 `lib/client.js`（`tsc` 严格模式就在这一步），`npm run check` 跑完两者。
+服务端与客户端都是 TypeScript（严格模式）：`npm run build` 用 `tsc` 检查类型、esbuild 产出 `lib/host/*.js` 与 `lib/client.js`（[ADR-0015](<docs/adr/0015-typed-host-build.md>)），`npm test` 先构建再跑本地测试，`npm run check` 与 CI 等价。运行期需要 Node.js `>=20.11`。
 
-**构建产物不入库**（[ADR-0012](<docs/adr/0012-distribution-via-github-actions.md>)）：`lib/` 已被 `.gitignore` 覆盖，源码是唯一事实来源。发布由 GitHub Actions 的 `release.yml` 完成——构建、跑门禁、`npm pack`，并用 `scripts/assert-pack.mjs` 断言产物里确实有 `lib/client.js` 且没有源码泄漏，之后才发 npm / 建 Release。该 workflow 在版本号变更推入 main 时自动执行；npm 侧使用 Trusted Publishing（OIDC），不依赖长期 token。
+**构建产物不入库**（[ADR-0012](<docs/adr/0012-distribution-via-github-actions.md>)）：`lib/` 已被 `.gitignore` 覆盖，源码是唯一事实来源。发布由 GitHub Actions 的 `release.yml` 完成——构建、跑门禁、`npm pack`，并用 `scripts/assert-pack.mjs` 断言产物里确实有 host 入口与 `lib/client.js`、且没有源码泄漏，之后才发 npm / 建 Release。该 workflow 在版本号变更推入 main 时自动执行；npm 侧使用 Trusted Publishing（OIDC），不依赖长期 token。
 
 架构决策记录见 [docs/adr/](<docs/adr/README.md>)：每条规则为什么存在、当时放弃了哪些备选。0.7.1 为体验版：介入能力已可用，但实际价值与阈值仍在探索，欢迎反馈决策日志观察到的误判与体感。

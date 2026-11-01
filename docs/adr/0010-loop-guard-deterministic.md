@@ -1,7 +1,7 @@
 # ADR-0010：防循环确定性、不走后端
 
 - 状态：Accepted（2026-10-26）
-- 相关：`service/loop-guard.mjs`、`service/dsh.mjs` 的 `ctx.tools.guard`、ADR-0006
+- 相关：`src/host/loop-guard.ts`、`src/host/index.ts` 的 `ctx.tools.guard`、ADR-0006
 
 ## Context
 

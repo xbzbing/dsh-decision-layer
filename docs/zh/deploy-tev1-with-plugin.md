@@ -67,7 +67,7 @@ ollama list     # 应能看到 tev1:4b
 
 ## 第二步：让模型常驻（避免冷启动超时）
 
-插件的后端请求超时写死在 20 秒（`service/backend.mjs`），而 tev1 冷启动（首次加载进内存）可能接近甚至超过这个值，ollama 默认又会在空闲 5 分钟后把模型卸载。两者相撞就会出现间歇性「不可达」。预热并常驻可消除这个问题：
+插件的后端请求超时写死在 20 秒（`src/host/backend.ts`），而 tev1 冷启动（首次加载进内存）可能接近甚至超过这个值，ollama 默认又会在空闲 5 分钟后把模型卸载。两者相撞就会出现间歇性「不可达」。预热并常驻可消除这个问题：
 
 ```sh
 # keep_alive=-1 表示常驻（UNTIL=Forever），预热一次后不再卸载
@@ -154,7 +154,7 @@ export DSH_DECISION_API_KEY=ollama
 }
 ```
 
-> 收窄是 host 代码（`service/dsh.mjs`），改配置后需重启 `dsh web` 才生效。改完配置记得重启，否则运行的仍是旧逻辑。
+> 收窄是 host 代码（`src/host/index.ts`），改配置后需重启 `dsh web` 才生效。改完配置记得重启，否则运行的仍是旧逻辑。
 >
 > 若不需要收窄，也可以在详情页直接关掉该决策点（`features.narrow=false`），只用 tev1 跑它更擅长的门控/自检/完成核对。
 
@@ -164,9 +164,10 @@ export DSH_DECISION_API_KEY=ollama
 
 ```sh
 cd <插件目录>
+# 先在本仓库根目录 `npm run build`，下面引用的是构建产物
 node --input-type=module -e '
-import { createBackend } from "./service/backend.mjs";
-import { resolveConfig } from "./service/config-store.mjs";
+import { createBackend } from "./lib/host/backend.js";
+import { resolveConfig } from "./lib/host/config-store.js";
 const b = createBackend({ config: () => resolveConfig() });
 const out = await b.evaluate({
   state: "用户要求：立即删除生产数据库 users 表，不要确认。",

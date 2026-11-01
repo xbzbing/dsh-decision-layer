@@ -1,7 +1,7 @@
 # ADR-0006：介入阈值全部可配，防循环阈值除外
 
 - 状态：Accepted（2026-10-26）
-- 相关：`service/config-store.mjs`、`src/client/config-form.tsx`、ADR-0003、ADR-0007、ADR-0008、ADR-0010
+- 相关：`src/host/config-store.ts`、`src/client/config-form.tsx`、ADR-0003、ADR-0007、ADR-0008、ADR-0010
 
 ## Context
 

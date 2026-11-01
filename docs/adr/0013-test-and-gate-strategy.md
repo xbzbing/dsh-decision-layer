@@ -13,7 +13,7 @@
 - 每个决策点导出**纯函数**（`classifyDangerous`、`scoreQuestion`、`extractConditions`、`narrowTools`、`relevanceQuestions`）与**工厂**（`createDangerGate` / `createSelfCheck` / `createTaskCompletion` / `createNarrowing` / `createLoopGuard`）。测试驱动工厂的公开接口、注入假后端，**不测实现细节**。
 - 宿主接口用假 ctx 验证装配（`tests/dsh.test.mjs`）：注册了哪些 hook、哪些工具、`pre-execute` 的具体行为。
 - 客户端用 esbuild 在内存里构建 + jsdom + `@testing-library/react`，测真实渲染与提交体；其中一条是**跨半耦合断言**——表单提交的 body 必须能被真实的 `saveConfig` 接受并落盘，防止两半字段名漂移后「单测全绿、线上 400」。
-- 门禁 = `npm run build:client`（`tsc` 严格：`strict` + `noUncheckedIndexedAccess`）+ `npm test`。CI 在 Node 22/24 上跑同一组。
+- 门禁 = `npm run build`（`tsc` 严格：两半都开 `strict` + `noUncheckedIndexedAccess`，host 与 client 各自一份 tsconfig（host 走 NodeNext/ES2023 + node types，client 走 bundler/DOM + react types））+ `npm test`；`npm test` 内建构建，`npm run check` 与 CI 等价（ADR-0015）。CI 在 Node 22/24 上跑同一组，并在 Node 24 上额外 `npm pack` + `assert-pack.mjs`，让 `main`/`exports`/`files` 与产物缺失在 PR 阶段暴露。
 - **断言必须有判别力**：修 bug 时先确认「去掉修复后测试变红」。反例已发生两次——保留期清理用真实时钟，让带固定日期的 fixture 随时间腐坏；配置爆炸半径的测试起初从空配置起步，测不出「显示已载入值却提交默认值」这个正是要防的回归。
 
 ## Consequences

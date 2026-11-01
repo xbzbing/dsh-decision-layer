@@ -1,7 +1,7 @@
 # ADR-0008：自检用概率加权分，低置信低分视为噪声
 
 - 状态：Accepted（2026-10-26）
-- 相关：`service/self-check.mjs`、`service/quality-trend.mjs`、`service/steer-once.mjs`、ADR-0002、ADR-0006
+- 相关：`src/host/self-check.ts`、`src/host/quality-trend.ts`、`src/host/steer-once.ts`、ADR-0002、ADR-0006
 
 ## Context
 

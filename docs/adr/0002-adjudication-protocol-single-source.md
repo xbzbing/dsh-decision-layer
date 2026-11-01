@@ -1,7 +1,7 @@
 # ADR-0002：裁决协议单源、模型无关
 
 - 状态：Accepted（2026-10-26）
-- 相关：`service/backend.mjs`、`service/config-store.mjs`、`skills/decision-layer/SKILL.md`、`docs/zh/deploy-tev1-with-plugin.md`
+- 相关：`src/host/backend.ts`、`src/host/config-store.ts`、`skills/decision-layer/SKILL.md`、`docs/zh/deploy-tev1-with-plugin.md`
 
 ## Context
 

@@ -16,9 +16,9 @@
 ## Decision
 
 - **`lib/` 移出仓库**：`.gitignore` 覆盖整个 `lib/`，`git rm --cached` 清掉已跟踪的 `lib/client.js`。源码是唯一事实来源。
-- **产物由 CI 构建**：打包前先 `npm run build:client`（`tsc` 严格类型检查 + esbuild 单 bundle）。
+- **产物由 CI 构建**：打包前先 `npm run build`（host 与 client 两半，见 ADR-0015）。
 - **`package.json` 的 `files` 是唯一清单**：`npm pack` 的 tgz 是唯一产物，npm 与 GitHub Release 附件共用同一份。
-- **打包断言**：`scripts/assert-pack.mjs` 解包并断言 `lib/client.js` 存在且非空、`service/` 与 `skills/` 齐全、`locale/` 与元数据齐全、不含 `src/`、`tests/`、`docs/local/`。产物缺失必须在发布前失败，而不是发布后才发现。
+- **打包断言**：`scripts/assert-pack.mjs` 解包并断言 `lib/host/index.js` 与 `lib/client.js` 存在且非空、入口的相对导入在包内可解析、`skills/` 与 `locale/`、元数据齐全，且不含 `src/`、`tests/`、`service/`、`docs/local/`。产物缺失必须在发布前失败，而不是发布后才发现。
 - **发布由 workflow 执行，且默认不发布**：`release.yml` 只由 `workflow_dispatch` 触发（不像某些仓库那样由 `package.json` 变更自动触发），带 `dry_run` 输入且**默认 true**——手动触发也只跑到「构建 + 门禁 + 打包 + 断言」，不 tag、不 publish、不建 Release。
 - 正式发布时：`dry_run=false` 且必须回填 `confirm_version` 与版本号一致 → 打 tag → `npm publish` → 建 Release 并附同一 tgz。正文来自入库的 `docs/releases/v<版本>.md`，缺文件在打包前失败。
 
@@ -27,7 +27,7 @@
 ## Consequences
 
 - main 的 diff 只剩源码；重构与并行分支不再撞压缩产物；review 噪声消失。
-- **破坏性**：不带 ref 的 `github:xbzbing/dsh-decision-layer` 安装会拿到没有 `lib/` 的树——host 半仍工作，但面板消失。README 因此改为只推荐 npm，GitHub 侧指向 Release 附件 tgz。当前真实用户只有作者本人，无需公告期。
+- **破坏性**：不带 ref 的 `github:xbzbing/dsh-decision-layer` 安装会拿到没有 `lib/` 的树——两半产物都不在，插件加载不了。README 因此改为只推荐 npm，GitHub 侧指向 Release 附件 tgz。当前真实用户只有作者本人，无需公告期。
 - 发布流程暂未启用自动触发，避免「改个 `package.json` 就发版」；启用的时机与 npm 凭据（`NPM_TOKEN` 或 Trusted Publishing）一起决定。
-- `npm pack` 依赖工作区里已构建的 `lib/`，所以**本地打包也必须先 `npm run build:client`**；`assert-pack.mjs` 把「忘记构建」从静默故障变成显式失败。
-- 回滚：重新入库 `lib/client.js`、删掉两个 workflow。npm 版本不可回收，出问题只能发补丁版。
+- `npm pack` 依赖工作区里已构建的 `lib/`，所以**本地打包也必须先 `npm run build`**；`assert-pack.mjs` 把「忘记构建」从静默故障变成显式失败。
+- 回滚：重新入库 `lib/`（host 与 client 两半产物）、删掉两个 workflow。npm 版本不可回收，出问题只能发补丁版。

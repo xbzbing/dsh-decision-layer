@@ -1,7 +1,7 @@
 # ADR-0003：危险门控只在高置信 `deny` 时拦截
 
 - 状态：Accepted（2026-10-26）
-- 相关：`service/danger-gate.mjs`、`service/dsh.mjs`、ADR-0004、ADR-0006
+- 相关：`src/host/danger-gate.ts`、`src/host/index.ts`、ADR-0004、ADR-0006
 
 ## Context
 

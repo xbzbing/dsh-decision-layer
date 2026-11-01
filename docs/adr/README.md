@@ -16,7 +16,7 @@
 
 | 编号 | 决策 | 领域 |
 | --- | --- | --- |
-| [ADR-0001](0001-two-halves-and-zero-build-install.md) | 双半架构与服务端零构建 | 架构 |
+| [ADR-0001](0001-two-halves-and-zero-build-install.md) | 双半架构与服务端零构建（已被 ADR-0015 取代） | 架构 |
 | [ADR-0002](0002-adjudication-protocol-single-source.md) | 裁决协议单源、模型无关 | 契约 |
 | [ADR-0003](0003-danger-gate-two-tier.md) | 危险门控只在高置信 `deny` 时拦截 | 安全 |
 | [ADR-0004](0004-fail-open-with-bounded-blast-radius.md) | 失败即放行，但爆炸半径必须有界 | 安全 |
@@ -30,12 +30,13 @@
 | [ADR-0012](0012-distribution-via-github-actions.md) | 产物移出仓库，发布交给 GitHub Actions | 分发 |
 | [ADR-0013](0013-test-and-gate-strategy.md) | 测试与门禁策略 | 工程 |
 | [ADR-0014](0014-release-on-version-bump-with-oidc.md) | 版本变更推入 main 即发布，npm 走 OIDC | 分发 |
+| [ADR-0015](0015-typed-host-build.md) | host 半改用 TypeScript，两半统一构建 | 架构 |
 
 ## 有效期
 
 ADR 记录的是**决策与它的有效期**，不是当前实现的快照。当实现按计划演进时，旧 ADR 不删除、不重写，而是标注新状态并链接取代者：
 
-- **ADR-0001** 关于「只有 client 半有产物」的结论持续有效；其中「产物入库」已退出，由 **ADR-0012** 取代（`lib/` 已移出 main）。
+- **ADR-0001** 的「双半架构、产物由 CI 构建」持续有效；其中「host 半零构建」由 **ADR-0015** 取代（host 改为 `src/host/*.ts` 编译到 `lib/host/*.js`），「产物入库」已退出，由 **ADR-0012** 取代（`lib/` 已移出 main）。
 - **ADR-0006** 标定的默认值全部是**未经验证的启发式**，插件因此仍标为体验版（见 README 顶部）；实测校准后应新写 ADR 记录新值，而不是改这份。
 - **ADR-0012** 的「产物移出仓库、由 CI 构建」持续有效；其中「发布只手动触发、默认 dry run」由 **ADR-0014** 取代（改为版本变更自动触发 + OIDC）。
 

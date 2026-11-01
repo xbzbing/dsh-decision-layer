@@ -1,6 +1,7 @@
 # ADR-0001：双半架构与服务端零构建
 
-- 状态：Accepted（2026-10-26）
+- 状态：Superseded by [ADR-0015](0015-typed-host-build.md)（2026-11-01）——host 半已改为 TypeScript 编译，正文保留为决策链的一部分
+- 原状态：Accepted（2026-10-26）
 - 相关：`service/`、`src/client/`、`package.json` 的 `dsh.client`、`cordis.patch.yml`、ADR-0012
 
 ## Context
