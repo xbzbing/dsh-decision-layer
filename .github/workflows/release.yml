@@ -86,7 +86,7 @@ jobs:
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
 
       # `lib/` is not committed, so the host tree and client bundle must be built
-      # before packing; the assertion is what turns "forgot to build" from a silent
+      # before packing; the gate is what turns "forgot to build" from a silent
       # broken release into a failed pipeline.
       - name: Gate (build + tests + pack + assert)
         if: steps.state.outputs.npm != 'done' || steps.state.outputs.tag != 'done' || steps.state.outputs.gh != 'done'
@@ -131,6 +131,9 @@ jobs:
           fi
           if gh release view "v$V" >/dev/null 2>&1; then
             gh release edit "v$V" --title "v$V" --notes-file "${{ steps.notes.outputs.file }}" "${CHANNEL[@]}"
+            # A previous run may have created the Release but failed before (or
+            # while) uploading the asset; re-uploading makes the rerun idempotent.
+            gh release upload "v$V" "dsh-decision-layer-$V.tgz" --clobber
           else
             gh release create "v$V" "dsh-decision-layer-$V.tgz" \
               --title "v$V" --notes-file "${{ steps.notes.outputs.file }}" --verify-tag "${CHANNEL[@]}"
