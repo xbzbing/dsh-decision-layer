@@ -34,21 +34,9 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
-      # `lib/` is not committed (docs/adr/0012, docs/adr/0015), so both halves
-      # are built here. `npm run check` = build + tests: the host build runs
-      # `tsc` for declarations (that is the host typecheck) and `build.mjs`
-      # type-checks the client before bundling it.
-      - name: Build both halves, typecheck, and test
+      # `lib/` is not committed (docs/adr/0012, docs/adr/0015), so `npm run check`
+      # builds both halves (the host build's `tsc` pass is the host typecheck and
+      # `build.mjs` type-checks the client), runs the tests, then `npm pack`s the
+      # tarball and checks its layout — the same sequence a release runs.
+      - name: Build both halves, typecheck, test, and check the tarball
         run: npm ci && npm run check
-
-      # The tarball layout is part of this plugin's contract (main/exports/files,
-      # host modules, client bundle). Pack it from the same build and run the
-      # release assertion, so a broken manifest fails in the PR instead of at
-      # release time. One Node line is enough: the check is artifact-shaped.
-      - name: Package assertions
-        if: matrix.node == '24.x'
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          npm pack --pack-destination dist
-          node scripts/assert-pack.mjs dist/*.tgz

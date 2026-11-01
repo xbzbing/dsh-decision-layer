@@ -8,8 +8,10 @@
 // tarball or not declared as a dependency, when the client bundle is not the
 // built module-loader wrapper, or when source/test/service trees leaked in.
 //
-//   node scripts/assert-pack.mjs dsh-decision-layer-<version>.tgz
+//   node scripts/assert-pack.mjs [dsh-decision-layer-<version>.tgz]
 //
+// With no argument it packs the current worktree into a temporary directory
+// first, so `npm run check` exercises exactly the tarball a release would ship.
 // Exits non-zero on any violation so a release step stops before publishing.
 
 import { execFileSync } from 'node:child_process';
@@ -45,10 +47,17 @@ const FORBIDDEN_PREFIXES = ['package/src/', 'package/tests/', 'package/service/'
 // non-bundled host emit can use.
 const SPECIFIER = /\bfrom\s*["']([^"']+)["']|\bimport\s*\(?\s*["']([^"']+)["']/g;
 
-const tgz = process.argv[2];
+let tgz = process.argv[2];
+let generated;
 if (!tgz) {
-  console.error('usage: node scripts/assert-pack.mjs <package.tgz>');
-  process.exit(2);
+  generated = await mkdtemp(join(tmpdir(), 'assert-pack-pack-'));
+  execFileSync('npm', ['pack', '--silent', '--pack-destination', generated], { stdio: ['ignore', 'ignore', 'inherit'] });
+  const packed = (await readdir(generated)).filter(name => name.endsWith('.tgz'));
+  if (packed.length !== 1) {
+    console.error(`assert-pack: npm pack produced ${packed.length} tarballs (expected exactly one)`);
+    process.exit(1);
+  }
+  tgz = join(generated, packed[0]);
 }
 
 const problems = [];
@@ -90,6 +99,32 @@ try {
     if (!stats?.isFile()) fail(`package.json ${field} points at missing ${relative}`);
   }
 
+  // Every literal path in `files` must have made it into the tarball; a typo or
+  // a new runtime directory missing from the whitelist is otherwise invisible.
+  for (const entry of Array.isArray(manifest.files) ? manifest.files : []) {
+    if (typeof entry !== 'string' || entry.includes('*')) continue;
+    const stats = await stat(join(directory, 'package', entry)).catch(() => undefined);
+    if (!stats) fail(`package.json files entry ${entry} is missing from the tarball`);
+  }
+
+  // A locale's meta.detail is what the plugin detail page loads (a package-relative
+  // .md path). A rename that skips package.json/files otherwise only shows up as
+  // a silent README fallback.
+  for (const locale of ['zh', 'en']) {
+    try {
+      const data = JSON.parse(await readFile(join(directory, `package/locale/${locale}.json`), 'utf8'));
+      const detail = data?.meta?.detail;
+      if (typeof detail !== 'string' || !detail || detail.startsWith('/') || detail.split('/').includes('..')) {
+        fail(`locale/${locale}.json meta.detail is not a safe package-relative path`);
+        continue;
+      }
+      const stats = await stat(join(directory, 'package', detail)).catch(() => undefined);
+      if (!stats?.isFile()) fail(`locale/${locale}.json meta.detail points at missing ${detail}`);
+    } catch (error) {
+      fail(`locale/${locale}.json is unreadable: ${error.message}`);
+    }
+  }
+
   // The client bundle must be the built module-loader wrapper, not a stray file,
   // and it must parse: a truncated banner/footer otherwise only fails in a browser.
   const bundleStats = await stat(join(directory, 'package/lib/client.js')).catch(() => undefined);
@@ -127,6 +162,15 @@ try {
     }
   }
 
+  // Every emitted module must ship its declaration too: `exports["."].types`
+  // points at index.d.ts, and its relative imports only resolve if the sibling
+  // declarations are present (a consumer otherwise degrades to `any`).
+  for (const relative of hostModules) {
+    const declaration = relative.replace(/\.js$/, '.d.ts');
+    const stats = await stat(join(hostDir, declaration)).catch(() => undefined);
+    if (!stats?.isFile()) fail(`lib/host/${declaration} is missing (the published types must resolve)`);
+  }
+
   const entries = execFileSync('tar', ['-tzf', tgz], { encoding: 'utf8' }).split('\n').filter(Boolean);
   for (const entry of entries) {
     const leaked = FORBIDDEN_PREFIXES.find(prefix => entry.startsWith(prefix));
@@ -136,6 +180,7 @@ try {
   console.log(`assert-pack: ${manifest.name}@${manifest.version} — ${entries.length} entries, ${hostModules.length} host modules, lib/client.js ${bundleStats?.size ?? 0} bytes`);
 } finally {
   await rm(directory, { recursive: true, force: true });
+  if (generated) await rm(generated, { recursive: true, force: true });
 }
 
 if (problems.length > 0) {
