@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { narrowTools, relevanceQuestions, createNarrowing } from '../service/narrowing.mjs';
+import { createSessionState } from '../service/session-state.mjs';
 
 const answers = probs => ({ answers: Object.fromEntries(Object.entries(probs).map(([tool, noul]) => [tool, { type: 'noul', noul }])) });
 const turn = (state, tools, { sessionId = 's1', turn = 1 } = {}) => ({ agent: { session: { id: sessionId } }, turn, signal: AbortSignal.timeout(1000), state, tools });
@@ -85,7 +86,67 @@ test('createNarrowing records observe suggestions without claiming to enforce', 
   assert.equal(result.evaluated, true);
   assert.equal(result.mode, 'observe');
   assert.deepEqual(result.drop, ['image_gen']);
-  assert.deepEqual(logs.at(-1), { kind: 'narrow', outcome: 'applied', dropped: 1, kept: 2, mode: 'observe', tools: ['image_gen'], applied: false });
+  assert.deepEqual(logs.at(-1), { kind: 'narrow', outcome: 'applied', task: 'search the web', turn: 1, dropped: 1, kept: 2, mode: 'observe', tools: ['image_gen'], applied: false });
+});
+
+test('narrow logs carry a bounded task excerpt and turn on success and every failure strategy', async () => {
+  const tools = [{ name: 'web_search' }, { name: 'image_gen' }];
+  for (const batchMode of ['single', 'split', 'auto']) {
+    for (const fails of [false, true]) {
+      const logs = [];
+      const sessions = { snapshot: () => ({ enabled: true }), log: (_id, entry) => logs.push(entry) };
+      const check = createNarrowing({ sessions, coreTools: [], minKeep: 1, settings: { batchMode },
+        evaluate: async () => {
+          if (fails) throw Object.assign(new Error('down'), { reason: 'http-error' });
+          return answers({ web_search: 0.9, image_gen: 0.1 });
+        } });
+      const state = '<openviking-context>private memory</openviking-context>\n'
+        + '<system-reminder>internal instructions</system-reminder>\n'
+        + '查找\n  前端资料 token=hidden Authorization: Bearer bearer-secret\n' + '文'.repeat(600);
+      await check.review(turn(state, tools, { turn: 7 }));
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].turn, 7);
+      assert.equal(logs[0].task.length, 512);
+      assert.match(logs[0].task, /^查找 前端资料/);
+      assert.doesNotMatch(logs[0].task, /private memory|internal instructions|hidden|bearer-secret/);
+      assert.equal(logs[0].outcome, fails ? 'error' : 'applied');
+    }
+  }
+});
+
+test('narrow task excerpts mask common credential headers and escaped JSON strings', async () => {
+  const logs = [];
+  const sessions = createSessionState({ onLog: entry => logs.push(entry) });
+  const check = createNarrowing({ coreTools: [], minKeep: 1, sessions,
+    evaluate: async () => answers({ a: 0.9, b: 0.1 }) });
+  const samples = [
+    '修复登录 API Key: sk-example-secret-value',
+    '修复登录 Authorization: Basic base64-secret-value',
+    '修复登录 Cookie: sessionid=cookie-secret; other=private',
+    '修复登录 Set-Cookie: sessionid=cookie-secret; HttpOnly',
+    '修复登录 ' + JSON.stringify({ password: 'abc"def-sensitive', api_key: 'secret with spaces' }),
+    '修复登录 password="quoted secret with spaces"',
+  ];
+  for (const state of samples) {
+    await check.review(turn(state, [{ name: 'a' }, { name: 'b' }]));
+    for (const entry of [logs.at(-1), sessions.snapshot('s1').log.at(-1)]) {
+      assert.match(entry.task, /^修复登录/);
+      assert.match(entry.task, /\[redacted\]/);
+      assert.doesNotMatch(JSON.stringify(entry), /sk-example|base64-secret|cookie-secret|private|def-sensitive|secret with spaces/);
+    }
+  }
+});
+
+test('narrow logs do not serialize object states or unfinished injected context', async () => {
+  const logs = [];
+  const check = createNarrowing({ coreTools: [], minKeep: 1,
+    sessions: { snapshot: () => ({ enabled: true }), log: (_id, entry) => logs.push(entry) },
+    evaluate: async () => answers({ a: 0.9, b: 0.1 }) });
+  const tools = [{ name: 'a' }, { name: 'b' }];
+  await check.review(turn({ token: 'object-secret' }, tools));
+  assert.equal(logs[0].task, undefined);
+  await check.review(turn('修复界面 <openviking-context>unclosed private memory', tools));
+  assert.equal(logs[1].task, '修复界面');
 });
 
 test('all optional tools judged irrelevant are dropped while core tools remain', async () => {

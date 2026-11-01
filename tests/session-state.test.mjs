@@ -121,6 +121,21 @@ test('narrow log entries keep mode and dropped count', () => {
   assert.equal(entry.dropped, 3);
 });
 
+test('narrow task excerpts and turn survive both live logs and the persisted sink with bounds', () => {
+  const sunk = [];
+  const sessions = createSessionState({ onLog: entry => sunk.push(entry) });
+  sessions.log('one', { kind: 'narrow', outcome: 'applied', task: '修复\n  登录页面', turn: 7 });
+  const entry = sessions.snapshot('one').log.at(-1);
+  assert.equal(entry.task, '修复 登录页面');
+  assert.equal(entry.turn, 7);
+  assert.equal(sunk[0].task, entry.task);
+  assert.equal(sunk[0].turn, entry.turn);
+  sessions.log('one', { kind: 'narrow', outcome: 'error', task: '文'.repeat(900), turn: -1 });
+  assert.equal(sessions.snapshot('one').log.at(-1).task.length, 512);
+  assert.equal(sunk[1].task.length, 512);
+  assert.equal(sunk[1].turn, undefined);
+});
+
 test('every decision record carries a stable unique id shared by panel and sink', () => {
   const sunk = [];
   const sessions = createSessionState({ onLog: entry => sunk.push(entry) });

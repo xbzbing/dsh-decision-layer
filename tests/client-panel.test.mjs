@@ -134,6 +134,41 @@ test('modal shows gate metrics and the decision log, not the backend form', asyn
   assert.equal(view.queryByLabelText('服务地址'), null, 'the backend form must not appear in the modal');
 });
 
+test('narrow logs show expandable task context and turn for results and failures, while legacy rows still render', async () => {
+  const task = '修复登录页面，保留现有接口。'.repeat(12);
+  globalThis.fetch = async url => {
+    if (String(url).includes('/session?')) return envelope({ enabled: true });
+    if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 3, failures: 1,
+      narrow: { attempts: 3, failures: 1, applied: 1, dropped: 1 } });
+    if (String(url).includes('/log?')) return envelope({ entries: [
+      { id: 'context', at: 1, kind: 'narrow', outcome: 'applied', dropped: 1, kept: 5, tools: ['web_search'], mode: 'enforce', applied: true, task, turn: 7 },
+      { id: 'failed', at: 2, kind: 'narrow', outcome: 'error', reason: 'unreachable', task: '检查构建问题', turn: 8 },
+      { id: 'legacy', at: 3, kind: 'narrow', outcome: 'ok', dropped: 0, kept: 6 },
+    ] });
+    if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'narrow-context', t: translate }));
+  fireEvent.click(view.getByRole('button', { name: /决策层/ }));
+  const summary = await view.findByText(/场景（任务节选）：修复登录页面/);
+  const details = summary.closest('details');
+  assert.ok(details);
+  assert.equal(details.open, false);
+  assert.equal(details.querySelector('p').textContent, task);
+  fireEvent.click(summary);
+  assert.equal(details.open, true);
+  fireEvent.click(summary);
+  assert.equal(details.open, false);
+  assert.match(details.closest('li').textContent, /回合 7/);
+  assert.match(details.closest('li').textContent, /web_search/);
+  assert.match(details.closest('li').textContent, /已生效/);
+  const failed = (await view.findByText(/场景（任务节选）：检查构建问题/)).closest('li');
+  assert.match(failed.textContent, /回合 8/);
+  assert.match(failed.textContent, /评估失败/);
+  const legacy = (await view.findByText(/保留 6/)).closest('li');
+  assert.equal(legacy.querySelector('details'), null);
+});
+
 test('narrow log with too-many-candidates shows the count once and no duplicate observe tag', async () => {
   globalThis.fetch = async url => {
     if (String(url).includes('/session?')) return envelope({ enabled: true });

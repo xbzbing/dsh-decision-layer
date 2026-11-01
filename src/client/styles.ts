@@ -78,6 +78,10 @@ const css = `
 .decision-log-tool{font-size:.76rem;padding:.05rem .35rem;border-radius:5px;background:var(--dsw-alias-bg-layer-1,#f2f4f6);color:var(--dsw-alias-label-primary,#202124)}
 .decision-log-cmd{font-size:.74rem;padding:.05rem .35rem;border-radius:5px;background:var(--dsw-alias-bg-layer-1,#f2f4f6);color:var(--dsw-alias-label-secondary,#59636e);word-break:break-all}
 .decision-log-subject{font-size:.74rem;color:var(--dsw-alias-label-secondary,#59636e);font-style:italic}
+.decision-log-context{margin-top:.25rem;font-size:.74rem;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
+.decision-log-context summary{cursor:pointer}
+.decision-log-context summary:focus-visible{outline:2px solid var(--dsw-alias-label-secondary);outline-offset:2px}
+.decision-log-context p{margin:.25rem 0 0}
 .decision-log-verdict{font-weight:600}
 .decision-log-deny .decision-log-verdict{color:#c0392b}
 .decision-log-ok .decision-log-verdict{color:#1f8a70}

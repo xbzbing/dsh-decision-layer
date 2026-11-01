@@ -10,6 +10,22 @@ export const narrowApplied = record => {
   return record?.applied === true || record?.outcome === 'applied';
 };
 const MAX_STATE = 8 * 1024;
+
+// A human-review hint from the same task passed to relevanceQuestions, never a
+// dump of structured state. Strip injected context and common credential forms
+// before truncating, so neither the live panel nor the JSONL sink gets them.
+function taskExcerpt(state) {
+  if (typeof state !== 'string') return undefined;
+  const text = state.slice(0, MAX_STATE)
+    .replace(/<(openviking-context|system-reminder)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<(openviking-context|system-reminder)\b[\s\S]*$/i, ' ')
+    .replace(/(\b(?:authorization|cookie|set-cookie)\s*:\s*)[^\r\n]*/gi, '$1[redacted]')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
+    .replace(/((?:password|passwd|secret|token|api[ _-]*key|authorization|cookie)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi, '$1[redacted]')
+    .replace(/\b(password|passwd|secret|token|api[ _-]*key)\s+\S+/gi, '$1 [redacted]')
+    .replace(/\s+/g, ' ').trim();
+  return text ? text.slice(0, 512) : undefined;
+}
 // The adjudication backend hard-rejects a request carrying more than 64 questions
 // (backend.mjs validateRequest). One relevance question is sent per optional tool,
 // so the candidate cap can never exceed this — otherwise evaluate() throws locally
@@ -131,7 +147,12 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     try { if (typeof sessions.recordNarrow === 'function') sessions.recordNarrow(id, outcome, detail.dropped ?? 0, narrowApplied({ ...detail, outcome })); }
     catch { /* telemetry is best effort */ }
     if (typeof sessions.log !== 'function') return;
-    try { sessions.log(id, { kind: 'narrow', outcome, ...detail }); }
+    try {
+      const task = taskExcerpt(turn?.state);
+      const context = task ? { task } : {};
+      if (Number.isSafeInteger(turn?.turn) && turn.turn >= 0) context.turn = turn.turn;
+      sessions.log(id, { kind: 'narrow', outcome, ...context, ...detail });
+    }
     catch { /* logging is best effort */ }
   };
   // Send one relevance request per tool with bounded concurrency, then merge the
