@@ -58,7 +58,7 @@ dsh plugin --profile web add file:/绝对路径/dsh-decision-layer
 
 user 消息的文本里可能含有宿主注入的上下文，例如工作区指令（AGENTS.md）、运行时信息和记忆片段。这些内容会离开本机，远程服务提供方可能记录、留存或用于其他用途，具体取决于其服务条款；脱敏和截断只降低风险，不等于匿名化。
 
-本地还会落盘两类数据，各保留 30 天：决策日志在 `~/.config/dsh-decision-layer/logs/`，会话快照在 `~/.config/dsh-decision-layer/state/`，其中包含脱敏后的命令 / 路径，以及各决策点的回合号与任务节选（最多 512 字符，过滤记忆 / 系统提醒注入块并遮蔽常见凭据写法）。任务节选只写入本地日志 / 快照并展示在本地会话面板和决策分析页，不随裁决请求外发（外发内容以上一节逐项列出为准），可按需自行清理。
+本地还会落盘两类数据，各保留 30 天：决策日志在 `~/.config/dsh-decision-layer/logs/`，会话快照在 `~/.config/dsh-decision-layer/state/`，其中包含脱敏后的命令 / 路径；门控、自检与收窄带任务节选（最多 512 字符，过滤记忆 / 系统提醒注入块并遮蔽常见凭据写法），自检与收窄另带回合号，完成核对目前只有条件计数。任务节选只写入本地日志 / 快照并展示在本地会话面板和决策分析页，不随裁决请求外发（外发内容以上一节逐项列出为准），可按需自行清理。
 
 **会话内容敏感时，推荐改用本地部署的模型**，让裁决数据不出本机。`tev1` 可经 ollama 原生的 `/v1/systemone` 端点直接接入，部署步骤见 [用本地 tev1 配合插件（部署指南）](<docs/zh/deploy-tev1-with-plugin.md>)；其他本地模型只要提供兼容 `/v1/systemone` 的端点，同样可以在配置页把服务地址指向本机。
 
@@ -68,7 +68,7 @@ user 消息的文本里可能含有宿主注入的上下文，例如工作区指
 
 ## 开发
 
-服务端与客户端都是 TypeScript（严格模式）：`npm run build` 用 `tsc` 检查类型、esbuild 产出 `lib/host/*.js` 与 `lib/client.js`（[ADR-0015](<docs/adr/0015-typed-host-build.md>)），`npm test` 先构建再跑本地测试，`npm run check` 与 CI 等价。运行期需要 Node.js `>=20.11`。
+服务端与客户端都是 TypeScript（严格模式）：`npm run build` 用 `tsc` 检查类型、esbuild 产出 `lib/host/*.js` 与 `lib/client.js`（[ADR-0015](<docs/adr/0015-typed-host-build.md>)），`npm test` 先构建再跑本地测试，`npm run check` 与 CI 等价（构建 + 测试 + `npm pack` 断言）。运行期需要 Node.js `>=20.11`。
 
 **构建产物不入库**（[ADR-0012](<docs/adr/0012-distribution-via-github-actions.md>)）：`lib/` 已被 `.gitignore` 覆盖，源码是唯一事实来源。发布由 GitHub Actions 的 `release.yml` 完成——构建、跑门禁、`npm pack`，并用 `scripts/assert-pack.mjs` 断言产物里确实有 host 入口与 `lib/client.js`、且没有源码泄漏，之后才发 npm / 建 Release。该 workflow 在版本号变更推入 main 时自动执行；npm 侧使用 Trusted Publishing（OIDC），不依赖长期 token。
 

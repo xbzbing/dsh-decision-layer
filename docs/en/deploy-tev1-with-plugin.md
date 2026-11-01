@@ -158,7 +158,7 @@ If you do not even want to see that one probe `http-error` in the log, set `spli
 }
 ```
 
-> Narrowing is host code (`src/host/index.ts`); config changes take effect only after restarting `dsh web`. Restart after editing config, or you keep running the old logic.
+> Narrowing lives in host code (`src/host/narrowing.ts`); host code changes need a `dsh web` restart, but config is read live and takes effect without one (ADR-0005): edits to `narrowSettings` / `features` apply to the next decision.
 >
 > If you do not need narrowing, you can also turn the decision point off on the detail page (`features.narrow=false`) and let tev1 run only the gating / self-check / completion checks it is better at.
 

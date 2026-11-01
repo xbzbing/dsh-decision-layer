@@ -154,7 +154,7 @@ export DSH_DECISION_API_KEY=ollama
 }
 ```
 
-> 收窄是 host 代码（`src/host/index.ts`），改配置后需重启 `dsh web` 才生效。改完配置记得重启，否则运行的仍是旧逻辑。
+> 收窄在 host 代码（`src/host/narrowing.ts`）；改 host 代码需重启 `dsh web`，但配置每次现读、热生效（ADR-0005）：改完 `narrowSettings` / `features` 不需要重启，下一次决策就会读到新值。
 >
 > 若不需要收窄，也可以在详情页直接关掉该决策点（`features.narrow=false`），只用 tev1 跑它更擅长的门控/自检/完成核对。
 

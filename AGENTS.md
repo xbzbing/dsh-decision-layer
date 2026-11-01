@@ -12,11 +12,11 @@ DSH Web 插件的双半结构：`src/host/` 是 Cordis 插件（TypeScript，逐
 npm run build               # tsc 严格类型检查 + esbuild -> lib/host/*.js 与 lib/client.js（不入库）
 npm run typecheck           # 两半各自的 tsconfig（NodeNext / bundler），不改产物
 npm test                    # 先 build，再 node --test tests/*.test.mjs（测试导入 lib/host）
-npm run check               # 等价于 npm test，提交前必须通过，与 CI 一致
+npm run check               # build + 全量测试 + npm pack 断言，提交前必须通过，与 CI 一致
 ```
 
 - 测试导入的是构建产物 `lib/host/*.js`，不是 `src/host/*.ts`；改完 host 源码必须先构建，否则测到旧代码。
-- `tsc` 出错先看 `tsconfig.host.json` / `tsconfig.client.json`，两者都继承根 `tsconfig.json`。
+- `tsc` 出错先看 `tsconfig.host.json` / `tsconfig.client.json`，两者都继承根 `tsconfig.json`；根配置是两半并集，只供编辑器粗筛，host 的 NodeNext 规则由两份子配置强制。
 - 两半改动都要 `npm run build`，再重启 `dsh web`（client 改动另需刷新页面）；漏建会加载旧产物或找不到入口。
 - 改行为先补/改测试；修 bug 必须带回归测试，不要删测试换绿色。
 - 发布走 `.github/workflows/release.yml`：版本号变更推入 main 即自动门禁、打 tag、用 OIDC 发 npm 与 Release；不要手工打 tag 或 `npm publish`。版本号用 `npm version <v> --no-git-tag-version`，同时新增 `docs/releases/v<v>.md`。
@@ -47,7 +47,7 @@ npm run check               # 等价于 npm test，提交前必须通过，与 C
 - `src/host/index.ts` 用 `new URL('../../skills/decision-layer/SKILL.md', import.meta.url)` 找打包内的 skill：源码在 `src/host/`、产物在 `lib/host/`，两层 `..` 才对；改了目录层级会静默丢掉 skill。
 - `meta.detail` 必须是包内相对 `.md` 路径（不能绝对、不能 `..`）；新增或改名要同步 `package.json` 的 `files` 与 `scripts/assert-pack.mjs`，否则详情页回落到 README。
 - 会话开关有两个界面（dock 面板、决策分析页），必须经 `session-events.ts` 同步，不要各存一份本地状态。
-- 决策行会带 gate 的 `command` / `path` 与各决策点的任务节选，`/logrows` 也会回传；新增日志字段前先确认不会把超出既有范围的原文带到浏览器。任务节选必须走 `src/host/excerpt.ts` 的 `taskExcerpt`（剥离注入块 + 遮蔽凭据 + 512 上限），不要在各决策点另写一份。
+- 决策行会带 gate 的 `command` / `path`；门控、自检与收窄带任务节选，自检与收窄另带回合号（完成核对目前只有条件计数）。`/logrows` 也会回传这些字段，新增日志字段前先确认不会把超出既有范围的原文带到浏览器。任务节选必须走 `src/host/excerpt.ts` 的 `taskExcerpt`（剥离注入块 + 遮蔽凭据 + 512 上限），`session-state` 落盘前还会再掩码一次；不要在各决策点另写一份。
 - 阈值默认值不在 `src/host/config-store.ts`：服务端在各决策点模块（如 `src/host/narrowing.ts` 的 `DEFAULT_NARROW_THRESHOLD`），配置页镜像在 `config-form.tsx`，文案在 `i18n.ts`；改默认值要同时改这几处与测试。
 - `featureOn` / `resolveConfig` 在热路径上，读取必须容忍抛错并回退默认；`backend.evaluate` 的请求/响应校验是唯一 wire 契约，不要在调用点复制宽松版。
 
