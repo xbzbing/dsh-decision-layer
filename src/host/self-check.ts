@@ -1,7 +1,7 @@
 import { taskExcerpt } from './excerpt.js';
 import { createSteerOnce } from './steer-once.js';
 import { errorReason, isProbability } from './types.js';
-import type { AgentLike, CheckSettings, EvaluateInput, Evaluator, SessionsFace } from './types.js';
+import type { AgentLike, CheckSettings, DecisionContext, EvaluateInput, Evaluator, SessionsFace } from './types.js';
 
 const MAX_OUTPUT = 24 * 1024;
 
@@ -19,9 +19,15 @@ function boundedRubric(rubric: unknown): readonly string[] {
   return levels.length >= 2 ? levels : DEFAULT_RUBRIC;
 }
 
-export function scoreQuestion(output: unknown, rubric: readonly string[] = DEFAULT_RUBRIC): EvaluateInput {
+export function scoreQuestion(output: unknown, rubric: readonly string[] = DEFAULT_RUBRIC, context?: DecisionContext): EvaluateInput {
   return {
-    state: { answer: String(output).slice(0, MAX_OUTPUT) },
+    state: {
+      // What the turn was asked to do. Without it the model scores an answer
+      // against nothing and cannot detect an off-topic reply.
+      ...(context?.request ? { request: context.request } : {}),
+      ...(context?.background?.length ? { background: context.background } : {}),
+      answer: String(output).slice(0, MAX_OUTPUT),
+    },
     questions: { quality: {
       type: 'score',
       instructions: '按下列从低到高的档位，评估这次最终产出对用户请求的完成质量。',
@@ -42,6 +48,7 @@ export type CheckTurn = {
   signal?: AbortSignal;
   output?: unknown;
   userText?: unknown;
+  context?: DecisionContext;
 };
 
 export type CheckResult = { evaluated: boolean; lowScore: boolean; steered: boolean; score?: number };
@@ -89,6 +96,11 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
     async review(turn: CheckTurn | undefined): Promise<CheckResult> {
       const output = typeof turn?.output === 'string' ? turn.output.trim() : '';
       if (!output) return { evaluated: false, lowScore: false, steered: false };
+      // A turn opened by a notice has no request. Scoring an answer against
+      // nothing would be noise, and borrowing an earlier turn's task would judge
+      // it against work this turn never did. Direct callers pass no context and
+      // keep the bare-answer behaviour.
+      if (turn?.context !== undefined && !turn.context.request) return { evaluated: false, lowScore: false, steered: false };
       const id = turn?.agent?.session?.id;
       if (sessions && typeof id === 'string') {
         try { if (sessions.snapshot(id).enabled === false) return { evaluated: false, lowScore: false, steered: false }; }
@@ -97,13 +109,13 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
       // The request this turn answered, carried onto every log row so a reviewer
       // can tell which turn's output each self-check score belongs to. Same
       // masked, bounded excerpt the other decision rows use.
-      const task = taskExcerpt(turn?.userText);
+      const task = taskExcerpt(turn?.context?.request ?? turn?.userText);
       const taskDetail: { task?: string; turn?: number } = task ? { task } : {};
       if (Number.isSafeInteger(turn?.turn) && (turn?.turn as number) >= 0) taskDetail.turn = turn?.turn;
       const { mode, rubric, lowScoreThreshold, minConfidence: confidenceFloor, trendMinConfidence, trendRun, trendSevereRun } = await resolveSettings();
       let answer;
       try {
-        const result = await evaluate(scoreQuestion(output, rubric), { signal: turn?.signal });
+        const result = await evaluate(scoreQuestion(output, rubric, turn?.context), { signal: turn?.signal });
         answer = result?.answers?.quality;
       } catch (error) { record(turn, 'error', { ...taskDetail, reason: errorReason(error) }); return { evaluated: false, lowScore: false, steered: false }; }
       if (!answer || answer.type !== 'score' || typeof answer.score !== 'number' || !Number.isFinite(answer.score)) {

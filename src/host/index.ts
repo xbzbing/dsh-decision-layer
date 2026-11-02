@@ -11,6 +11,7 @@ import { createTaskCompletion } from './task-completion.js';
 import { createLoopGuard } from './loop-guard.js';
 import { createLogStore } from './log-store.js';
 import { createStateStore } from './state-store.js';
+import { createDecisionContext } from './decision-context.js';
 import { analyzeSessionLogs, reconstructSessionSeed, listSessionDecisions } from './log-analyze.js';
 import { isObject } from './types.js';
 import type {
@@ -50,64 +51,6 @@ function lastAssistantText(agent: unknown): string {
   } catch { return ''; }
 }
 
-// The task text a narrowing pass judges tools against: the user messages
-// entering this step. An unreachable shape yields '', which skips narrowing.
-function stepTaskText(messages: unknown): string {
-  try {
-    if (!Array.isArray(messages)) return '';
-    return messages
-      .map(asMessage)
-      .filter((message): message is LooseMessage => message?.role === 'user' && Array.isArray(message.content))
-      .flatMap(message => (message.content as unknown[])
-        .filter(block => isObject(block) && block.type === 'text' && typeof block.text === 'string')
-        .map(block => (block as { text: string }).text))
-      .join('\n').slice(0, 8 * 1024);
-  } catch { return ''; }
-}
-
-// The user's request text for this turn, used by task-completion to extract the
-// explicit conditions. Best-effort: an unreachable shape yields '', which skips
-// the check. Takes the trailing run of user messages (the prompt entering the turn).
-function turnUserText(agent: unknown): string {
-  try {
-    const messages = derivedMessages(agent);
-    if (!messages) return '';
-    const texts: string[] = [];
-    let collecting = false;
-    // Walk backwards: skip the turn's trailing assistant/tool messages, collect the
-    // contiguous user run that started this turn, then stop at the prior assistant.
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = asMessage(messages[i]);
-      if (message?.role === 'user' && Array.isArray(message.content)) {
-        collecting = true;
-        texts.unshift(message.content.filter(block => isObject(block) && block.type === 'text' && typeof block.text === 'string')
-          .map(block => (block as { text: string }).text).join('\n'));
-      } else if (collecting) break;
-    }
-    return texts.join('\n').slice(0, 8 * 1024);
-  } catch { return ''; }
-}
-
-// Tool evidence for the turn's task-completion check: the tool calls and their
-// ok/error outcome from the derived history. Names only (no arguments), bounded.
-// An unreachable shape yields [], which skips the check.
-function turnToolEvidence(agent: unknown): { tool: string; outcome: 'ok' | 'error' }[] {
-  try {
-    const messages = derivedMessages(agent);
-    if (!messages) return [];
-    const evidence: { tool: string; outcome: 'ok' | 'error' }[] = [];
-    for (const item of messages) {
-      const message = asMessage(item);
-      if (message?.role !== 'tool' || !Array.isArray(message.content)) continue;
-      const tool = typeof message.name === 'string' ? message.name : (typeof message.toolName === 'string' ? message.toolName : '');
-      if (!tool) continue;
-      evidence.push({ tool: tool.slice(0, 128), outcome: message.isError === true ? 'error' : 'ok' });
-      if (evidence.length >= 40) break;
-    }
-    return evidence;
-  } catch { return []; }
-}
-
 // Enumerate the tool names/descriptions visible to this agent scope, best-effort.
 function agentTools(ctx: HostContext, agent: AgentLike | undefined): ToolCandidate[] {
   try {
@@ -142,6 +85,27 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
     persistState: (id, state) => stateStore.save(id, state),
   });
   if (typeof ctx.effect === 'function') ctx.effect(() => () => { void stateStore.dispose(); });
+  // Messages this plugin steered itself carry `kind:user` for host compatibility
+  // but are our own supplemental prompt, not the user's request; remember their
+  // ids so the next context pass does not treat one as the task.
+  const steeredIds = new Map<string, true>();
+  const rememberSteer = (message: unknown): void => {
+    const id = isObject(message) && typeof message.id === 'string' ? message.id : undefined;
+    if (!id) return;
+    steeredIds.set(id, true);
+    if (steeredIds.size > 256) steeredIds.delete(steeredIds.keys().next().value as string);
+  };
+  const steerAgent = (agent: AgentLike, text: string): unknown => {
+    // The host's agent always has steer; if it does not, fail loudly so
+    // createSteerOnce treats it as a failed steer and keeps the turn budget.
+    if (typeof agent.steer !== 'function') throw new Error('Agent cannot be steered');
+    const message = createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } });
+    rememberSteer(message);
+    return agent.steer(message);
+  };
+  // One per-turn boundary and snapshot per agent, so every decision point reads
+  // the same current request and the same current-turn evidence.
+  const decisionContext = createDecisionContext({ ignored: id => steeredIds.has(id) });
   const gate = createDangerGate({
     evaluate: (input, request) => backend.evaluate(input, request),
     sessions,
@@ -150,8 +114,10 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
     // is at least this confident. Read per call so an edit takes effect at once.
     minConfidence: async () => (await resolveConfig({ path })).gateSettings?.minConfidence,
     // Read lazily (only when a dangerous call is recorded) so ordinary tool calls
-    // never pay for deriveMessages().
-    taskText: agent => turnUserText(agent),
+    // never pay for deriveMessages(). The gate itself still sends only the call
+    // summary; this excerpt is local-log context, from the same snapshot the other
+    // decision points use.
+    taskText: agent => decisionContext.snapshot(agent).context.request,
   });
   const loopGuard = createLoopGuard({ sessions });
   // Live per-feature enablement; every decision point defaults to enabled.
@@ -191,19 +157,15 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
       evaluate: (input, request) => backend.evaluate(input, request),
       sessions,
       settings: async () => (await resolveConfig({ path })).checkSettings,
-      steer: (agent, text) => {
-        // The host's agent always has steer; if it does not, fail loudly so
-        // createSteerOnce treats it as a failed steer and keeps the turn budget.
-        if (typeof agent.steer !== 'function') throw new Error('Agent cannot be steered');
-        return agent.steer(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }));
-      },
+      steer: steerAgent,
     });
     const installCheck = () => ctx.on('agent/turn-stopping', async (payload: TurnStoppingPayload) => {
       if (!(await featureOn('check'))) return;
+      const snapshot = decisionContext.snapshot(payload.agent);
       return selfCheck.review({
         agent: payload.agent, turn: payload.turn, signal: payload.signal,
         output: lastAssistantText(payload.agent),
-        userText: turnUserText(payload.agent),
+        context: snapshot.context,
       });
     });
     if (typeof ctx.effect === 'function') ctx.effect(installCheck);
@@ -213,22 +175,21 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
       evaluate: (input, request) => backend.evaluate(input, request),
       sessions,
       settings: async () => (await resolveConfig({ path })).completeSettings,
-      steer: (agent, text) => {
-        // The host's agent always has steer; if it does not, fail loudly so
-        // createSteerOnce treats it as a failed steer and keeps the turn budget.
-        if (typeof agent.steer !== 'function') throw new Error('Agent cannot be steered');
-        return agent.steer(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }));
-      },
+      steer: steerAgent,
     });
     // Independent turn-stopping listener, separate from the self-check: it checks
     // whether the user's explicit conditions have supporting tool evidence.
     const installCompletion = () => ctx.on('agent/turn-stopping', async (payload: TurnStoppingPayload) => {
       if (!(await featureOn('complete'))) return;
+      const snapshot = decisionContext.snapshot(payload.agent);
       return taskCompletion.review({
         agent: payload.agent, turn: payload.turn, signal: payload.signal,
         output: lastAssistantText(payload.agent),
-        userText: turnUserText(payload.agent),
-        evidence: turnToolEvidence(payload.agent),
+        // Conditions come only from this turn's real user text; evidence only from
+        // this turn's window, so an earlier task's successes cannot vouch for it.
+        userText: snapshot.conditionsText,
+        evidence: snapshot.evidence,
+        context: snapshot.context,
       });
     });
     if (typeof ctx.effect === 'function') ctx.effect(installCompletion);
@@ -239,49 +200,88 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
       sessions,
       settings: async () => (await resolveConfig({ path })).narrowSettings,
     });
-    // Narrow once per turn, on its first step, and only enforce a restriction in
-    // enforce mode. The restriction is agent-scoped and lifted before the next
-    // turn's pass so a later turn is judged against the full host-allowed set.
+    // Narrow on the first step of a turn and again when a new real user request
+    // arrives inside the same turn. A notice (time/runtime/background/schedule)
+    // never triggers a re-pass. Every re-judgement first releases the previous
+    // agent-scoped restriction, so the candidate set is the host's full allowed
+    // set again — intersecting with the earlier allow-list could never restore a
+    // tool. The host resolves this step's tool set BEFORE dispatching pre-step, so
+    // a new restriction takes effect from the next step, not this one.
     const narrowedTurns = new Map<string, { turn: number; dispose: (() => void) | undefined }>();
-    const installNarrowingHook = () => ctx.on('agent/pre-step', async (payload: PreStepPayload, next: NextStep) => {
-      const agent = payload?.agent;
-      const id = agent?.session?.id;
-      const turn = payload?.turn;
-      // Rehydrate this session's persisted counters/log on its first step this
-      // process, before any gate/check/narrow/complete event mutates them, so a
-      // resumed session continues from its saved totals instead of from zero.
-      if (typeof id === 'string') await sessions.ensureLoaded(id);
-      if (typeof id === 'string' && Number.isInteger(turn)) {
-        const state = narrowedTurns.get(id);
-        if (!state || state.turn !== turn) {
-          // Release the previous turn's restriction first: restrict is agent-scoped
-          // and stays in force until disposed, so a turn where narrowing is now off
-          // must not inherit the earlier allow-list.
-          state?.dispose?.();
-          narrowedTurns.delete(id);
-          if (await featureOn('narrow')) {
-            const entry: { turn: number; dispose: (() => void) | undefined } = { turn: turn as number, dispose: undefined };
-            narrowedTurns.set(id, entry);
-            if (narrowedTurns.size > 1024) {
-              const oldest = narrowedTurns.keys().next().value as string;
-              if (oldest !== id) { narrowedTurns.get(oldest)?.dispose?.(); narrowedTurns.delete(oldest); }
-            }
-            try {
-              const result = await narrowing.review({
-                agent, turn, signal: payload.signal,
-                state: stepTaskText(payload.messages), tools: agentTools(ctx, agent),
-              });
-              if (result.mode === 'enforce' && result.applied && typeof agent?.ctx?.tools?.restrict === 'function') {
-                entry.dispose = agent.ctx.tools.restrict({ allow: result.keep });
+    const releaseNarrowing = (id: string): void => {
+      const entry = narrowedTurns.get(id);
+      if (!entry) return;
+      try { entry.dispose?.(); } catch { /* a failed release must never block the step */ }
+      narrowedTurns.delete(id);
+    };
+    const installNarrowingHook = (): (() => void) => {
+      const disposeHook = ctx.on('agent/pre-step', async (payload: PreStepPayload, next: NextStep) => {
+        const agent = payload?.agent;
+        const id = agent?.session?.id;
+        const turn = payload?.turn;
+        // Rehydrate this session's persisted counters/log on its first step this
+        // process, before any gate/check/narrow/complete event mutates them, so a
+        // resumed session continues from its saved totals instead of from zero.
+        if (typeof id === 'string') await sessions.ensureLoaded(id);
+        if (typeof id === 'string' && Number.isInteger(turn)) {
+          const entered = decisionContext.enter(agent, { turn, messages: payload.messages });
+          const previous = narrowedTurns.get(id);
+          const turnChanged = !previous || previous.turn !== turn;
+          if (turnChanged || entered.changed) {
+            // Release before judging: the previous allow-list is agent-scoped and
+            // must not narrow the new candidate set (it could hide tools forever).
+            releaseNarrowing(id);
+            if (await featureOn('narrow')) {
+              const entry: { turn: number; dispose: (() => void) | undefined } = { turn: turn as number, dispose: undefined };
+              narrowedTurns.set(id, entry);
+              if (narrowedTurns.size > 1024) {
+                const oldest = narrowedTurns.keys().next().value as string;
+                if (oldest !== id) releaseNarrowing(oldest);
               }
-            } catch { /* narrowing is best effort; never block the step */ }
+              try {
+                // `enter` skips snapshot work for steps with no new request; a turn
+                // boundary seen for the first time here (e.g. narrowing was off when
+                // the turn opened) still needs one, hence the fallback.
+                const { context } = entered.snapshot ?? decisionContext.snapshot(agent);
+                const result = await narrowing.review({
+                  agent, turn, step: payload.step, signal: payload.signal,
+                  state: { request: context.request, background: context.background, progress: context.progress },
+                  taskText: context.request,
+                  tools: agentTools(ctx, agent),
+                });
+                if (result.mode === 'enforce' && result.applied && typeof agent?.ctx?.tools?.restrict === 'function') {
+                  const restriction = agent.ctx.tools.restrict({ allow: result.keep });
+                  // The plugin may have been disposed while the request was in flight;
+                  // assigning to a removed entry would leak the restriction.
+                  if (narrowedTurns.get(id) === entry) entry.dispose = restriction;
+                  else restriction?.();
+                }
+              } catch { /* narrowing is best effort; never block the step */ }
+            }
           }
         }
-      }
-      return next();
-    });
+        return next();
+      });
+      return () => {
+        disposeHook?.();
+        for (const key of [...narrowedTurns.keys()]) releaseNarrowing(key);
+      };
+    };
     if (typeof ctx.effect === 'function') ctx.effect(installNarrowingHook);
     else installNarrowingHook();
+
+    // The host resolves a step's tool set BEFORE `agent/pre-step` runs, so a
+    // restriction lifted at the next turn's first step would still constrain that
+    // step (and a one-step turn would never recover). `turn/end` is appended in
+    // the loop's finally — including aborted and failed turns — so releasing
+    // there is the last point before the next turn's tools.resolve.
+    const installNarrowingRelease = () => ctx.on('session/event', (subject: unknown, event: unknown) => {
+      if (!isObject(event) || event.type !== 'turn/end') return;
+      const id = isObject(subject) && typeof subject.id === 'string' ? subject.id : undefined;
+      if (id !== undefined) releaseNarrowing(id);
+    });
+    if (typeof ctx.effect === 'function') ctx.effect(installNarrowingRelease);
+    else installNarrowingRelease();
   }
   const rawSkill = await readFile(new URL('../../skills/decision-layer/SKILL.md', import.meta.url), 'utf8');
   const content = rawSkill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
@@ -322,4 +322,4 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
 }
 
 type TurnStoppingPayload = { agent?: AgentLike; turn?: number; signal?: AbortSignal };
-type PreStepPayload = { agent?: AgentLike; turn?: number; signal?: AbortSignal; messages?: unknown };
+type PreStepPayload = { agent?: AgentLike; turn?: number; step?: number; signal?: AbortSignal; messages?: unknown };

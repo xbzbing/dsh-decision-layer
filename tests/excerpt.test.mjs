@@ -84,3 +84,12 @@ test('redactCredentials is the shared boundary and is itself idempotent', () => 
   assert.equal(once.includes('abc123'), false);
   assert.equal(redactCredentials(once), once);
 });
+
+test('environment-style keys whose label is a suffix are masked', () => {
+  // `\b` cannot match across `_`, so these need the dedicated env rule.
+  assert.equal(taskExcerpt('PASSWORD=hunter2'), 'PASSWORD=[redacted]');
+  assert.equal(taskExcerpt('AWS_SECRET_ACCESS_KEY=abc123xyz'), 'AWS_SECRET_ACCESS_KEY=[redacted]');
+  assert.equal(taskExcerpt('DB_PASSWORD=s3cr3t next step'), 'DB_PASSWORD=[redacted] next step');
+  // A Chinese clause after the value must survive (the value stops at the comma).
+  assert.equal(taskExcerpt('token=ghp_secret，然后汇报'), 'token=[redacted]，然后汇报');
+});

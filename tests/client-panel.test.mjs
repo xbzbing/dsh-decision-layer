@@ -134,14 +134,14 @@ test('modal shows gate metrics and the decision log, not the backend form', asyn
   assert.equal(view.queryByLabelText('服务地址'), null, 'the backend form must not appear in the modal');
 });
 
-test('task excerpts render for narrowing, gate and self-check rows, with the turn where one exists', async () => {
+test('task excerpts render for narrowing, gate and self-check rows, with turn and step where they exist', async () => {
   const task = '修复登录页面，保留现有接口。'.repeat(12);
   globalThis.fetch = async url => {
     if (String(url).includes('/session?')) return envelope({ enabled: true });
     if (String(url).includes('/metrics?')) return envelope({ hasAutomaticDecisions: true, attempts: 3, failures: 1,
       narrow: { attempts: 3, failures: 1, applied: 1, dropped: 1 } });
     if (String(url).includes('/log?')) return envelope({ entries: [
-      { id: 'context', at: 1, kind: 'narrow', outcome: 'applied', dropped: 1, kept: 5, tools: ['web_search'], mode: 'enforce', applied: true, task, turn: 7 },
+      { id: 'context', at: 1, kind: 'narrow', outcome: 'applied', dropped: 1, kept: 5, tools: ['web_search'], mode: 'enforce', applied: true, task, turn: 7, step: 3 },
       { id: 'failed', at: 2, kind: 'narrow', outcome: 'error', reason: 'unreachable', task: '检查构建问题', turn: 8 },
       { id: 'legacy', at: 3, kind: 'narrow', outcome: 'ok', dropped: 0, kept: 6 },
       { id: 'gate-context', at: 4, kind: 'gate', outcome: 'deny', tool: 'shell', command: 'rm -rf dist', task: '清理构建产物', action: 'deny' },
@@ -161,7 +161,7 @@ test('task excerpts render for narrowing, gate and self-check rows, with the tur
   assert.equal(details.open, true);
   fireEvent.click(summary);
   assert.equal(details.open, false);
-  assert.match(details.closest('li').textContent, /回合 7/);
+  assert.match(details.closest('li').textContent, /回合 7 · 第 3 步/);
   assert.match(details.closest('li').textContent, /web_search/);
   assert.match(details.closest('li').textContent, /已生效/);
   const failed = (await view.findByText(/场景（任务节选）：检查构建问题/)).closest('li');

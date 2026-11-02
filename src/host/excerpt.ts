@@ -23,7 +23,7 @@ export const TASK_EXCERPT_LIMIT = 512;
 const TOKEN_KEYS = String.raw`token|api[ _-]*key`;
 // Keys whose value may contain spaces (a passphrase), so the rest of the clause
 // is masked rather than one word.
-const PHRASE_KEYS = String.raw`password|passwd|passphrase|secret`;
+const PHRASE_KEYS = String.raw`password|passw(?:or)?d|passphrase|secret[ _-]?key|access[ _-]?key|private[ _-]?key|secret`;
 // Chinese users usually write these with a full-width colon and no space. Kept
 // separate from the ASCII keys because `\b` does not match around CJK text.
 const CN_KEYS = String.raw`密码|口令|密码短语|密钥|令牌|凭证|私钥`;
@@ -65,6 +65,11 @@ const RULE = {
   asciiCopula: new RegExp(String.raw`(\b(?:${COMBINED_KEYS})\b\s*(?:${COPULA})\s*)${VALUE_LIKE}${VALUE}`, 'gi'),
   cnCopula: new RegExp(String.raw`((?:${CN_KEYS})\s*(?:是|为)\s*)${VALUE_LIKE}${VALUE}`, 'g'),
   flag: new RegExp(String.raw`(^|\s)(--(?:${COMBINED_KEYS})(?:\s+|=))${VALUE}`, 'gi'),
+  // Env-style keys are often a suffix of a longer identifier (`DB_PASSWORD`,
+  // `AWS_SECRET_ACCESS_KEY`), where `\b` cannot match across `_`.
+  // The value stops at a clause separator: `\S+` would swallow the rest of a
+  // Chinese sentence after a masked token.
+  envKey: /([A-Za-z0-9_]*(?:PASSW(?:OR)?D|SECRET|TOKEN|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY)[A-Za-z0-9_]*\s*[:=：＝]\s*)[^\s,;}，；、]+/gi,
   // Legacy space form (`token abc`), but never swallow a copula: the rule above
   // masks the value that follows it.
   loose: new RegExp(String.raw`(\b(?:${COMBINED_KEYS})\b\s+)(?!(?:${COPULA})(?:\s|$)|${SEPARATOR})${VALUE}`, 'gi'),
@@ -96,6 +101,8 @@ export function redactCredentials(input: string): string {
   text = text.replace(RULE.cnCopula, '$1[redacted]');
   // CLI flags (`--token abc`, `--api-key=abc`).
   text = text.replace(RULE.flag, '$1$2[redacted]');
+  // Environment-style keys (`DB_PASSWORD=...`, `AWS_SECRET_ACCESS_KEY=...`).
+  text = text.replace(RULE.envKey, '$1[redacted]');
   // Space-separated key/value (`token abc`).
   text = text.replace(RULE.loose, '$1[redacted]');
   // Unlabeled, self-identifying token shapes.
@@ -103,11 +110,16 @@ export function redactCredentials(input: string): string {
   return text;
 }
 
-export function taskExcerpt(state: unknown, limit = TASK_EXCERPT_LIMIT): string | undefined {
-  if (typeof state !== 'string') return undefined;
-  const stripped = state.slice(0, MAX_INPUT)
+// The injected host blocks that never belong to a user's task. Exported so the
+// outbound context builder strips exactly what the local excerpt strips.
+export function stripInjected(input: string): string {
+  return input
     .replace(/<(openviking-context|system-reminder)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<(openviking-context|system-reminder)\b[\s\S]*$/i, ' ');
-  const text = redactCredentials(stripped).replace(/\s+/g, ' ').trim();
+}
+
+export function taskExcerpt(state: unknown, limit = TASK_EXCERPT_LIMIT): string | undefined {
+  if (typeof state !== 'string') return undefined;
+  const text = redactCredentials(stripInjected(state.slice(0, MAX_INPUT))).replace(/\s+/g, ' ').trim();
   return text ? text.slice(0, limit) : undefined;
 }

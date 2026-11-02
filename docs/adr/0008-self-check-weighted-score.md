@@ -2,6 +2,7 @@
 
 - 状态：Accepted（2026-10-26）
 - 相关：`src/host/self-check.ts`、`src/host/quality-trend.ts`、`src/host/steer-once.ts`、ADR-0002、ADR-0006
+- 部分更新：**ADR-0016** 起，评分输入除最终回复外还带本轮请求与必要前文，日志行由同一快照生成。
 
 ## Context
 

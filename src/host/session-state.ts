@@ -269,6 +269,7 @@ export function createSessionState({ maxSessions = 1024, maxLogEntries = 50, onL
       // arbitrary state object; re-mask here so no caller can bypass excerpt.ts.
       if (typeof entry.task === 'string' && entry.task.trim()) record.task = redactCredentials(entry.task).replace(/\s+/g, ' ').trim().slice(0, 512);
       if (Number.isSafeInteger(entry.turn) && (entry.turn as number) >= 0) record.turn = entry.turn as number;
+      if (Number.isSafeInteger(entry.step) && (entry.step as number) >= 0) record.step = entry.step as number;
       if (typeof entry.mode === 'string' && entry.mode) record.mode = entry.mode.slice(0, 16);
       if (typeof entry.score === 'number' && Number.isFinite(entry.score)) record.score = Math.round(entry.score * 100) / 100;
       if (typeof entry.confidence === 'number' && Number.isFinite(entry.confidence)) record.confidence = Math.round(entry.confidence * 100) / 100;

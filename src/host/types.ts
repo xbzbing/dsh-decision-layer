@@ -152,6 +152,7 @@ export type LogRow = {
   subject?: string;
   task?: string;
   turn?: number;
+  step?: number;
   command?: string;
   path?: string;
   mode?: string;
@@ -236,6 +237,25 @@ export type SessionsFace = {
 // ── Host runtime surfaces ───────────────────────────────────────────────────
 
 export type ToolCandidate = { name: string; description?: string };
+
+/** Bounded, masked data for adjudication; background is never authorization. */
+export type ToolEvidence = {
+  tool: string;
+  outcome: 'ok' | 'error';
+  command?: string;
+  path?: string;
+  result?: string;
+};
+export type DecisionContext = {
+  request: string;
+  background: { role: 'user' | 'assistant'; text: string }[];
+  progress: ToolEvidence[];
+};
+export type DecisionSnapshot = {
+  context: DecisionContext;
+  conditionsText: string;
+  evidence: ToolEvidence[];
+};
 
 export type AgentLike = {
   session?: { id?: string; deriveMessages?: () => unknown };

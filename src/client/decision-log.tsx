@@ -39,7 +39,10 @@ function gateArgs({ t }: RowProps, entry: LogEntry) {
 }
 
 function turnTag(t: Translate<TranslationKey>, entry: LogEntry) {
-  return typeof entry.turn === 'number' ? <span className="decision-log-detail"> · {t('logTurn', { turn: entry.turn })}</span> : null;
+  if (typeof entry.turn !== 'number') return null;
+  return <span className="decision-log-detail"> · {Number.isSafeInteger(entry.step) && (entry.step as number) >= 0
+    ? t('logTurnStep', { turn: entry.turn, step: entry.step })
+    : t('logTurn', { turn: entry.turn })}</span>;
 }
 
 function renderGate({ t }: RowProps, entry: LogEntry) {
@@ -106,7 +109,7 @@ function renderNarrow({ t }: RowProps, entry: LogEntry) {
 }
 
 function renderComplete({ t }: RowProps, entry: LogEntry) {
-  const label = <span>{t('logComplete')}</span>;
+  const label = <><span>{t('logComplete')}</span>{turnTag(t, entry)}</>;
   if (entry.outcome === 'error') return <>{label} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(t, entry)}` : ''}</span></>;
   const result = entry.outcome === 'unsatisfied' ? t('completeResultUnsatisfied') : t('completeResultOk');
   const parts: string[] = [];

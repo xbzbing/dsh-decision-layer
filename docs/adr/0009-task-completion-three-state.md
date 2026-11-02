@@ -2,6 +2,7 @@
 
 - 状态：Accepted（2026-10-26）
 - 相关：`src/host/task-completion.ts`、`src/host/index.ts` 的 `installCompletion`、ADR-0008
+- 部分更新：**ADR-0016** 起，条件只取本回合最近一次真实要求；证据来自本回合窗口并带有限命令/路径与 shell 摘录；state 另带请求与必要前文。
 
 ## Context
 

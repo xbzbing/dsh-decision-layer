@@ -330,3 +330,14 @@ test('a corrupt persisted state is coerced into shape, not trusted verbatim', as
   assert.equal(snapshot.check.trend.run, 0);
   assert.equal(snapshot.log.length, 1, 'only well-formed log entries survive');
 });
+
+test('only a non-negative safe integer step is persisted', () => {
+  const state = createSessionState();
+  for (const step of [-1, 1.5, '3', undefined]) {
+    state.log('step-session', { kind: 'narrow', outcome: 'applied', turn: 2, step, dropped: 0 });
+  }
+  state.log('step-session', { kind: 'narrow', outcome: 'applied', turn: 3, step: 2, dropped: 0 });
+  const rows = state.snapshot('step-session').log;
+  assert.equal(rows.filter(row => row.step === undefined).length, 4);
+  assert.equal(rows.at(-1).step, 2);
+});

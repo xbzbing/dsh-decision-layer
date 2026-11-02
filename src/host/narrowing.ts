@@ -103,8 +103,11 @@ type NarrowDetail = {
 export type NarrowTurn = {
   agent?: AgentLike;
   turn?: number;
+  step?: number;
   signal?: AbortSignal;
   state?: unknown;
+  /** Raw request text for the log row; `state` may now be a structured object. */
+  taskText?: unknown;
   tools?: unknown;
 };
 
@@ -176,9 +179,10 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
     catch { /* telemetry is best effort */ }
     if (typeof sessions.log !== 'function') return;
     try {
-      const task = taskExcerpt(turn?.state);
+      const task = taskExcerpt(turn?.taskText ?? turn?.state);
       const context: Record<string, unknown> = task ? { task } : {};
       if (Number.isSafeInteger(turn?.turn) && (turn?.turn as number) >= 0) context.turn = turn?.turn;
+      if (Number.isSafeInteger(turn?.step) && (turn?.step as number) >= 0) context.step = turn?.step;
       sessions.log(id, { kind: 'narrow', outcome, ...context, ...detail });
     }
     catch { /* logging is best effort */ }
@@ -219,7 +223,10 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
       const keptNames = names.filter(alwaysKeep);
       const optional = tools.filter(tool => !alwaysKeep(tool.name));
       if (optional.length < minCandidates) return { ...skip, keep: names };
-      const hasState = typeof turn?.state === 'string' ? turn.state.trim().length > 0
+      // A structured state is never empty by shape, so when the caller owns the
+      // request text that text alone decides whether there is a task to judge.
+      const hasState = typeof turn?.taskText === 'string' ? turn.taskText.trim().length > 0
+        : typeof turn?.state === 'string' ? turn.state.trim().length > 0
         : isObject(turn?.state) ? Object.keys(turn.state).length > 0 : false;
       if (!hasState) return { ...skip, keep: names };
       const id = turn?.agent?.session?.id;

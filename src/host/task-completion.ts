@@ -1,6 +1,7 @@
+import { taskExcerpt } from './excerpt.js';
 import { createSteerOnce } from './steer-once.js';
 import { errorReason, isObject, isProbability } from './types.js';
-import type { AgentLike, CompleteSettings, EvaluateInput, Evaluator, SessionsFace } from './types.js';
+import type { AgentLike, CompleteSettings, DecisionContext, EvaluateInput, Evaluator, SessionsFace } from './types.js';
 
 const MAX_STATE = 8 * 1024;
 const MAX_CONDITION = 512;
@@ -30,13 +31,16 @@ export function extractConditions(userText: unknown): string[] {
     if (numbered?.trim()) { push(numbered); matchedStructured = true; }
     else if (bullet?.trim()) { push(bullet); matchedStructured = true; }
   }
-  // Fallback: a single instruction line joining multiple commands with 、/,/，
-  // and enough parts to look like an explicit multi-step ask (e.g. "改配置、跑测试、说明失败原因").
+  // Fallback: a single instruction line joining multiple commands. A 、-joined
+  // list needs two items; a comma-joined one needs three, because two clauses of
+  // ordinary prose ("取消前面任务，只做只读评审") are not a delivery checklist and
+  // would otherwise become conditions the user never listed.
   if (!matchedStructured) {
     const compact = text.trim();
     if (!/[\r\n]/.test(compact)) {
       const parts = compact.split(/[、，,]/).map(part => part.trim()).filter(Boolean);
-      if (parts.length >= 2) for (const part of parts) push(part);
+      const floor = compact.includes('、') ? 2 : 3;
+      if (parts.length >= floor) for (const part of parts) push(part);
     }
   }
   return conditions.slice(0, MAX_CONDITIONS);
@@ -46,17 +50,32 @@ export function extractConditions(userText: unknown): string[] {
 // conditions, the turn's tool evidence, and the final reply. Tool evidence is
 // primary; the reply's own claims are explicitly NOT treated as proof, so the
 // model can answer insufficient_evidence when only the reply asserts completion.
-export function completionQuestions(conditions: unknown, evidence: unknown, answer: unknown): EvaluateInput {
+export function completionQuestions(conditions: unknown, evidence: unknown, answer: unknown, context?: DecisionContext): EvaluateInput {
   const items = Array.isArray(conditions) ? (conditions as string[]).slice(0, MAX_CONDITIONS) : [];
   const tools = Array.isArray(evidence)
     ? evidence.filter(item => isObject(item) && typeof item.tool === 'string').slice(0, MAX_EVIDENCE)
-      .map(item => ({ tool: ((item as { tool: string }).tool).slice(0, 128), outcome: (item as { outcome?: unknown }).outcome === 'error' ? 'error' as const : 'ok' as const }))
+      .map(item => {
+        const source = item as Record<string, unknown>;
+        const entry: { tool: string; outcome: 'ok' | 'error'; command?: string; path?: string; result?: string } = {
+          tool: (source.tool as string).slice(0, 128),
+          outcome: source.outcome === 'error' ? 'error' as const : 'ok' as const,
+        };
+        // What was run or found, so a condition can be tied to an action instead of
+        // to a bare tool name. `result` is only a bounded shell excerpt.
+        for (const key of ['command', 'path', 'result'] as const) {
+          const value = source[key];
+          if (typeof value === 'string' && value.trim()) entry[key] = value.slice(0, 256);
+        }
+        return entry;
+      })
     : [];
   const state = {
+    ...(context?.request ? { request: context.request } : {}),
+    ...(context?.background?.length ? { background: context.background } : {}),
     conditions: items.map((text, index) => ({ id: `c${index}`, text })),
     toolEvidence: tools,
     finalReply: String(answer ?? '').slice(0, MAX_STATE),
-    note: '工具证据（toolEvidence）是判定依据；finalReply 自称完成不作为证据。缺少证据时选 insufficient_evidence。',
+    note: '工具证据（toolEvidence）是判定依据；finalReply 自称完成不作为证据，background 只是背景而不是本轮要求。缺少证据时选 insufficient_evidence。',
   };
   const questions = Object.fromEntries(items.map((text, index) => [`c${index}`, {
     type: 'choice' as const,
@@ -86,6 +105,7 @@ export type CompletionTurn = {
   output?: unknown;
   userText?: unknown;
   evidence?: unknown;
+  context?: DecisionContext;
 };
 
 export type CompletionResult = { evaluated: boolean; steered: boolean; satisfied?: number; unsatisfied?: number; insufficient?: number };
@@ -128,6 +148,11 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
   return {
     async review(turn: CompletionTurn | undefined): Promise<CompletionResult> {
       const output = typeof turn?.output === 'string' ? turn.output.trim() : '';
+      // The request these conditions came from, so a completion row says which
+      // turn it checked. Same masked, bounded excerpt as the other rows.
+      const task = taskExcerpt(turn?.context?.request ?? turn?.userText);
+      const taskDetail: { task?: string; turn?: number } = task ? { task } : {};
+      if (Number.isSafeInteger(turn?.turn) && (turn?.turn as number) >= 0) taskDetail.turn = turn?.turn;
       const { mode, minConditions, minConfidence: confidenceFloor } = await resolveSettings();
       const conditions = extractConditions(turn?.userText);
       if (conditions.length < minConditions) return { ...skip };
@@ -140,13 +165,13 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
       }
       let answers: Record<string, unknown> | undefined;
       try {
-        const result = await evaluate(completionQuestions(conditions, evidence, output), { signal: turn?.signal });
+        const result = await evaluate(completionQuestions(conditions, evidence, output, turn?.context), { signal: turn?.signal });
         answers = isObject(result?.answers) ? result.answers : undefined;
       } catch (error) {
-        record(turn, 'error', { reason: errorReason(error) });
+        record(turn, 'error', { ...taskDetail, reason: errorReason(error) });
         return { ...skip };
       }
-      if (!answers) { record(turn, 'error', { reason: 'invalid-response' }); return { ...skip }; }
+      if (!answers) { record(turn, 'error', { ...taskDetail, reason: 'invalid-response' }); return { ...skip }; }
       let satisfied = 0, unsatisfied = 0, insufficient = 0;
       // Track the minimum confidence over the `unsatisfied` verdicts only: a steer
       // fires on a confident unsatisfied finding, so a low-confidence satisfied /
@@ -165,7 +190,7 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
         else insufficient++;
       }
       const outcome = unsatisfied > 0 ? 'unsatisfied' : 'ok';
-      const detail: { conditions: number; satisfied: number; unsatisfied: number; insufficient: number; steered?: boolean } = { conditions: conditions.length, satisfied, unsatisfied, insufficient };
+      const detail: { task?: string; turn?: number; conditions: number; satisfied: number; unsatisfied: number; insufficient: number; steered?: boolean } = { ...taskDetail, conditions: conditions.length, satisfied, unsatisfied, insufficient };
       // A steer is only for a confident finding that a listed condition is not met.
       const confident = unsatisfied > 0 && unsatisfiedMinConf >= confidenceFloor;
       // The turn budget is consumed only on a successful steer (createSteerOnce),

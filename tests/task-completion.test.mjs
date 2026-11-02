@@ -147,3 +147,11 @@ test('a configured confidence floor decides whether an unmet condition steers', 
   assert.equal((await lenientCheck.review(turn('1. 改配置\n2. 跑测试', { turnNo: 22 }))).steered, true);
   assert.equal(lenient.length, 1);
 });
+
+test('a two-clause prose sentence is not treated as a comma-joined command list', () => {
+  // "取消前面任务，只做只读评审" is one instruction, not two deliverables; the
+  // older comma fallback would turn it into a checklist item pair.
+  assert.deepEqual(extractConditions('取消前面的任务，只做只读评审'), []);
+  assert.deepEqual(extractConditions('改配置、跑测试'), ['改配置', '跑测试']);
+  assert.deepEqual(extractConditions('改配置，跑测试，说明失败原因'), ['改配置', '跑测试', '说明失败原因']);
+});

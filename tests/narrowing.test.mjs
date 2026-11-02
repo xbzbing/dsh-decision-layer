@@ -415,3 +415,15 @@ test('batchMode "single" never falls back to split and surfaces the http-error',
   assert.equal(sizes.length, 1, 'exactly one whole-batch attempt, no split fallback');
   assert.equal(sizes[0], 2);
 });
+
+test('a narrowing log row carries the step the pass ran at, and drops an invalid step', async () => {
+  const logs = [];
+  const sessions = { snapshot: () => ({ enabled: true }), recordNarrow: () => {}, log: (_id, entry) => logs.push(entry) };
+  const check = createNarrowing({ sessions, settings: { mode: 'observe' }, minKeep: 1, coreTools: [],
+    evaluate: async () => answers({ web_search: 0.9, image_gen: 0.1 }) });
+  const tools = [{ name: 'web_search' }, { name: 'image_gen' }];
+  await check.review({ ...turn('search', tools), step: 4 });
+  assert.equal(logs.at(-1).step, 4);
+  await check.review({ ...turn('search', tools, { turn: 2 }), step: -1 });
+  assert.equal(logs.at(-1).step, undefined, 'a negative step is not recorded');
+});

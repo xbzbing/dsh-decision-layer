@@ -35,12 +35,12 @@ test('v0.2 gate installs on pre-execute and denies model-rejected dangerous call
   } }));
   try {
     await apply({ tools: { register: () => {}, guard: guard => { guards.push(guard); return () => {}; } }, skills: { register: () => {} }, on: (event, listener) => {
-      assert.ok(['tools/pre-execute', 'tools/post-execute', 'agent/turn-stopping', 'agent/pre-step'].includes(event));
+      assert.ok(['tools/pre-execute', 'tools/post-execute', 'agent/turn-stopping', 'agent/pre-step', 'session/event'].includes(event));
       if (event === 'tools/pre-execute') listeners.push(listener);
       return () => {};
     }, effect: setup => { disposers.push(setup()); }, inject: () => {} }, { configPath: path });
     assert.equal(listeners.length, 1);
-    assert.equal(disposers.length, 5);
+    assert.equal(disposers.length, 6);
     const exec = { name: 'shell', arguments: { command: 'rm -rf /tmp/build' }, callId: 'gate-call', token: Symbol('token'),
       signal: AbortSignal.timeout(1000), agent: { session: { id: 'gate-session' } } };
     const result = await listeners[0](exec, async () => ({ kind: 'allow' }));
@@ -65,9 +65,12 @@ test('v0.3 self-check installs on turn-stopping, observes by default, and steers
     await apply({ tools: { register: () => {}, guard: () => () => {} }, skills: { register: () => {} },
       on: (event, listener) => { if (event === 'agent/turn-stopping') turnListeners.push(listener); return () => {}; },
       effect: setup => setup(), inject: () => {} }, { configPath });
-    assert.equal(turnListeners.length, 2, 'self-check and task-completion both listen on turn-stopping');
+    assert.equal(turnListeners.length, 2, 'self-check and task-completion listen on turn-stopping');
     const agent = { steer: message => steered.push(message),
-      session: { id: 'check-session', deriveMessages: () => [{ role: 'assistant', content: [{ type: 'text', text: 'final answer' }] }] } };
+      session: { id: 'check-session', deriveMessages: () => [
+        { role: 'user', content: [{ type: 'text', text: '修复登录问题' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'final answer' }] },
+      ] } };
     // The self-check is the first turn-stopping listener registered.
     await turnListeners[0]({ agent, turn: 1, signal: AbortSignal.timeout(1000) });
     return steered;
@@ -323,6 +326,8 @@ test('the real wiring feeds masked task excerpts into gate and self-check rows, 
     const agent = { session: { id: 'wiring', deriveMessages: () => {
       reads += 1;
       return [
+        { role: 'user', content: [{ type: 'text', text: '上位任务：整理报告' }] },
+        { role: 'assistant', content: [{ type: 'text', text: '报告已整理' }] },
         { role: 'user', content: [{ type: 'text', text: '清理构建产物 token=ghp_secret，然后汇报' }] },
         { role: 'assistant', content: [{ type: 'text', text: 'done' }] },
       ];
@@ -349,10 +354,10 @@ test('the real wiring feeds masked task excerpts into gate and self-check rows, 
     assert.equal(await pre[0](safe, () => 'ran'), 'ran');
     assert.equal(reads, 1, 'a safe call never scans the message history');
 
-    // The turn-stopping listener builds output and userText, each from the derived
-    // history, then the self-check records the excerpt it was handed.
+    // The turn-stopping listener reads the snapshot and the last assistant text,
+    // each from the derived history.
     await stops[0]({ agent, turn: 5, signal: AbortSignal.timeout(2000) });
-    assert.equal(reads, 3, 'two reads for output/userText, none extra for the excerpt');
+    assert.equal(reads, 3, 'two reads for the snapshot and the output, none extra for the excerpt');
 
     const route = routes.find(item => item.path.endsWith('/log'));
     assert.ok(route, 'the management route is registered');
@@ -367,8 +372,195 @@ test('the real wiring feeds masked task excerpts into gate and self-check rows, 
     assert.equal(gateRow.turn, undefined, 'the gate has no turn number');
     assert.equal(checkRow.task, gateRow.task);
     assert.equal(checkRow.turn, 5);
-    // The excerpt stays local: no adjudication request carries the task text.
+    // ADR-0016: the self-check now receives the request (masked) so it can detect an
+    // off-topic answer. The gate still sends only the call summary, and credentials
+    // never leave the machine.
     const outbound = JSON.stringify(bodies);
-    assert.doesNotMatch(outbound, /清理构建产物|ghp_secret/);
+    assert.doesNotMatch(outbound, /ghp_secret/, 'credentials are masked before the request leaves');
+    assert.match(outbound, /token=\[redacted\]/);
+    assert.match(JSON.stringify(bodies[1].state), /清理构建产物/, 'the self-check judges the answer against the request');
+    assert.match(JSON.stringify(bodies[1].state.background), /上位任务：整理报告/, 'the necessary background is sent with the request');
+    assert.doesNotMatch(JSON.stringify(bodies[0].state), /清理构建产物/, 'the gate carries no task text');
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// ADR-0016: a new real request inside the same turn must re-judge the tool set,
+// and the previous agent-scoped restriction must be released first — otherwise
+// the earlier allow-list would hide tools the new request needs. A notice
+// (background job, time context) is not a new request and must not re-run.
+test('a new user request mid-turn re-narrows after releasing the old restriction', async () => {
+  const path = join(directory, 'narrow-refresh.json');
+  await saveConfig({ apiKey: 'local-test-key', narrowSettings: { mode: 'enforce', threshold: 0.5 } }, path);
+  const realFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    const wantsImage = String(body.state?.request ?? '').includes('图');
+    return new Response(JSON.stringify({ model: 'jev-latest', answers: {
+      web_search: { type: 'noul', noul: wantsImage ? 0.1 : 0.9 },
+      web_fetch: { type: 'noul', noul: wantsImage ? 0.1 : 0.8 },
+      image_gen: { type: 'noul', noul: wantsImage ? 0.9 : 0.1 },
+      // Kept in both passes so the keep count stays above the low-keep guard.
+      weather: { type: 'noul', noul: 0.9 },
+      video_search: { type: 'noul', noul: 0.9 },
+    } }));
+  };
+  const preStep = [];
+  const restrictions = [];
+  let released = 0;
+  try {
+    await apply({ tools: { register: () => {}, guard: () => () => {}, schemas: () => [
+      { name: 'read', description: '' }, { name: 'bash', description: '' },
+      { name: 'web_search', description: '' }, { name: 'web_fetch', description: '' }, { name: 'image_gen', description: '' },
+      { name: 'weather', description: '' }, { name: 'video_search', description: '' },
+    ] },
+      skills: { register: () => {} },
+      on: (event, listener) => { if (event === 'agent/pre-step') preStep.push(listener); return () => {}; },
+      effect: setup => setup(), inject: () => {} }, { configPath: path });
+    // Record the release count at the moment each restriction is installed: the
+    // second pass must be installed only after the first was released.
+    const order = [];
+    const agent = { session: { id: 'refresh-session', deriveMessages: () => history },
+      ctx: { tools: { restrict: filter => {
+        restrictions.push(filter);
+        order.push(`restrict@${released}`);
+        return () => { released += 1; order.push('release'); };
+      } } } };
+    const history = [];
+    const step = async (messages, stepNo) => {
+      let advanced = false;
+      await preStep[0]({ agent, turn: 3, step: stepNo, signal: AbortSignal.timeout(2000), messages },
+        async () => { advanced = true; return { kind: 'enter', messages: [] }; });
+      assert.equal(advanced, true);
+    };
+    await step([{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '搜索网页' }] }], 0);
+    assert.equal(restrictions.length, 1, 'the first step narrows');
+    assert.deepEqual(restrictions[0].allow.sort(), ['bash', 'read', 'video_search', 'weather', 'web_fetch', 'web_search']);
+
+    // A background notice in the same turn must not re-judge or release.
+    const before = bodies.length;
+    await step([{ role: 'user', source: { kind: 'background-job' }, content: [{ type: 'text', text: 'job finished' }] }], 1);
+    assert.equal(bodies.length, before, 'a notice never calls the adjudication backend');
+    assert.equal(released, 0, 'a notice keeps the existing restriction');
+
+    // The turn's own activity must reach the next pass as progress.
+    history.push(
+      { role: 'assistant', content: [{ type: 'tool-call', id: 'searched', name: 'bash', arguments: '{"command":"curl example.com"}' }] },
+      { role: 'tool', toolCallId: 'searched', source: { kind: 'tool', callId: 'searched' }, content: [{ type: 'text', text: 'ok' }] },
+    );
+
+    // A real new request must release first, then narrow against the full set.
+    const firstNewRequest = bodies.length;
+    await step([{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '生成一张图' }] }], 2);
+    assert.equal(released, 1, 'the old restriction is released before re-judging');
+    assert.deepEqual(order, ['restrict@0', 'release', 'restrict@1'], 'release happens before the new restriction');
+    assert.equal(restrictions.length, 2, 'the new request narrows again');
+    assert.deepEqual(restrictions[1].allow.sort(), ['bash', 'image_gen', 'read', 'video_search', 'weather']);
+    assert.equal(bodies[firstNewRequest].state.progress[0].tool, 'bash', 'recent progress reaches the narrowing request');
+    assert.equal(bodies[firstNewRequest].state.progress[0].command, 'curl example.com');
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// ADR-0016: completion evidence is scoped to the current turn. An earlier task's
+// successful tool result must not vouch for this turn's unmet condition.
+test('task completion evaluates only the current turn evidence and request', async () => {
+  const path = join(directory, 'complete-scope.json');
+  await saveConfig({ apiKey: 'local-test-key' }, path);
+  const realFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    return new Response(JSON.stringify({ model: 'jev-latest', answers: {
+      c0: { type: 'choice', choice: 'satisfied', confidence: 0.9, probabilities: { satisfied: 1, unsatisfied: 0, insufficient_evidence: 0 } },
+      c1: { type: 'choice', choice: 'unsatisfied', confidence: 0.9, probabilities: { satisfied: 0, unsatisfied: 1, insufficient_evidence: 0 } },
+    } }));
+  };
+  const preStep = [];
+  const stops = [];
+  const history = [
+    { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '上一个任务' }] },
+    { role: 'assistant', content: [{ type: 'tool-call', id: 'old', name: 'bash', arguments: '{"command":"make"}' }] },
+    { role: 'tool', toolCallId: 'old', source: { kind: 'tool', callId: 'old' }, content: [{ type: 'text', text: 'old build ok' }], isError: false },
+    { role: 'assistant', content: [{ type: 'text', text: '上一任务完成' }] },
+  ];
+  try {
+    await apply({ tools: { register: () => {}, guard: () => () => {} }, skills: { register: () => {} },
+      on: (event, listener) => {
+        if (event === 'agent/pre-step') preStep.push(listener);
+        if (event === 'agent/turn-stopping') stops.push(listener);
+        return () => {};
+      }, effect: setup => setup(), inject: () => {} }, { configPath: path });
+    const agent = { session: { id: 'scope-session', deriveMessages: () => history } };
+    await preStep[0]({ agent, turn: 2, step: 0, signal: AbortSignal.timeout(2000),
+      messages: [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '1. 改配置\n2. 跑测试' }] }] },
+    async () => ({ kind: 'enter', messages: [] }));
+    history.push(
+      { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '1. 改配置\n2. 跑测试' }] },
+      { role: 'assistant', content: [{ type: 'tool-call', id: 'new', name: 'bash', arguments: '{"command":"npm test"}' }] },
+      { role: 'tool', toolCallId: 'new', source: { kind: 'tool', callId: 'new' }, content: [{ type: 'text', text: '1 failing' }], isError: true },
+      { role: 'assistant', content: [{ type: 'text', text: '都做完了' }] },
+    );
+    const result = await stops[1]({ agent, turn: 2, signal: AbortSignal.timeout(2000) });
+    assert.equal(result.evaluated, true);
+    assert.equal(result.unsatisfied, 1);
+    const state = bodies.at(-1).state;
+    assert.equal(state.request, '1. 改配置\n2. 跑测试');
+    assert.match(JSON.stringify(state.background), /上一个任务/, 'the pre-turn context is sent as background only');
+    assert.equal(state.toolEvidence.length, 1, 'only this turn evidence is sent');
+    assert.equal(state.toolEvidence[0].command, 'npm test');
+    assert.equal(state.toolEvidence[0].outcome, 'error');
+    assert.equal(state.toolEvidence[0].result, '1 failing');
+  } finally { globalThis.fetch = realFetch; }
+});
+
+// The host resolves a step's tool set before agent/pre-step runs, so a restriction
+// must be lifted when the turn ends — not at the next turn's first step, which
+// would already have been resolved under the stale allow-list (and a one-step
+// turn would never recover). turn/end is written in the loop's finally, so it
+// also covers aborted and failed turns.
+test('turn/end releases the restriction before the next turn resolves tools', async () => {
+  const path = join(directory, 'narrow-turn-end.json');
+  await saveConfig({ apiKey: 'local-test-key', narrowSettings: { mode: 'enforce', threshold: 0.5 } }, path);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ model: 'jev-latest', answers: {
+    web_search: { type: 'noul', noul: 0.9 }, web_fetch: { type: 'noul', noul: 0.9 },
+    image_gen: { type: 'noul', noul: 0.1 }, weather: { type: 'noul', noul: 0.9 }, video_search: { type: 'noul', noul: 0.9 },
+  } }));
+  const preStep = [];
+  const sessionEvents = [];
+  const restrictions = [];
+  let released = 0;
+  try {
+    await apply({ tools: { register: () => {}, guard: () => () => {}, schemas: () => [
+      { name: 'read', description: '' }, { name: 'bash', description: '' },
+      { name: 'web_search', description: '' }, { name: 'web_fetch', description: '' }, { name: 'image_gen', description: '' },
+      { name: 'weather', description: '' }, { name: 'video_search', description: '' },
+    ] },
+      skills: { register: () => {} },
+      on: (event, listener) => {
+        if (event === 'agent/pre-step') preStep.push(listener);
+        if (event === 'session/event') sessionEvents.push(listener);
+        return () => {};
+      },
+      effect: setup => setup(), inject: () => {} }, { configPath: path });
+    assert.equal(sessionEvents.length, 1, 'one turn/end listener releases the restriction');
+    const agent = { session: { id: 'turn-end-session', deriveMessages: () => [] },
+      ctx: { tools: { restrict: filter => { restrictions.push(filter); return () => { released += 1; }; } } } };
+    const step = turn => preStep[0]({ agent, turn, step: 0, signal: AbortSignal.timeout(2000),
+      messages: [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: '搜索网页' }] }] },
+    async () => ({ kind: 'enter', messages: [] }));
+    await step(1);
+    assert.equal(restrictions.length, 1);
+    assert.equal(released, 0);
+    // Another session's turn/end must not lift this session's restriction.
+    sessionEvents[0]({ id: 'other-session' }, { type: 'turn/end' });
+    assert.equal(released, 0);
+    sessionEvents[0]({ id: 'turn-end-session' }, { type: 'turn/end' });
+    assert.equal(released, 1, 'turn end releases the restriction');
+    await step(2);
+    assert.equal(released, 1, 'the next turn starts without a stale restriction entry');
+    assert.equal(restrictions.length, 2, 'the new turn narrows afresh');
   } finally { globalThis.fetch = realFetch; }
 });
