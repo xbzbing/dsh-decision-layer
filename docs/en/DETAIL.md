@@ -6,8 +6,8 @@ A structured set of explicitly scoped decisions for the DeepSeek Harness agent l
 
 - **Dangerous-call gate** — before a destructive tool call, a redacted summary asks the backend for a verdict; only a high-confidence deny blocks the call, while backend failures, low confidence, and invalid responses fall back to the host's original path.
 - **Output self-check and quality trend** — scores the final reply at turn end and can append one re-prompt when the score is low and the model is confident; several consecutive confident low scores raise an alert on the trigger button.
-- **Task-completion review** — when the user lists multiple delivery conditions, each is judged satisfied / unsatisfied / insufficient evidence, with tool evidence primary and self-reported completion not counting.
-- **Tool narrowing** — at turn start, judges each optional tool's relevance to the task and drops the ones not needed, intersecting the host-allowed set and never expanding it.
+- **Task-completion review** — when the user lists multiple delivery conditions, each is judged satisfied / unsatisfied / insufficient evidence. Conditions come only from the turn's latest request, with this turn's tool evidence primary (an earlier turn's success does not count) and self-reported completion not counting.
+- **Tool narrowing** — at turn start, and again when a new user request arrives inside the same turn, judges each optional tool's relevance to the task and drops the ones not needed; each re-judgement releases the previous restriction first, and notices such as time or background-job updates trigger no re-judgement. It intersects the host-allowed set and never expands it.
 - **Loop guard** — denies the same call repeated consecutively past a threshold; deterministic and backend-free.
 - **Decision panel and analysis view** — shows automatic-decision metrics and the decision log, and lets you rate each decision correct / wrong / unsure; the analysis view's header can enable or disable automatic interventions for the current session.
 

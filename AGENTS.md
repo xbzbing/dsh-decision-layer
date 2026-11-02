@@ -25,7 +25,7 @@ npm run check               # build + 全量测试 + npm pack 断言，提交前
 
 - **失败即放行**：裁决点抛错、超时、后端不可达、响应不合法都不能阻断工具调用或回合。`tools/pre-execute` 里的异常会让 agent 连 `read` / `edit` 都做不了。
 - **门控只有高置信 `deny` 才拦**；`allow` / `ask` / 低置信 / 异常都不介入，`ask` 不转发宿主审批；拦截经 `tools.guard` 单调执行。
-- **收窄不扩权**：只在宿主已允许集合内取交集；`keepBase`（核心 + 保留前缀）必须计入「不能删光」判断；`restrict` 是 agent 作用域，下一回合前释放。
+- **收窄不扩权**：只在宿主已允许集合内取交集；`keepBase`（核心 + 保留前缀）必须计入「不能删光」判断；`restrict` 是 agent 作用域：宿主在 pre-step 之前就解析本步工具集，所以必须在 `session/event` 的 `turn/end` 释放（含中止/失败回合），不能等下一回合 pre-step；同回合重判前也先释放。
 - **自检与完成核对各自一份 `steerOnce`**，每回合各最多补一次；完成核对以工具证据为准，回复自称完成不算证据。
 - **防循环**不走后端、不受各决策点开关影响，但会话总开关关闭时同样暂停。
 - **管理 API** 只服务回环绑定，校验 Host / Origin，响应 `no-store`，请求体有上限。
@@ -47,7 +47,8 @@ npm run check               # build + 全量测试 + npm pack 断言，提交前
 - `src/host/index.ts` 用 `new URL('../../skills/decision-layer/SKILL.md', import.meta.url)` 找打包内的 skill：源码在 `src/host/`、产物在 `lib/host/`，两层 `..` 才对；改了目录层级会静默丢掉 skill。
 - `meta.detail` 必须是包内相对 `.md` 路径（不能绝对、不能 `..`）；新增或改名要同步 `package.json` 的 `files` 与 `scripts/assert-pack.mjs`，否则详情页回落到 README。
 - 会话开关有两个界面（dock 面板、决策分析页），必须经 `session-events.ts` 同步，不要各存一份本地状态。
-- 决策行会带 gate 的 `command` / `path`；门控、自检与收窄带任务节选，自检与收窄另带回合号（完成核对目前只有条件计数）。`/logrows` 也会回传这些字段，新增日志字段前先确认不会把超出既有范围的原文带到浏览器。任务节选必须走 `src/host/excerpt.ts` 的 `taskExcerpt`（剥离注入块 + 遮蔽凭据 + 512 上限），`session-state` 落盘前还会再掩码一次；不要在各决策点另写一份。
+- 决策行会带 gate 的 `command` / `path`；四个决策点的任务节选都来自 `src/host/decision-context.ts` 的同一快照：**只接受 `source.kind=user`**（无 source 的旧宿主消息走兼容路径），时间 / 运行环境 / 记忆 / 后台通知 / 插件 steer 都不算用户要求，改用 `role` 判断会让日志场景被注入消息覆盖。回合边界在首个 pre-step 记录，完成证据只取边界之后的工具结果（`toolCallId` 关联调用名）；历史被 rewind / 压缩替换时证据保守清空。`/logrows` 也会回传 `task` / `turn` / `step`，新增字段前先确认不会把超出既有范围的原文带到浏览器。节选必须走 `taskExcerpt`（剥离注入块 + 遮蔽凭据 + 512 上限），`session-state` 落盘前还会再掩码一次；不要在各决策点另写一份。
+- 收窄在回合首步和同回合新用户要求时都会重跑，**重跑前必须先释放旧 restriction**（旧 allow-list 会让工具永久回不来），并在 `turn/end` 释放以覆盖下一回合首步；通知类消息不重判；不要改成每步都调模型。
 - 阈值默认值不在 `src/host/config-store.ts`：服务端在各决策点模块（如 `src/host/narrowing.ts` 的 `DEFAULT_NARROW_THRESHOLD`），配置页镜像在 `config-form.tsx`，文案在 `i18n.ts`；改默认值要同时改这几处与测试。
 - `featureOn` / `resolveConfig` 在热路径上，读取必须容忍抛错并回退默认；`backend.evaluate` 的请求/响应校验是唯一 wire 契约，不要在调用点复制宽松版。
 
