@@ -28,6 +28,11 @@ const PHRASE_KEYS = String.raw`password|passw(?:or)?d|passphrase|secret[ _-]?key
 // separate from the ASCII keys because `\b` does not match around CJK text.
 const CN_KEYS = String.raw`密码|口令|密码短语|密钥|令牌|凭证|私钥`;
 const COMBINED_KEYS = String.raw`${PHRASE_KEYS}|${TOKEN_KEYS}`;
+// Env-style keys that appear inside a longer identifier (`DB_PASSWORD`,
+// `auth_token`). A passphrase key owns its whole clause; a token key owns one
+// value, so common output like `TOKEN=abc done` keeps the trailing words.
+const ENV_PHRASE_KEYS = String.raw`PASSW(?:OR)?D|SECRET|ACCESS[_-]?KEY|PRIVATE[_-]?KEY`;
+const ENV_TOKEN_KEYS = String.raw`TOKEN|API[_-]?KEY`;
 const SEPARATOR = String.raw`[:=：＝]`;
 // One value: quoted (JSON / shell) or an unquoted run that stops at a clause
 // separator; `}` and `]` are not separators so JSON-ish input keeps its shape.
@@ -66,10 +71,12 @@ const RULE = {
   cnCopula: new RegExp(String.raw`((?:${CN_KEYS})\s*(?:是|为)\s*)${VALUE_LIKE}${VALUE}`, 'g'),
   flag: new RegExp(String.raw`(^|\s)(--(?:${COMBINED_KEYS})(?:\s+|=))${VALUE}`, 'gi'),
   // Env-style keys are often a suffix of a longer identifier (`DB_PASSWORD`,
-  // `AWS_SECRET_ACCESS_KEY`), where `\b` cannot match across `_`.
-  // The value stops at a clause separator: `\S+` would swallow the rest of a
-  // Chinese sentence after a masked token.
-  envKey: /([A-Za-z0-9_]*(?:PASSW(?:OR)?D|SECRET|TOKEN|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY)[A-Za-z0-9_]*\s*[:=：＝]\s*)[^\s,;}，；、]+/gi,
+  // `AWS_SECRET_ACCESS_KEY`), where `\b` cannot match across `_`. JSON and quoted
+  // .env output place a closing quote between key and separator, and a quoted
+  // passphrase may contain spaces, so the key allows a quote and the value is the
+  // whole clause (over-redaction is the accepted direction).
+  envPhrase: new RegExp(String.raw`([A-Za-z0-9_]*(?:${ENV_PHRASE_KEYS})[A-Za-z0-9_]*["']?\s*${SEPARATOR}\s*)${CLAUSE}`, 'gi'),
+  envToken: new RegExp(String.raw`([A-Za-z0-9_]*(?:${ENV_TOKEN_KEYS})[A-Za-z0-9_]*["']?\s*${SEPARATOR}\s*)${VALUE}`, 'gi'),
   // Legacy space form (`token abc`), but never swallow a copula: the rule above
   // masks the value that follows it.
   loose: new RegExp(String.raw`(\b(?:${COMBINED_KEYS})\b\s+)(?!(?:${COPULA})(?:\s|$)|${SEPARATOR})${VALUE}`, 'gi'),
@@ -101,8 +108,10 @@ export function redactCredentials(input: string): string {
   text = text.replace(RULE.cnCopula, '$1[redacted]');
   // CLI flags (`--token abc`, `--api-key=abc`).
   text = text.replace(RULE.flag, '$1$2[redacted]');
-  // Environment-style keys (`DB_PASSWORD=...`, `AWS_SECRET_ACCESS_KEY=...`).
-  text = text.replace(RULE.envKey, '$1[redacted]');
+  // Environment-style keys, including JSON (`{"DB_PASSWORD":"..."}`) and quoted
+  // .env output where a closing quote sits between the key and the separator.
+  text = text.replace(RULE.envPhrase, '$1[redacted]');
+  text = text.replace(RULE.envToken, '$1[redacted]');
   // Space-separated key/value (`token abc`).
   text = text.replace(RULE.loose, '$1[redacted]');
   // Unlabeled, self-identifying token shapes.

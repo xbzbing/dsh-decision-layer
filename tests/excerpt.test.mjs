@@ -89,7 +89,14 @@ test('environment-style keys whose label is a suffix are masked', () => {
   // `\b` cannot match across `_`, so these need the dedicated env rule.
   assert.equal(taskExcerpt('PASSWORD=hunter2'), 'PASSWORD=[redacted]');
   assert.equal(taskExcerpt('AWS_SECRET_ACCESS_KEY=abc123xyz'), 'AWS_SECRET_ACCESS_KEY=[redacted]');
-  assert.equal(taskExcerpt('DB_PASSWORD=s3cr3t next step'), 'DB_PASSWORD=[redacted] next step');
+  // A bare multi-word value is masked to the end of its clause (over-redaction is
+  // the accepted direction), so trailing prose is dropped too.
+  assert.equal(taskExcerpt('DB_PASSWORD=s3cr3t next step'), 'DB_PASSWORD=[redacted]');
+  // JSON / quoted .env output puts a closing quote between key and separator.
+  assert.equal(taskExcerpt('{"DB_PASSWORD":"hunter2"}'), '{"DB_PASSWORD":[redacted]}');
+  assert.equal(taskExcerpt('{"AWS_SECRET_ACCESS_KEY":"abc123456"}'), '{"AWS_SECRET_ACCESS_KEY":[redacted]}');
+  assert.equal(taskExcerpt('{"auth_token":"abcdef"}'), '{"auth_token":[redacted]}');
+  assert.equal(taskExcerpt('DB_PASSWORD="correct horse"'), 'DB_PASSWORD=[redacted]');
   // A Chinese clause after the value must survive (the value stops at the comma).
   assert.equal(taskExcerpt('token=ghp_secret，然后汇报'), 'token=[redacted]，然后汇报');
 });

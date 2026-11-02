@@ -233,3 +233,15 @@ test('a notice-only turn carries no request and no inherited task', () => {
   assert.equal(snapshot.conditionsText, '');
   assert.match(JSON.stringify(snapshot.context.background), /修复登录/, 'the earlier task stays background only');
 });
+
+// The evidence window keeps the oldest calls as well as the newest, so an early
+// edit that proves an early condition is not pushed out by a long test tail.
+test('a long tool tail still keeps the earliest evidence', () => {
+  const f = fixture();
+  f.context.enter(f.agent, { turn: 1, messages: [text('user', '1. 改配置\n2. 跑测试')] });
+  f.history.push(...tools('first', 'edit', 'patched config', { path: 'config.json' }));
+  for (let i = 0; i < 20; i++) f.history.push(...tools(`tail-${i}`, 'bash', `test run ${i}`));
+  const { evidence } = f.context.snapshot(f.agent);
+  assert.equal(evidence[0].tool, 'edit', 'the earliest call survives the tail');
+  assert.ok(evidence.length >= 12);
+});

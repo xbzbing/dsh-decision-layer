@@ -220,3 +220,10 @@ test('the constructor floor still applies when the config omits minConfidence', 
   assert.equal((await check.review(turn('weak', { turn: 13 }))).steered, false);
   assert.equal(steers.length, 0);
 });
+
+// A turn opened by a notice has no request; scoring it against nothing is noise.
+test('a turn with no request is skipped when the caller supplies a context', async () => {
+  const check = createSelfCheck({ evaluate: async () => { throw new Error('must not evaluate'); } });
+  const result = await check.review({ ...turn('final answer'), context: { request: '', background: [], progress: [] } });
+  assert.equal(result.evaluated, false);
+});
