@@ -163,7 +163,7 @@ test('task excerpts render for narrowing, gate and self-check rows, with turn an
   assert.equal(details.open, false);
   assert.match(details.closest('li').textContent, /回合 7 · 第 3 步/);
   assert.match(details.closest('li').textContent, /web_search/);
-  assert.match(details.closest('li').textContent, /已生效/);
+  assert.match(details.closest('li').textContent, /已生效（下一步起）/);
   const failed = (await view.findByText(/场景（任务节选）：检查构建问题/)).closest('li');
   assert.match(failed.textContent, /回合 8/);
   assert.match(failed.textContent, /评估失败/);

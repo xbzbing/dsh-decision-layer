@@ -48,7 +48,8 @@ npm run check               # build + 全量测试 + npm pack 断言，提交前
 - `meta.detail` 必须是包内相对 `.md` 路径（不能绝对、不能 `..`）；新增或改名要同步 `package.json` 的 `files` 与 `scripts/assert-pack.mjs`，否则详情页回落到 README。
 - 会话开关有两个界面（dock 面板、决策分析页），必须经 `session-events.ts` 同步，不要各存一份本地状态。
 - 决策行会带 gate 的 `command` / `path`；四个决策点的任务节选都来自 `src/host/decision-context.ts` 的同一快照：**只接受 `source.kind=user`**（无 source 的旧宿主消息走兼容路径），时间 / 运行环境 / 记忆 / 后台通知 / 插件 steer 都不算用户要求，改用 `role` 判断会让日志场景被注入消息覆盖。回合边界在首个 pre-step 记录，完成证据只取边界之后的工具结果（`toolCallId` 关联调用名）；历史被 rewind / 压缩替换时证据保守清空。`/logrows` 也会回传 `task` / `turn` / `step`，新增字段前先确认不会把超出既有范围的原文带到浏览器。节选必须走 `taskExcerpt`（剥离注入块 + 遮蔽凭据 + 512 上限），`session-state` 落盘前还会再掩码一次；不要在各决策点另写一份。
-- 收窄在回合首步和同回合新用户要求时都会重跑，**重跑前必须先释放旧 restriction**（旧 allow-list 会让工具永久回不来），并在 `turn/end` 释放以覆盖下一回合首步；通知类消息不重判；不要改成每步都调模型。
+- 收窄在回合首步和同回合新用户要求时都会重跑，**重跑前必须先释放旧 restriction**（旧 allow-list 会让工具永久回不来），并在 `turn/end` 释放以覆盖下一回合首步；通知类消息不重判；不要改成每步都调模型。宿主在 `agent/pre-step` 之前就解析好本步工具集，所以限制**从下一步起**才进入模型请求，首步自身的调用仍按全量放行——这是宿主时序，不是 bug，面板文案与 ADR-0016 都按此表述。
+- 收窄只作用于工具通道：`dsh-ui` 围栏由 client 从回复正文解析渲染（`fence-channel=dom`），`skill` 是核心工具、技能说明照旧可加载。判断「收窄是否生效」要看 `request/header` 里的 tools 是否变少、以及调用是否落在当步集合内，不要拿「还能出 UI」当证据。
 - 阈值默认值不在 `src/host/config-store.ts`：服务端在各决策点模块（如 `src/host/narrowing.ts` 的 `DEFAULT_NARROW_THRESHOLD`），配置页镜像在 `config-form.tsx`，文案在 `i18n.ts`；改默认值要同时改这几处与测试。
 - `featureOn` / `resolveConfig` 在热路径上，读取必须容忍抛错并回退默认；`backend.evaluate` 的请求/响应校验是唯一 wire 契约，不要在调用点复制宽松版。
 
