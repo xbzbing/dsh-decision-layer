@@ -12,6 +12,29 @@ test('builds a score question from the default rubric', () => {
   assert.ok(question.criteria.every(level => typeof level === 'string' && level));
 });
 
+test('the judged answer keeps both ends when it exceeds the excerpt budget', () => {
+  const answer = `HEAD-${'x'.repeat(30_000)}-TAIL`;
+  const state = scoreQuestion(answer).state;
+  assert.ok(state.answer.length <= 24 * 1024 + 64, 'the excerpt stays near the 24K budget');
+  assert.match(state.answer, /^HEAD-/, 'the opening of the reply survives');
+  assert.match(state.answer, /-TAIL$/, 'the conclusion survives too');
+  assert.match(state.answer, /中间内容已省略/, 'the model is told text was dropped');
+  // A normal-length reply is unchanged.
+  assert.equal(scoreQuestion('short answer').state.answer, 'short answer');
+});
+
+test('the score state explains how to use request, background and answer', () => {
+  const state = scoreQuestion('done', DEFAULT_RUBRIC, {
+    request: '补上',
+    background: [{ role: 'user', text: '重构登录模块' }, { role: 'assistant', text: '登录模块已重构，缺少测试' }],
+    progress: [],
+  }).state;
+  assert.equal(state.request, '补上');
+  assert.deepEqual(state.background, [{ role: 'user', text: '重构登录模块' }, { role: 'assistant', text: '登录模块已重构，缺少测试' }]);
+  assert.match(state.note, /短追问/);
+  assert.match(state.note, /background/);
+});
+
 test('low score is observation-only by default and never steers', async () => {
   const steers = [];
   const check = createSelfCheck({

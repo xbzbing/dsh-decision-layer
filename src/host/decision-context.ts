@@ -35,6 +35,28 @@ export function decisionText(value: unknown, maxBytes = 1536): string {
   return clip(clean, maxBytes);
 }
 
+// The tail of an assistant reply is where it hands the turn back ("the failed
+// review is still pending — want me to add it?"), which is exactly what a short
+// follow-up ("继续", "补上") answers. A head-only excerpt loses that line.
+function clipTail(text: string, maxBytes: number): string {
+  let size = 0;
+  let result = '';
+  const chars = Array.from(text);
+  for (let index = chars.length - 1; index >= 0; index--) {
+    const char = chars[index] as string;
+    size += Buffer.byteLength(char);
+    if (size > maxBytes) break;
+    result = char + result;
+  }
+  return result;
+}
+
+function decisionTail(value: unknown, maxBytes = 512): string {
+  if (typeof value !== 'string' || maxBytes <= 0) return '';
+  const clean = redactCredentials(stripInjected(value.slice(0, 32 * 1024))).trim();
+  return clipTail(clean, maxBytes);
+}
+
 // Shell output is free-form, so a labeled-credential rule alone is not enough:
 // an opaque blob (a token echoed by a script, a hash, a session id) has no label.
 // Mask long unbroken alphanumerics while leaving paths and short words readable.
@@ -61,7 +83,9 @@ function historyOf(agent: AgentLike | undefined): Message[] | undefined {
 
 // Take the most recent real user message and the most recent assistant reply,
 // not the last two messages of either role: two consecutive assistant updates
-// must not push the user's task out of the window.
+// must not push the user's task out of the window. User messages keep their head
+// (the request), assistant replies keep their tail (the hand-off / open question
+// a short follow-up answers).
 function backgroundOf(messages: Message[], isHuman: (message: Message) => boolean): DecisionContext['background'] {
   const lastUser = messages.findLastIndex(isHuman);
   const lastAssistant = messages.findLastIndex(message => message.role === 'assistant');
@@ -70,7 +94,9 @@ function backgroundOf(messages: Message[], isHuman: (message: Message) => boolea
       const message = messages[index];
       if (!message) return undefined;
       const role = isHuman(message) ? 'user' as const : 'assistant' as const;
-      return { role, text: decisionText(textOf(message), 512) };
+      const raw = textOf(message);
+      const excerpt = role === 'user' ? decisionText(raw, 512) : decisionTail(raw, 512);
+      return { role, text: excerpt };
     })
     .filter((item): item is { role: 'user' | 'assistant'; text: string } => Boolean(item?.text));
 }

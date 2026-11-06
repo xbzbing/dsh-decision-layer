@@ -39,6 +39,20 @@ test('a short follow-up carries previous task/reply without promoting injected m
   assert.equal(snapshot.conditionsText, '继续');
 });
 
+test('a long assistant reply keeps its ending so a short follow-up can resolve', () => {
+  // The old head-only excerpt kept the summary but lost the closing question the
+  // user's "补上" was answering, which is what made the self-check low-confidence.
+  const reply = `开头摘要。${'中间细节。'.repeat(300)}\n之前那个失败了的独立复核还没有重做，需要我现在补上吗？`;
+  const f = fixture([text('user', 'rebase 分支', 'user', 'u0'), text('assistant', reply, undefined, 'a0')]);
+  f.context.enter(f.agent, { turn: 2, step: 1, messages: [text('user', '补上')] });
+  const background = f.context.snapshot(f.agent).context.background;
+  const assistant = background.find(item => item.role === 'assistant');
+  assert.ok(assistant);
+  assert.match(assistant.text, /需要我现在补上吗/);
+  assert.ok(Buffer.byteLength(assistant.text) <= 512, 'the assistant excerpt stays within its byte budget');
+  assert.match(background.find(item => item.role === 'user').text, /rebase 分支/, 'the user side still keeps its head');
+});
+
 test('only tools after the current turn boundary become evidence and real results join by call id', () => {
   const f = fixture([text('user', '旧任务', 'user', 'old'), ...tools('old-tool', 'bash', 'old success')]);
   f.context.enter(f.agent, { turn: 2, step: 1, messages: [text('user', '1. 修改配置\n2. 运行测试')] });

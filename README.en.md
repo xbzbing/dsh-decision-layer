@@ -51,7 +51,7 @@ Restart `dsh web` and refresh after installing or updating: the host and client 
 Once a key is configured, the plugin sends adjudication requests to the remote endpoint `https://api.typesafe.ai` (model `jev-latest`) by default. The payload carries real context:
 
 - Gate: the tool name plus redacted command/path summaries (up to 2048 characters each); no conversation content.
-- Self-check: this turn's request, the recent user asks and AI replies it needs for context (background only, each with its own budget, credentials masked), and the turn's final reply (up to about 24K characters).
+- Self-check: this turn's request, the recent user asks and AI replies it needs for context (background only, each with its own budget, credentials masked), and the turn's final reply (opening and closing within a combined ~24K-character budget; the middle of an over-long reply is marked as omitted so the conclusion is not lost).
 - Narrowing: the current request, the necessary recent background, and the latest execution progress (tool name, ok/error, bounded command/path and shell-result excerpts) plus candidate tool names/descriptions.
 - Task-completion review: delivery conditions extracted from this turn's latest user request (up to 20; a turn's earlier requests are not merged) and that request with its necessary background (credentials masked), this turn's tool evidence (tool name, ok/error, bounded command/path, plus a bounded shell-result excerpt with long unlabeled blobs masked again), and the first ~8K characters of the reply. Raw results from file reads, searches and network tools are never sent.
 - Manual verdicts: `decision_evaluate` and the `decision-layer` skill send whatever the agent submits, unchanged.
