@@ -169,6 +169,15 @@ test('logrows defaults page/pageSize when the query is absent or malformed', asy
   assert.deepEqual(listRowsCalls.at(-1), { sessionId: 's1', page: 1, pageSize: 100 });
 });
 
+test('logrows forwards lowOnly only when it is the explicit value 1', async () => {
+  await json(await fetch(`${base}/logrows?sessionId=s1&lowOnly=1`));
+  assert.deepEqual(listRowsCalls.at(-1), { sessionId: 's1', page: 1, pageSize: 100, lowOnly: true });
+  await json(await fetch(`${base}/logrows?sessionId=s1&lowOnly=0`));
+  assert.deepEqual(listRowsCalls.at(-1), { sessionId: 's1', page: 1, pageSize: 100 });
+  await json(await fetch(`${base}/logrows?sessionId=s1&lowOnly=true`));
+  assert.deepEqual(listRowsCalls.at(-1), { sessionId: 's1', page: 1, pageSize: 100 }, 'only "1" enables the filter');
+});
+
 test('logrows requires a sessionId', async () => {
   const response = await fetch(`${base}/logrows`);
   assert.equal(response.status, 400);

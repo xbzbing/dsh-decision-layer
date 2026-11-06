@@ -54,7 +54,7 @@ export type ManagerRouteDeps = {
   backend: { evaluate: Evaluator };
   logStore?: { appendAnnotation: (entry: Record<string, unknown>) => Promise<unknown> };
   analyze?: (id: string) => Promise<unknown>;
-  listRows?: (id: string, options: { page: number; pageSize: number }) => Promise<unknown>;
+  listRows?: (id: string, options: { page: number; pageSize: number; lowOnly?: boolean }) => Promise<unknown>;
   env?: Record<string, string | undefined>;
   bindHost?: string;
 };
@@ -121,7 +121,9 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
       },
     }),
     // One newest-first page of this session's full persisted decision rows, for
-    // the analysis tab's paginated log. Rows carry the same panel fields as /log,
+    // the analysis tab's paginated log. `lowOnly=1` filters to low self-check
+    // scores before paging, so a single low score in a long session is one click
+    // away instead of a manual scan. Rows carry the same panel fields as /log,
     // including the gate's already-redacted and length-bounded command/path, so
     // this exposes nothing the recent-rows route does not already.
     route('logrows', {
@@ -131,7 +133,8 @@ export function createManagerRoutes({ path, sessions, backend, logStore, analyze
         const params = new URL(req.url ?? '/', 'http://localhost').searchParams;
         const page = Number.parseInt(params.get('page') ?? '1', 10);
         const pageSize = Number.parseInt(params.get('pageSize') ?? '100', 10);
-        try { return await listRows(id, { page: Number.isNaN(page) ? 1 : page, pageSize: Number.isNaN(pageSize) ? 100 : pageSize }); }
+        const lowOnly = params.get('lowOnly') === '1';
+        try { return await listRows(id, { page: Number.isNaN(page) ? 1 : page, pageSize: Number.isNaN(pageSize) ? 100 : pageSize, ...(lowOnly ? { lowOnly } : {}) }); }
         catch (error) { if ((error as CodedError)?.code === 'BAD_REQUEST') throw error; throw codedError('log rows failed', 'INTERNAL'); }
       },
     }),

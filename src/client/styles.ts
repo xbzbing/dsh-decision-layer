@@ -92,6 +92,14 @@ const css = `
    real quality dip. */
 .decision-log-muted-verdict{font-weight:600;color:var(--dsw-alias-label-tertiary,#9aa5b1)}
 .decision-log-muted .decision-log-time{opacity:.75}
+/* Every low self-check row gets an amber accent and a badge, even when the score
+   is low-confidence noise. The noise row keeps its muted verdict and dashed
+   accent, so it is findable without reading as a real quality dip. */
+.decision-log-item.decision-log-low{border-left-color:#c98a1e}
+.decision-log-item.decision-log-low.decision-log-muted{border-left-style:dashed}
+.decision-log-badge{display:inline-block;margin-right:.35rem;padding:0 .38rem;border:1px solid transparent;border-radius:999px;font-size:.68rem;font-weight:600;line-height:1.6;vertical-align:.05em}
+.decision-log-badge-low{color:#8a5a12;background:rgba(201,138,30,.16);border-color:rgba(201,138,30,.4)}
+.decision-log-badge-noise{color:var(--dsw-alias-label-secondary,#59636e);background:var(--dsw-alias-bg-layer-1,#f2f4f6);border-color:var(--dsw-alias-border-l2,#dce1e6)}
 
 .decision-status{display:flex;align-items:center;gap:.5rem;margin-top:.7rem;font-size:.82rem}
 .decision-status-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:#9aa5b1}
@@ -202,6 +210,20 @@ const css = `
 .decision-analysis-switch:focus-visible{outline:2px solid var(--decision-analysis-accent);outline-offset:2px}
 .decision-analysis-section{border-top:1px solid var(--dsw-alias-border-l2,#eceff1);margin-top:1.1rem;padding-top:1rem}
 .decision-analysis-section>h3{font-size:.92rem;margin:0 0 .6rem}
+/* Section header with the low-score-only filter on the right. Keeping the
+   filter next to the log heading makes the affordance discoverable exactly
+   where a long list is being scanned. */
+.decision-analysis-log-head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;margin-bottom:.6rem}
+.decision-analysis-log-head>h3{font-size:.92rem;margin:0}
+.decision-log-filter{flex:0 0 auto;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2,#ccd3da);border-radius:999px;background:transparent;color:var(--dsw-alias-label-secondary,#59636e);padding:.24rem .7rem;font:inherit;font-size:.76rem;line-height:1.3;white-space:nowrap;cursor:pointer;transition:color .15s,border-color .15s,background .15s}
+.decision-log-filter:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,#eef1f3);color:var(--dsw-alias-label-primary,#202124)}
+.decision-log-filter[aria-pressed="true"]{border-color:#c98a1e;color:#8a5a12;background:rgba(201,138,30,.12)}
+.decision-log-filter:disabled{opacity:.5;cursor:default}
+.decision-log-filter:focus-visible{outline:2px solid var(--decision-analysis-accent);outline-offset:2px}
+@media (prefers-color-scheme:dark){
+  .decision-log-badge-low{color:#e0a83e;background:rgba(224,168,62,.14);border-color:rgba(224,168,62,.4)}
+  .decision-log-filter[aria-pressed="true"]{border-color:#e0a83e;color:#e0a83e;background:rgba(224,168,62,.14)}
+}
 .decision-analysis-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:.7rem}
 .decision-analysis-trend{max-width:26rem}
 .decision-analysis-note{margin:.5rem 0 0}

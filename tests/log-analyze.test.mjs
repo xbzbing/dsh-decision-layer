@@ -164,3 +164,24 @@ test('listSessionDecisions folds a re-logged id (latest wins, no double count)',
   assert.equal(page.total, 1);
   assert.equal(page.entries[0].outcome, 'low', 'the later record wins');
 });
+
+test('listSessionDecisions filters to low self-check scores before pagination', async () => {
+  async function* stream() {
+    yield { sessionId: 's1', id: 'g1', kind: 'gate', outcome: 'deny', at: 1 };
+    yield { sessionId: 's1', id: 'c1', kind: 'check', outcome: 'low', at: 2, turn: 3 };
+    yield { sessionId: 's1', id: 'c2', kind: 'check', outcome: 'ok', at: 3 };
+    yield { sessionId: 's1', id: 'c3', kind: 'check', outcome: 'low', at: 4, turn: 9 };
+    yield { sessionId: 's1', id: 'c4', kind: 'check', outcome: 'error', at: 5 };
+    yield { sessionId: 's2', id: 'other', kind: 'check', outcome: 'low', at: 6 };
+  }
+  const filtered = await listSessionDecisions('s1', { lowOnly: true, pageSize: 1, readStream: stream });
+  assert.equal(filtered.total, 2, 'only this session’s low self-check rows remain');
+  assert.equal(filtered.pages, 2, 'pagination counts the filtered set, not the whole log');
+  assert.deepEqual(filtered.entries.map(e => e.id), ['c3'], 'newest low row first');
+  const second = await listSessionDecisions('s1', { lowOnly: true, pageSize: 1, page: 2, readStream: stream });
+  assert.deepEqual(second.entries.map(e => e.id), ['c1']);
+  // The same stream without the filter still returns every decision kind.
+  const all = await listSessionDecisions('s1', { readStream: stream });
+  assert.equal(all.total, 5);
+  assert.deepEqual(all.entries.map(e => e.id), ['c4', 'c3', 'c2', 'c1', 'g1']);
+});

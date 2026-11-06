@@ -88,7 +88,7 @@ test('a low-confidence low self-check score is tagged as ignorable noise', async
       check: { attempts: 1, failures: 0, low: 1 } });
     if (String(url).includes('/logs?')) return envelope({ totalDecisions: 1, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
     if (String(url).includes('/log?')) return envelope({ entries: [
-      { id: 'n1', at: 1_700_000_040_000, kind: 'check', outcome: 'low', score: 0.76, confidence: 0, lowConfidence: true },
+      { id: 'n1', at: 1_700_000_040_000, kind: 'check', outcome: 'low', score: 0.41, confidence: 0.29, lowConfidence: true, task: '补上', turn: 22 },
     ] });
     if (String(url).endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
     throw new Error(`Unexpected URL ${url}`);
@@ -101,6 +101,12 @@ test('a low-confidence low self-check score is tagged as ignorable noise', async
   // the row uses the neutral muted accent, not the amber warn accent
   assert.ok(row.className.includes('decision-log-muted'), 'a noisy low score is muted, not warn');
   assert.ok(!row.className.includes('decision-log-warn'), 'it must not use the warn accent');
+  // A low score is still marked and names its request inline: muting the noise
+  // must not make the row hard to find.
+  assert.ok(row.className.includes('decision-log-low'), 'the low row keeps a findable accent');
+  assert.match(row.textContent, /低评分/, 'the low-score badge is visible');
+  assert.match(row.textContent, /回合 22/, 'the row names its turn');
+  assert.match(row.textContent, /「补上」/, 'the task excerpt is inline, even for a short follow-up');
 });
 
 test('modal shows gate metrics and the decision log, not the backend form', async () => {
@@ -664,6 +670,70 @@ test('analysis view paginates the decision log and shares the page scroll', asyn
   assert.deepEqual(requested, [1, 2], 'clicking next fetches page 2');
   // on the last page, Next is disabled
   assert.equal((await view.findByRole('button', { name: '下一页' })).disabled, true);
+});
+
+test('analysis view filters the persisted log to low self-check scores', async () => {
+  const requested = [];
+  globalThis.fetch = async url => {
+    const s = String(url);
+    if (s.includes('/session?')) return envelope({ enabled: true });
+    if (s.includes('/logs?')) return envelope({ totalDecisions: 3,
+      annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {},
+      trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 },
+      profile: { gate: { attempts: 1, allow: 0, ask: 0, deny: 1, error: 0 },
+        check: { attempts: 2, ok: 1, low: 1, error: 0, scoreSum: 2, scoreCount: 2, confidence: {} },
+        narrow: { attempts: 0, applied: 0, error: 0, droppedSum: 0, tooManyCandidates: 0 },
+        complete: { attempts: 0, satisfied: 0, unsatisfied: 0, insufficient: 0, error: 0, steered: 0 } } });
+    if (s.includes('/logrows?')) {
+      requested.push(s);
+      const lowOnly = new URL(s, 'http://x').searchParams.get('lowOnly') === '1';
+      const entries = lowOnly
+        ? [{ id: 'low-1', at: 1_700_000_003_000, kind: 'check', outcome: 'low', score: 0.41, confidence: 0.29, lowConfidence: true, task: '补上', turn: 22 }]
+        : [
+            { id: 'gate-1', at: 1_700_000_001_000, kind: 'gate', outcome: 'allow', tool: 'read', action: 'pass' },
+            { id: 'check-1', at: 1_700_000_002_000, kind: 'check', outcome: 'ok', score: 2, confidence: 0.9 },
+            { id: 'low-1', at: 1_700_000_003_000, kind: 'check', outcome: 'low', score: 0.41, confidence: 0.29, lowConfidence: true, task: '补上', turn: 22 },
+          ];
+      return envelope({ entries, total: entries.length, page: 1, pageSize: 100, pages: 1 });
+    }
+    throw new Error(`Unexpected URL ${s}`);
+  };
+  const view = render(React.createElement(AnalysisView, { sessionId: 'filter-1', t: translate }));
+  const filter = view.getByRole('button', { name: /只看低评分/ });
+  await waitFor(() => assert.equal(filter.disabled, false));
+  assert.equal(filter.getAttribute('aria-pressed'), 'false');
+  assert.equal(requested.at(-1).includes('lowOnly=1'), false, 'the default view shows every decision');
+  // Turning the filter on asks the server for the low rows only and resets paging.
+  fireEvent.click(filter);
+  await waitFor(() => assert.equal(filter.getAttribute('aria-pressed'), 'true'));
+  await waitFor(() => assert.equal(requested.at(-1).includes('lowOnly=1'), true));
+  const lowRow = (await view.findByText(/噪声，可忽略/)).closest('li');
+  assert.match(lowRow.textContent, /低评分/);
+  assert.match(lowRow.textContent, /「补上」/);
+  assert.equal(view.queryByText(/未干预/), null, 'only the low row is rendered');
+  // Turning it off restores the full log.
+  fireEvent.click(filter);
+  await waitFor(() => assert.equal(requested.at(-1).includes('lowOnly=1'), false));
+  await view.findByText(/未干预/);
+});
+
+test('analysis view disables the low filter when the session has no low scores', async () => {
+  globalThis.fetch = async url => {
+    const s = String(url);
+    if (s.includes('/session?')) return envelope({ enabled: true });
+    if (s.includes('/logs?')) return envelope({ totalDecisions: 1,
+      annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {},
+      trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 },
+      profile: { gate: { attempts: 1, allow: 1, ask: 0, deny: 0, error: 0 },
+        check: { attempts: 0, ok: 0, low: 0, error: 0, scoreSum: 0, scoreCount: 0, confidence: {} },
+        narrow: { attempts: 0, applied: 0, error: 0, droppedSum: 0, tooManyCandidates: 0 },
+        complete: { attempts: 0, satisfied: 0, unsatisfied: 0, insufficient: 0, error: 0, steered: 0 } } });
+    if (s.includes('/logrows?')) return envelope({ entries: [], total: 0, page: 1, pageSize: 100, pages: 1 });
+    throw new Error(`Unexpected URL ${s}`);
+  };
+  const view = render(React.createElement(AnalysisView, { sessionId: 'filter-empty', t: translate }));
+  const filter = await view.findByRole('button', { name: /只看低评分/ });
+  assert.equal(filter.disabled, true, 'no low score = no filter to offer');
 });
 
 test('analysis view enables this session\'s decisions from the header control', async () => {

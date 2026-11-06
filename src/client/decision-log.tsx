@@ -63,22 +63,31 @@ function renderGate({ t }: RowProps, entry: LogEntry) {
 function renderCheck({ t }: RowProps, entry: LogEntry) {
   const label = <><span title={t('logCheckHint')}>{t('logCheck')}</span>{turnTag(t, entry)}</>;
   // The request this self-check judged, so the reader knows which turn's output
-  // was scored. Rendered as a quoted, muted prose snippet (not a monospace command
-  // chip): truncated inline, full text in the tooltip.
-  const subject = entry.subject
-    ? <span className="decision-log-subject" title={`${t('logSubjectLabel')}${entry.subject}`}>「{entry.subject.length > 60 ? `${entry.subject.slice(0, 60)}…` : entry.subject}」</span>
+  // was scored. New rows carry `task` (the bounded, masked excerpt); older rows
+  // carry the legacy `subject`. Rendered inline even when the task is also
+  // available in the expandable block: a self-check row whose request is hidden
+  // behind a collapsed disclosure is hard to locate in a long session.
+  const subjectText = entry.subject ?? entry.task;
+  const subject = subjectText
+    ? <span className="decision-log-subject" title={`${t('logSubjectLabel')}${subjectText}`}>「{subjectText.length > 60 ? `${subjectText.slice(0, 60)}…` : subjectText}」</span>
     : null;
   if (entry.outcome === 'error') return <>{label}{subject ? <> {subject}</> : null} <span className="decision-log-detail">{t('logEvalFailed')}{entry.reason ? ` · ${failDetail(t, entry)}` : ''}</span></>;
   // A low score the model was not confident about is low-signal noise: it does not
-  // advance the quality trend and triggers no intervention. Mark it plainly so the
-  // reader does not mistake it for a real quality dip.
-  const noisy = entry.outcome === 'low' && entry.lowConfidence === true;
-  const result = entry.outcome === 'low' ? (noisy ? t('checkResultLowNoisy') : t('checkResultLow')) : t('checkResultOk');
+  // advance the quality trend and triggers no intervention. Keep that meaning
+  // (muted verdict + noise tag) but mark every low row with a badge and a low-row
+  // accent, so finding the one low score in a long log does not depend on spotting
+  // a single muted line.
+  const low = entry.outcome === 'low';
+  const noisy = low && entry.lowConfidence === true;
+  const badge = low
+    ? <span className={`decision-log-badge ${noisy ? 'decision-log-badge-noise' : 'decision-log-badge-low'}`}>{t('logLowBadge')}</span>
+    : null;
+  const result = low ? (noisy ? t('checkResultLowNoisy') : t('checkResultLow')) : t('checkResultOk');
   const verdict = <span className={noisy ? 'decision-log-muted-verdict' : 'decision-log-verdict'}>{result}</span>;
   const score = entry.score !== undefined ? <span className="decision-log-detail" title={t('logScoreHint')}> · {t('logScore')} {entry.score}/2</span> : null;
   const conf = typeof entry.confidence === 'number' ? <span className="decision-log-detail"> · {t('logConfidence')} {entry.confidence}</span> : null;
   const hint = noisy ? <span className="decision-log-detail" title={t('checkNoiseHint')}> · {t('checkNoiseTag')}</span> : null;
-  return <>{label}{subject ? <> {subject}</> : null} · {verdict}{score}{conf}{hint}</>;
+  return <>{label}{subject ? <> {subject}</> : null} · {badge}{verdict}{score}{conf}{hint}</>;
 }
 
 function renderNarrow({ t }: RowProps, entry: LogEntry) {
@@ -161,7 +170,7 @@ export function DecisionLogList({ entries, ratings, onRate, t, newestFirst = tru
 }) {
   const rows = newestFirst ? entries.slice().reverse() : entries.slice();
   return <ol className="decision-log">
-    {rows.map((entry, index) => <li key={entry.id ?? `${entry.at}-${index}`} className={`decision-log-item decision-log-${outcomeTagOf(entry)}`}>
+    {rows.map((entry, index) => <li key={entry.id ?? `${entry.at}-${index}`} className={`decision-log-item decision-log-${outcomeTagOf(entry)}${entry.kind === 'check' && entry.outcome === 'low' ? ' decision-log-low' : ''}`}>
       <span className="decision-log-time">{time(entry.at)}</span>
       <div className="decision-log-body">
         {renderBody({ t }, entry)}

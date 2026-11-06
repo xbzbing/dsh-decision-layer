@@ -24,6 +24,10 @@ export function AnalysisView({ sessionId, t }: Props) {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [rows, setRows] = useState<LogRows | null>(null);
   const [logPage, setLogPage] = useState(1);
+  // The analysis log can span many pages in a long session. This filter asks the
+  // server for low self-check rows only, so a single low score is one click away
+  // instead of a manual scan (or a wrong page).
+  const [lowOnly, setLowOnly] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState('');
   // Session-level automatic-intervention switch. null means "still reading";
@@ -51,6 +55,7 @@ export function AnalysisView({ sessionId, t }: Props) {
     active.current = sessionId;
     setBusy(false);
     setMessage('');
+    setLowOnly(false);
     loadSession();
   }, [sessionId]);
 
@@ -102,15 +107,19 @@ export function AnalysisView({ sessionId, t }: Props) {
   // keeps only the in-memory recent rows with its own scroll).
   useEffect(() => {
     let alive = true;
-    void request<LogRows>(`logrows?sessionId=${encodeURIComponent(sessionId)}&page=${logPage}&pageSize=${LOG_PAGE_SIZE}`)
+    void request<LogRows>(`logrows?sessionId=${encodeURIComponent(sessionId)}&page=${logPage}&pageSize=${LOG_PAGE_SIZE}${lowOnly ? '&lowOnly=1' : ''}`)
       .then(value => { if (alive) setRows(value); })
       .catch(() => {});
     return () => { alive = false; };
-  }, [sessionId, logPage]);
+  }, [sessionId, logPage, lowOnly]);
 
   const profile = analysis?.profile;
   const backtest = analysis?.trendBacktest;
   const annotations = analysis?.annotations;
+  // Total low self-check scores (including low-confidence noise) across the whole
+  // persisted log, used to label the "low only" filter. The filtered page's own
+  // `total` would be circular.
+  const lowCount = profile?.check.low ?? 0;
   // Mean self-check score across evaluated turns, to one decimal.
   const meanScore = profile && profile.check.scoreCount > 0
     ? Math.round((profile.check.scoreSum / profile.check.scoreCount) * 10) / 10 : null;
@@ -197,9 +206,16 @@ export function AnalysisView({ sessionId, t }: Props) {
           </section>}
 
           <section className="decision-analysis-section">
-            <h3>{t('log')}</h3>
+            <div className="decision-analysis-log-head">
+              <h3>{t('log')}</h3>
+              <button type="button" className="decision-log-filter" aria-pressed={lowOnly}
+                disabled={!analysis || lowCount === 0} title={t('logLowOnlyHint')}
+                onClick={() => { setLowOnly(value => !value); setLogPage(1); }}>
+                {t('logLowOnly')}{lowCount > 0 ? ` · ${lowCount}` : ''}
+              </button>
+            </div>
             {!rows || rows.total === 0
-              ? <p className="decision-empty" role="status">{t('analysisLogTruncated')}</p>
+              ? <p className="decision-empty" role="status">{lowOnly ? t('logLowEmpty') : t('analysisLogTruncated')}</p>
               : <>
                 <DecisionLogList entries={rows.entries} ratings={ratings} onRate={(id, rating) => void annotate(id, rating)} t={t} newestFirst={false} />
                 {rows.pages > 1 && <nav className="decision-pager" aria-label={t('log')}>

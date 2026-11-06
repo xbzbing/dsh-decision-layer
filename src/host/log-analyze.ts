@@ -298,14 +298,18 @@ export async function reconstructSessionSeed(sessionId: unknown, { dir, port, tr
 // Read one session's persisted decision rows and return a single newest-first
 // page. Backs the analysis tab's full decision log (the dock panel still shows
 // only the in-memory recent rows). Decisions are folded by id (latest wins) so a
-// re-logged id is not double-counted. Rows carry only the panel fields, including
-// the gate's redacted, length-bounded command/path. The internal sessionId tag is
-// stripped before the row leaves the server.
-export async function listSessionDecisions(sessionId: unknown, { dir, port, page = 1, pageSize = 100, readStream = createReadableStream }: {
+// re-logged id is not double-counted. `lowOnly` narrows the same set to
+// self-check rows whose score was low, so a single low score buried in a long
+// session can be paged to directly (pagination then counts the filtered set).
+// Rows carry only the panel fields, including the gate's redacted,
+// length-bounded command/path. The internal sessionId tag is stripped before the
+// row leaves the server.
+export async function listSessionDecisions(sessionId: unknown, { dir, port, page = 1, pageSize = 100, lowOnly = false, readStream = createReadableStream }: {
   dir?: string;
   port?: number;
   page?: number;
   pageSize?: number;
+  lowOnly?: boolean;
   readStream?: ReadStream;
 } = {}): Promise<{ entries: LogRow[]; total: number; page: number; pageSize: number; pages: number }> {
   if (typeof sessionId !== 'string' || !sessionId.trim()) throw new Error('Invalid session id');
@@ -316,7 +320,8 @@ export async function listSessionDecisions(sessionId: unknown, { dir, port, page
     if (record.sessionId === sessionId) records.push(record);
   }
   const { decisions } = foldSession(records);
-  const rows = [...decisions.values()].sort((a, b) => atOf(b) - atOf(a)); // newest first
+  const all = [...decisions.values()].sort((a, b) => atOf(b) - atOf(a)); // newest first
+  const rows = lowOnly ? all.filter(record => record.kind === 'check' && record.outcome === 'low') : all;
   const total = rows.length;
   const pages = Math.max(1, Math.ceil(total / size));
   const current = Math.min(Math.max(1, Number.isSafeInteger(page) ? page : 1), pages);

@@ -315,7 +315,7 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
       port,
       trendConfig: (await resolveConfig({ path })).checkSettings,
     });
-    const listRows = (sessionId: string, { page, pageSize }: { page?: number; pageSize?: number } = {}) => listSessionDecisions(sessionId, { port, page, pageSize });
+    const listRows = (sessionId: string, { page, pageSize, lowOnly }: { page?: number; pageSize?: number; lowOnly?: boolean } = {}) => listSessionDecisions(sessionId, { port, page, pageSize, lowOnly });
     const unregister = createManagerRoutes({ path, sessions, backend, logStore, analyze, listRows, bindHost: web.webServer.host }).map(route => web.webServer.register(route));
     return () => { unregister.forEach(dispose => dispose()); const store = logStore; logStore = undefined; void store?.dispose(); };
   });
