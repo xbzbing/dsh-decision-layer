@@ -16,6 +16,39 @@ test('foldSession keeps decisions by id and the latest annotation per target', (
   assert.equal(annotations.get('d1').rating, 'good', 'the later annotation wins');
 });
 
+test('checkpoint rows restore clean counters, safe browser fields and measurement coverage', async () => {
+  const rows = [
+    rec({ id: 'p0', kind: 'checkpoint', outcome: 'skipped', reason: 'budget', at: 1 }),
+    rec({ id: 'p1', kind: 'checkpoint', outcome: 'concern', at: 2, latencyMs: 20, inputTokens: 0, outputTokens: 2, backendAttempts: 1 }),
+    rec({ id: 'p2', kind: 'checkpoint', outcome: 'uncertain', at: 3, latencyMs: 40 }),
+    rec({ id: 'c', kind: 'check', outcome: 'ok', at: 4, latencyMs: 0, inputTokens: 3, outputTokens: 1, backendAttempts: 2 }),
+  ];
+  const result = analyzeSession(rows);
+  assert.deepEqual(result.profile.checkpoint, { attempts: 2, concern: 1, uncertain: 1, error: 0, skipped: 1 });
+  assert.equal(result.profile.telemetry.measured, 3);
+  assert.equal(result.profile.telemetry.usageMeasured, 2);
+  assert.equal(result.profile.telemetry.latencyMsP50, 20);
+  assert.equal(result.profile.telemetry.latencyMsP95, 40);
+  assert.equal(result.profile.telemetry.inputTokens, 3);
+  assert.equal(result.profile.telemetry.backendAttempts, 3);
+  assert.equal(result.profile.telemetry.transportMeasured, 2);
+  const oldOnly = analyzeSession([rec({ id: 'old', kind: 'gate', outcome: 'allow' })]).profile.telemetry;
+  assert.equal(oldOnly.transportMeasured, 0);
+  const zero = analyzeSession([rec({ id: 'z', kind: 'gate', outcome: 'allow', backendAttempts: 0 })]).profile.telemetry;
+  assert.equal(zero.transportMeasured, 1);
+  assert.equal(zero.backendAttempts, 0);
+  const seed = buildSeed(foldSession(rows).decisions);
+  assert.equal(seed.attempts, 1, 'checkpoint rows never enter the automatic-decision total');
+  assert.equal(seed.failures, 0);
+  assert.equal(seed.checkpoint.attempts, 2);
+  assert.equal(seed.checkpoint.skipped, 1);
+  const page = await listSessionDecisions('s1', { readStream: async function* () {
+    yield { ...rows[1], state: 'secret', evidence: ['secret'], requestId: 'r1' };
+  } });
+  assert.equal(page.entries[0].requestId, 'r1');
+  assert.doesNotMatch(JSON.stringify(page), /secret/);
+});
+
 test('buildProfile aggregates per kind with clean denominators', () => {
   const { decisions } = foldSession([
     rec({ id: 'g1', kind: 'gate', outcome: 'deny' }),

@@ -1,3 +1,4 @@
+import { createEvaluationTrace } from './evaluation-trace.js';
 import { taskExcerpt } from './excerpt.js';
 import { createSteerOnce } from './steer-once.js';
 import { errorReason, isProbability } from './types.js';
@@ -132,13 +133,14 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
       const taskDetail: { task?: string; turn?: number } = task ? { task } : {};
       if (Number.isSafeInteger(turn?.turn) && (turn?.turn as number) >= 0) taskDetail.turn = turn?.turn;
       const { mode, rubric, lowScoreThreshold, minConfidence: confidenceFloor, trendMinConfidence, trendRun, trendSevereRun } = await resolveSettings();
+      const trace = createEvaluationTrace(evaluate);
       let answer;
       try {
-        const result = await evaluate(scoreQuestion(output, rubric, turn?.context), { signal: turn?.signal });
+        const result = await trace.evaluate(scoreQuestion(output, rubric, turn?.context), { signal: turn?.signal });
         answer = result?.answers?.quality;
-      } catch (error) { record(turn, 'error', { ...taskDetail, reason: errorReason(error) }); return { evaluated: false, lowScore: false, steered: false }; }
+      } catch (error) { record(turn, 'error', { ...taskDetail, ...trace.detail(), reason: errorReason(error) }); return { evaluated: false, lowScore: false, steered: false }; }
       if (!answer || answer.type !== 'score' || typeof answer.score !== 'number' || !Number.isFinite(answer.score)) {
-        record(turn, 'error', { ...taskDetail, reason: 'invalid-response' });
+        record(turn, 'error', { ...taskDetail, ...trace.detail(), reason: 'invalid-response' });
         return { evaluated: false, lowScore: false, steered: false };
       }
       // A low-confidence Score is a legitimate answer, not a failure: the score
@@ -154,14 +156,17 @@ export function createSelfCheck({ evaluate, sessions, steer, settings, minConfid
       // the trend threshold) does not advance the quality-trend judgment. Flag it
       // so the decision log can mark it as low-signal noise instead of a real dip.
       if (lowScore && confidence !== undefined && !trend.confident) detail.lowConfidence = true;
-      record(turn, lowScore ? 'low' : 'ok', { score: answer.score, ...detail }, trend);
-      if (!lowScore) return { evaluated: true, lowScore: false, steered: false, score: answer.score };
+      if (!lowScore) {
+        record(turn, 'ok', { score: answer.score, ...detail, ...trace.detail(), steered: false }, trend);
+        return { evaluated: true, lowScore: false, steered: false, score: answer.score };
+      }
       const confident = confidence !== undefined && confidence >= confidenceFloor;
       // The turn budget is consumed only on a successful steer (createSteerOnce),
       // so a transient host failure does not permanently suppress this turn.
       const steered = mode === 'steer' && confident && typeof steer === 'function' && turn?.agent
         ? steerOnce.attempt(turn, () => steer(turn.agent as AgentLike, STEER_TEXT))
         : false;
+      record(turn, 'low', { score: answer.score, ...detail, ...trace.detail(), steered }, trend);
       return { evaluated: true, lowScore: true, steered, score: answer.score };
     },
   };

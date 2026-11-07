@@ -1,3 +1,4 @@
+import { createEvaluationTrace } from './evaluation-trace.js';
 import { taskExcerpt } from './excerpt.js';
 import { errorReason, isObject, isProbability } from './types.js';
 import type {
@@ -193,7 +194,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
   // prompt limit. A tool whose request fails is omitted from the merged answers,
   // which narrowTools treats as "keep" (best effort). Returns null only when
   // every tool failed, so the caller can still report a backend error.
-  const evaluateSplit = async (state: unknown, tools: readonly ToolCandidate[], signal: AbortSignal | undefined): Promise<{ model: string; answers: AnswerMap } | null> => {
+  const evaluateSplit = async (evaluate: Evaluator, state: unknown, tools: readonly ToolCandidate[], signal: AbortSignal | undefined): Promise<{ model: string; answers: AnswerMap } | null> => {
     const answers: AnswerMap = Object.create(null) as AnswerMap;
     let anyOk = false;
     for (let i = 0; i < tools.length; i += concurrency) {
@@ -247,22 +248,23 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
       // prompt exceeds a small-context limit. 'single'/'auto' first try one
       // whole-batch request; under 'auto', a context-overflow http-error flips
       // this instance to split from then on and retries the same tools split.
+      const trace = createEvaluationTrace(evaluate);
       let result: { answers: AnswerMap } | null = null;
       if (batchMode === 'split' || adaptiveSplit) {
-        result = await evaluateSplit(turn?.state, judged, turn?.signal);
-        if (!result) { record(turn, 'error', { reason: 'unreachable', mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
+        result = await evaluateSplit(trace.evaluate, turn?.state, judged, turn?.signal);
+        if (!result) { record(turn, 'error', { ...trace.detail(), reason: 'unreachable', mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
       } else {
         try {
-          const reply: EvaluateResult = await evaluate(relevanceQuestions(turn?.state, judged), { signal: turn?.signal });
+          const reply: EvaluateResult = await trace.evaluate(relevanceQuestions(turn?.state, judged), { signal: turn?.signal });
           result = reply;
         } catch (error) {
           const reason = errorReason(error);
           if (batchMode === 'auto' && reason === 'http-error') {
             adaptiveSplit = true;
-            result = await evaluateSplit(turn?.state, judged, turn?.signal);
-            if (!result) { record(turn, 'error', { reason, mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
+            result = await evaluateSplit(trace.evaluate, turn?.state, judged, turn?.signal);
+            if (!result) { record(turn, 'error', { ...trace.detail(), reason, mode: effectiveMode }); return { ...skip, keep: names, mode: effectiveMode }; }
           } else {
-            record(turn, 'error', { reason, mode: effectiveMode });
+            record(turn, 'error', { ...trace.detail(), reason, mode: effectiveMode });
             return { ...skip, keep: names, mode: effectiveMode };
           }
         }
@@ -279,7 +281,7 @@ export function createNarrowing({ evaluate, sessions, settings, coreTools = DEFA
       // recorded so the "too many candidates" reason shows the number that tripped it.
       if (overCap) { detail.reason = 'too-many-candidates'; detail.candidates = optional.length; }
       else if (dropped > 0 && !trustworthy) detail.reason = 'low-keep';
-      record(turn, dropped > 0 ? 'applied' : 'ok', detail);
+      record(turn, dropped > 0 ? 'applied' : 'ok', { ...detail, ...trace.detail() });
       return { evaluated: true, applied, keep, drop, mode: effectiveMode, overCap, trustworthy };
     },
   };

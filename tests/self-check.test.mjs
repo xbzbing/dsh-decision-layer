@@ -129,10 +129,10 @@ test('self-check logs score on evaluation and a reason on failure', async () => 
   const sessions = { snapshot: () => ({ enabled: true }), recordCheck: () => {}, log: (_id, entry) => entries.push(entry) };
   const ok = createSelfCheck({ sessions, evaluate: async () => ({ answers: { quality: { type: 'score', score: 2, confidence: 1, probabilities: { '0': 0, '1': 0, '2': 1 } } } }) });
   await ok.review(turn('great answer'));
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 2, confidence: 1, turn: 1 });
+  assert.deepEqual(withoutTiming(entries.at(-1)), { kind: 'check', steered: false, outcome: 'ok', score: 2, confidence: 1, turn: 1 });
   const offline = createSelfCheck({ sessions, evaluate: async () => { throw new Error('offline'); } });
   await offline.review(turn('answer'));
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'error', reason: 'unreachable', turn: 1 });
+  assert.deepEqual(withoutTiming(entries.at(-1)), { kind: 'check', outcome: 'error', reason: 'unreachable', turn: 1 });
 });
 
 test('the turn request rides onto every self-check log row as a bounded task excerpt', async () => {
@@ -179,7 +179,7 @@ test('fractional scores are accepted and low confidence is a valid answer, not a
   const result = await fractional.review(turn('great answer'));
   assert.equal(result.evaluated, true);
   assert.equal(result.lowScore, false, 'a fractional score above the threshold is not low');
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'ok', score: 1.43, confidence: 0.9, turn: 1 });
+  assert.deepEqual(withoutTiming(entries.at(-1)), { kind: 'check', steered: false, outcome: 'ok', score: 1.43, confidence: 0.9, turn: 1 });
   // A low-confidence score is still recorded as a real ok/low answer with its
   // confidence, never as an error; a low-confidence LOW score is additionally
   // flagged lowConfidence so the UI can mark it as ignorable noise.
@@ -187,7 +187,7 @@ test('fractional scores are accepted and low confidence is a valid answer, not a
   const lowConfResult = await lowConf.review(turn('answer'));
   assert.equal(lowConfResult.evaluated, true);
   assert.equal(lowConfResult.lowScore, true);
-  assert.deepEqual(entries.at(-1), { kind: 'check', outcome: 'low', score: 0, confidence: 0.17, lowConfidence: true, turn: 1 });
+  assert.deepEqual(withoutTiming(entries.at(-1)), { kind: 'check', steered: false, outcome: 'low', score: 0, confidence: 0.17, lowConfidence: true, turn: 1 });
 });
 
 test('a high-confidence low score is NOT flagged as noise; a passing score never is', async () => {
@@ -250,3 +250,10 @@ test('a turn with no request is skipped when the caller supplies a context', asy
   const result = await check.review({ ...turn('final answer'), context: { request: '', background: [], progress: [] } });
   assert.equal(result.evaluated, false);
 });
+
+function withoutTiming(row) {
+  const { requestId, latencyMs, ...fields } = row;
+  assert.match(requestId, /^[a-f0-9-]{36}$/);
+  assert.ok(Number.isFinite(latencyMs) && latencyMs >= 0, 'a measured decision has nonnegative wall time');
+  return fields;
+}

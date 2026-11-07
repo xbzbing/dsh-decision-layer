@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { isObject as safeObject, isProbability as probability } from './types.js';
 import type {
   CheckSettings, CompleteSettings, ConfigView, DangerRuleAdditions, FeatureKey, Features,
-  GateSettings, NarrowSettings, ResolvedConfig,
+  GateSettings, NarrowSettings, ResolvedConfig, CheckpointSettings,
 } from './types.js';
 
 export const DEFAULT_URL = 'https://api.typesafe.ai';
@@ -203,6 +203,23 @@ function validComplete(value: unknown): CompleteSettings | undefined {
   return complete;
 }
 
+function validCheckpoint(value: unknown): CheckpointSettings {
+  if (!safeObject(value) || Object.keys(value).some(key => !['enabled', 'heartbeatSteps', 'failureThreshold', 'timeoutMs'].includes(key))) {
+    throw new Error('Invalid checkpoint settings');
+  }
+  const result: CheckpointSettings = {};
+  if (value.enabled !== undefined) {
+    if (typeof value.enabled !== 'boolean') throw new Error('Invalid checkpoint settings');
+    result.enabled = value.enabled;
+  }
+  for (const [key, min, max] of [['heartbeatSteps', 2, 100], ['failureThreshold', 2, 10], ['timeoutMs', 100, 10000]] as const) {
+    if (value[key] === undefined) continue;
+    if (!Number.isSafeInteger(value[key]) || (value[key] as number) < min || (value[key] as number) > max) throw new Error('Invalid checkpoint settings');
+    result[key] = value[key] as number;
+  }
+  return result;
+}
+
 function validFeatures(value: unknown): Features | undefined {
   if (!safeObject(value)) return undefined;
   if (Object.keys(value).some(key => !FEATURE_KEYS.includes(key as FeatureKey))) throw new Error('Invalid feature settings');
@@ -233,6 +250,7 @@ function view(stored: Record<string, unknown>): ConfigView {
   if (stored.checkSettings !== undefined) result.checkSettings = validCheck(stored.checkSettings);
   if (stored.narrowSettings !== undefined) result.narrowSettings = validNarrow(stored.narrowSettings);
   if (stored.completeSettings !== undefined) result.completeSettings = validComplete(stored.completeSettings);
+  if (stored.checkpointSettings !== undefined) result.checkpointSettings = validCheckpoint(stored.checkpointSettings);
   if (stored.features !== undefined) result.features = validFeatures(stored.features);
   return result;
 }
@@ -255,11 +273,12 @@ export async function resolveConfig({ path = configPath(), env = process.env }: 
   if (stored.checkSettings !== undefined) resolved.checkSettings = validCheck(stored.checkSettings);
   if (stored.narrowSettings !== undefined) resolved.narrowSettings = validNarrow(stored.narrowSettings);
   if (stored.completeSettings !== undefined) resolved.completeSettings = validComplete(stored.completeSettings);
+  if (stored.checkpointSettings !== undefined) resolved.checkpointSettings = validCheckpoint(stored.checkpointSettings);
   if (stored.features !== undefined) resolved.features = validFeatures(stored.features);
   return resolved;
 }
 
-const SAVE_FIELDS = ['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'gateSettings', 'checkSettings', 'narrowSettings', 'completeSettings', 'features'] as const;
+const SAVE_FIELDS = ['url', 'apiKey', 'model', 'confirmHttpUrl', 'dangerRules', 'gateSettings', 'checkSettings', 'narrowSettings', 'completeSettings', 'checkpointSettings', 'features'] as const;
 const TEXT_FIELDS = ['url', 'apiKey', 'model', 'confirmHttpUrl'] as const;
 
 // Write the configuration atomically. Contract for the nested settings sections
@@ -290,6 +309,7 @@ export async function saveConfig(input: Record<string, unknown>, path: string = 
   const checkSettings = input.checkSettings === undefined ? previous.checkSettings : validCheck(input.checkSettings);
   const narrowSettings = input.narrowSettings === undefined ? previous.narrowSettings : validNarrow(input.narrowSettings);
   const completeSettings = input.completeSettings === undefined ? previous.completeSettings : validComplete(input.completeSettings);
+  const checkpointSettings = input.checkpointSettings === undefined ? previous.checkpointSettings : validCheckpoint(input.checkpointSettings);
   const features = input.features === undefined ? previous.features : validFeatures(input.features);
   const confirmed = url.startsWith('http://') && input.confirmHttpUrl !== undefined &&
     checkedUrl(safeText(input.confirmHttpUrl)) === url;
@@ -302,6 +322,7 @@ export async function saveConfig(input: Record<string, unknown>, path: string = 
   if (checkSettings !== undefined) next.checkSettings = checkSettings;
   if (narrowSettings !== undefined) next.narrowSettings = narrowSettings;
   if (completeSettings !== undefined) next.completeSettings = completeSettings;
+  if (checkpointSettings !== undefined) next.checkpointSettings = checkpointSettings;
   if (features !== undefined) next.features = features;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.${randomUUID()}.tmp`;

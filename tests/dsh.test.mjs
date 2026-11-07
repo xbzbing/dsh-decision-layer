@@ -35,12 +35,12 @@ test('v0.2 gate installs on pre-execute and denies model-rejected dangerous call
   } }));
   try {
     await apply({ tools: { register: () => {}, guard: guard => { guards.push(guard); return () => {}; } }, skills: { register: () => {} }, on: (event, listener) => {
-      assert.ok(['tools/pre-execute', 'tools/post-execute', 'agent/turn-stopping', 'agent/pre-step', 'session/event'].includes(event));
+      assert.ok(['tools/pre-execute', 'tools/post-execute', 'agent/turn-stopping', 'agent/pre-step', 'session/event', 'session/disposed'].includes(event));
       if (event === 'tools/pre-execute') listeners.push(listener);
       return () => {};
     }, effect: setup => { disposers.push(setup()); }, inject: () => {} }, { configPath: path });
     assert.equal(listeners.length, 1);
-    assert.equal(disposers.length, 6);
+    assert.equal(disposers.length, 7, 'gate, self-check, completion, narrowing, session lifecycle, checkpoint dispose, state store');
     const exec = { name: 'shell', arguments: { command: 'rm -rf /tmp/build' }, callId: 'gate-call', token: Symbol('token'),
       signal: AbortSignal.timeout(1000), agent: { session: { id: 'gate-session' } } };
     const result = await listeners[0](exec, async () => ({ kind: 'allow' }));
@@ -268,6 +268,7 @@ test('manual evaluation through registered tool does not increment automatic met
       state: 'Hello', questions: { check: { type: 'noul', instructions: 'Is this a greeting?' } },
     }, { signal: AbortSignal.timeout(1000) });
     assert.equal(answer.answers.check.noul, 0.7);
+    assert.equal('telemetry' in answer, false, 'local measurement metadata never reaches model-visible tool output');
     const metric = routes.find(route => route.path.endsWith('/metrics'));
     let serialized;
     await metric.handler({ method: 'GET', url: '/metrics?sessionId=a', headers: { host: 'localhost:3080' }, socket: { remoteAddress: '127.0.0.1' } }, {

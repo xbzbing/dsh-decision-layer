@@ -15,7 +15,13 @@ test('evaluation sends configured model and validates structured answer', async 
     assert.equal(options.redirect, 'error');
     return new Response(JSON.stringify(response), { status: 200 });
   } });
-  assert.equal((await backend.evaluate(payload)).answers.relevant.noul, 0.9);
+  const result = await backend.evaluate(payload);
+  assert.equal(result.answers.relevant.noul, 0.9);
+  assert.equal(result.telemetry.backendAttempts, 1);
+  assert.equal(result.telemetry.inputTokens, 9);
+  assert.equal(result.telemetry.outputTokens, 2);
+  assert.ok(result.telemetry.latencyMs >= 0);
+  assert.ok(result.telemetry.requestBytes > 0);
   assert.equal(called, 1);
 });
 
@@ -83,8 +89,20 @@ test('transient 429 and 529 responses retry with bounded attempts', async () => 
       if (calls === 2) return new Response('overloaded', { status: 529 });
       return new Response(JSON.stringify(response));
     }, retryDelayMs: 1 });
-  assert.equal((await backend.evaluate(payload)).answers.relevant.noul, 0.9);
+  const result = await backend.evaluate(payload);
+  assert.equal(result.answers.relevant.noul, 0.9);
+  assert.equal(result.telemetry.backendAttempts, 3);
   assert.equal(calls, 3);
+});
+
+test('partial, missing and invalid usage remains unknown while reported zero stays zero', async () => {
+  for (const usage of [undefined, {}, { input_tokens: 9 }, { input_tokens: -1, output_tokens: 0 }, { input_tokens: 0, output_tokens: 0 }]) {
+    const backend = createBackend({ config: async () => ({ url: 'https://api.typesafe.ai', apiKey: 'k', model: 'dev' }),
+      fetcher: async () => new Response(JSON.stringify({ ...response, usage })) });
+    const result = await backend.evaluate(payload);
+    assert.equal(result.telemetry.inputTokens, Number.isSafeInteger(usage?.input_tokens) && usage.input_tokens >= 0 ? usage.input_tokens : undefined);
+    assert.equal(result.telemetry.outputTokens, Number.isSafeInteger(usage?.output_tokens) && usage.output_tokens >= 0 ? usage.output_tokens : undefined);
+  }
 });
 
 test('network errors do not leak headers or remote response body', async () => {

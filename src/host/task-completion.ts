@@ -1,3 +1,4 @@
+import { createEvaluationTrace } from './evaluation-trace.js';
 import { taskExcerpt } from './excerpt.js';
 import { createSteerOnce } from './steer-once.js';
 import { errorReason, isObject, isProbability } from './types.js';
@@ -163,15 +164,16 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
         try { if (sessions.snapshot(id).enabled === false) return { ...skip }; }
         catch { return { ...skip }; }
       }
+      const trace = createEvaluationTrace(evaluate);
       let answers: Record<string, unknown> | undefined;
       try {
-        const result = await evaluate(completionQuestions(conditions, evidence, output, turn?.context), { signal: turn?.signal });
+        const result = await trace.evaluate(completionQuestions(conditions, evidence, output, turn?.context), { signal: turn?.signal });
         answers = isObject(result?.answers) ? result.answers : undefined;
       } catch (error) {
-        record(turn, 'error', { ...taskDetail, reason: errorReason(error) });
+        record(turn, 'error', { ...taskDetail, ...trace.detail(), reason: errorReason(error) });
         return { ...skip };
       }
-      if (!answers) { record(turn, 'error', { ...taskDetail, reason: 'invalid-response' }); return { ...skip }; }
+      if (!answers) { record(turn, 'error', { ...taskDetail, ...trace.detail(), reason: 'invalid-response' }); return { ...skip }; }
       let satisfied = 0, unsatisfied = 0, insufficient = 0;
       // Track the minimum confidence over the `unsatisfied` verdicts only: a steer
       // fires on a confident unsatisfied finding, so a low-confidence satisfied /
@@ -199,7 +201,7 @@ export function createTaskCompletion({ evaluate, sessions, steer, settings, minC
         ? steerOnce.attempt(turn, () => steer(turn.agent as AgentLike, STEER_TEXT))
         : false;
       if (steered) detail.steered = true;
-      record(turn, outcome, detail);
+      record(turn, outcome, { ...detail, ...trace.detail(), steered });
       return { evaluated: true, steered, satisfied, unsatisfied, insufficient };
     },
   };

@@ -116,6 +116,17 @@ export function AnalysisView({ sessionId, t }: Props) {
   const profile = analysis?.profile;
   const backtest = analysis?.trendBacktest;
   const annotations = analysis?.annotations;
+  const checkpoint = profile?.checkpoint;
+  const telemetry = profile?.telemetry;
+  // Counts evaluated rows, not requests: one narrowing decision may call the
+  // backend more than once. Skipped checkpoints are excluded from coverage.
+  const measuredTotal = profile ? profile.gate.attempts + profile.check.attempts
+    + profile.narrow.attempts + profile.complete.attempts + (checkpoint?.attempts ?? 0) : 0;
+  const latency = (value: number | null | undefined) => typeof value === 'number' && Number.isFinite(value)
+    ? t('telemetryMs', { value: Math.round(value * 10) / 10 }) : t('telemetryUnknown');
+  const transport = telemetry && typeof telemetry.transportMeasured === 'number' && telemetry.transportMeasured > 0
+    ? `${telemetry.backendAttempts} · ${t('telemetryMeasuredCount', { count: telemetry.transportMeasured })}`
+    : t('telemetryUnknown');
   // Total low self-check scores (including low-confidence noise) across the whole
   // persisted log, used to label the "low only" filter. The filtered page's own
   // `total` would be circular.
@@ -184,6 +195,30 @@ export function AnalysisView({ sessionId, t }: Props) {
                   <Stat label={t('completeUnsatisfied')} value={profile.complete.unsatisfied} pct={share(profile.complete.unsatisfied, completeTotal)} tone="warn" />
                   <Stat label={t('completeInsufficient')} value={profile.complete.insufficient} pct={share(profile.complete.insufficient, completeTotal)} tone="muted" />
                 </div>
+              </article>}
+              {checkpoint && checkpoint.attempts + checkpoint.skipped > 0 && <article className="decision-card">
+                <CardHead title={t('cardCheckpoint')} total={checkpoint.attempts} unit={t('cardTimes')} />
+                <div className="decision-card-stats">
+                  <Stat label={t('checkpointOk')} value={Math.max(0, checkpoint.attempts - checkpoint.concern - checkpoint.uncertain - checkpoint.error)} />
+                  <Stat label={t('checkpointConcern')} value={checkpoint.concern} tone="warn" />
+                  <Stat label={t('checkpointUncertain')} value={checkpoint.uncertain} tone="muted" />
+                  <Stat label={t('logEvalFailed')} value={checkpoint.error} tone="muted" />
+                  <Stat label={t('checkpointSkipped')} value={checkpoint.skipped} tone="muted" />
+                </div>
+                <p className="decision-muted decision-analysis-note">{t('checkpointProfileNote')}</p>
+              </article>}
+              {telemetry && (telemetry.measured + telemetry.usageMeasured + (telemetry.transportMeasured ?? 0) > 0) && <article className="decision-card">
+                <CardHead title={t('telemetryTitle')} total={telemetry.measured} unit={t('cardTimes')} />
+                <div className="decision-card-stats">
+                  <Stat label={t('telemetryCoverage')} value={measuredTotal > 0 ? `${telemetry.measured}/${measuredTotal}` : t('telemetryUnknown')} />
+                  <Stat label={t('telemetryUsageCoverage')} value={measuredTotal > 0 ? `${telemetry.usageMeasured}/${measuredTotal}` : t('telemetryUnknown')} />
+                  <Stat label={t('telemetryMeanLatency')} value={latency(telemetry.measured > 0 ? telemetry.latencyMsSum / telemetry.measured : null)} />
+                  <Stat label={t('telemetryP95Latency')} value={latency(telemetry.measured > 0 ? telemetry.latencyMsP95 : null)} />
+                  <Stat label={t('telemetryInputTokens')} value={telemetry.usageMeasured > 0 ? telemetry.inputTokens : t('telemetryUnknown')} />
+                  <Stat label={t('telemetryOutputTokens')} value={telemetry.usageMeasured > 0 ? telemetry.outputTokens : t('telemetryUnknown')} />
+                  <Stat label={t('telemetryBackendAttempts')} value={transport} />
+                </div>
+                <p className="decision-muted decision-analysis-note">{t('telemetryNote')}</p>
               </article>}
             </div>
           </section>}

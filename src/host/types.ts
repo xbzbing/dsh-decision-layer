@@ -44,10 +44,21 @@ export type ScoreAnswer = ScoredAnswer & { type: 'score'; score: number };
 export type ChoiceAnswer = ScoredAnswer & { type: 'choice'; choice: string };
 export type Answer = NoulAnswer | ScoreAnswer | ChoiceAnswer;
 export type AnswerMap = Record<string, Answer>;
+export type EvaluationTelemetry = {
+  requestId: string;
+  latencyMs: number;
+  requestBytes?: number;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  backendAttempts?: number;
+};
 export type EvaluateResult = {
   model: string;
   answers: AnswerMap;
-  usage?: { input_tokens: number; output_tokens: number };
+  usage?: { input_tokens?: number; output_tokens?: number };
+  /** Local measurement only; never part of the backend wire request. */
+  telemetry?: EvaluationTelemetry;
 };
 export type Evaluator = (input: EvaluateInput, options?: { signal?: AbortSignal }) => Promise<EvaluateResult>;
 
@@ -89,6 +100,15 @@ export type NarrowSettings = {
   maxCandidates?: number;
   batchMode?: BatchMode;
 };
+export type CheckpointSettings = {
+  enabled?: boolean;
+  heartbeatSteps?: number;
+  failureThreshold?: number;
+  timeoutMs?: number;
+};
+export type CheckpointTrigger = 'heartbeat' | 'unresolved_failure' | 'verification_after_change';
+export type CheckpointOutcome = 'ok' | 'concern' | 'uncertain' | 'error' | 'skipped';
+export type CheckpointCounters = SessionCounters & { concern: number; uncertain: number; skipped: number };
 export type CompleteSettings = { mode?: CheckMode; minConditions?: number; minConfidence?: number };
 export type Features = Partial<Record<FeatureKey, boolean>>;
 
@@ -106,6 +126,7 @@ export type ResolvedConfig = {
   checkSettings?: CheckSettings;
   narrowSettings?: NarrowSettings;
   completeSettings?: CompleteSettings;
+  checkpointSettings?: CheckpointSettings;
   features?: Features;
 };
 
@@ -120,6 +141,7 @@ export type ConfigView = {
   checkSettings?: CheckSettings;
   narrowSettings?: NarrowSettings;
   completeSettings?: CompleteSettings;
+  checkpointSettings?: CheckpointSettings;
   features?: Features;
 };
 
@@ -133,7 +155,7 @@ export type TrendConfig = {
 
 // ── Session metrics and log rows ────────────────────────────────────────────
 
-export type LogKind = 'gate' | 'check' | 'narrow' | 'complete';
+export type LogKind = 'gate' | 'check' | 'narrow' | 'complete' | 'checkpoint';
 
 /**
  * One decision-log row. Fields are optional because rows are also read back
@@ -169,6 +191,17 @@ export type LogRow = {
   steered?: boolean;
   lowConfidence?: boolean;
   tools?: string[];
+  trigger?: CheckpointTrigger;
+  throughSeq?: number;
+  evidenceCount?: number;
+  requestId?: string;
+  latencyMs?: number;
+  requestBytes?: number;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  backendAttempts?: number;
+  callId?: string;
 };
 
 /** The research-log sink record: the panel row plus its session tag. */
@@ -199,6 +232,7 @@ export type SessionState = {
   check: CheckCounters;
   narrow: NarrowCounters;
   complete: CompleteCounters;
+  checkpoint: CheckpointCounters;
   log: LogRow[];
 };
 
@@ -212,6 +246,7 @@ export type SessionSnapshot = {
   check?: { attempts: number; failures: number; low: number; trend: { run: number; severity: Severity } };
   narrow?: NarrowCounters;
   complete?: CompleteCounters;
+  checkpoint?: CheckpointCounters;
   log?: LogRow[];
 };
 
@@ -230,6 +265,7 @@ export type SessionsFace = {
   recordCheck?: (id: string, outcome: string, trend?: Record<string, unknown>) => void;
   recordNarrow?: (id: string, outcome: string, dropped: number, applied: boolean) => void;
   recordComplete?: (id: string, outcome: string, detail?: Record<string, unknown>) => void;
+  recordCheckpoint?: (id: string, outcome: CheckpointOutcome) => void;
   ensureLoaded?: (id: string) => Promise<unknown>;
   setEnabled?: (id: string, enabled: boolean) => void;
 };

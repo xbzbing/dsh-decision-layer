@@ -28,6 +28,38 @@ test('reading unknown sessions does not allocate, and a full store evicts the ol
   assert.equal(sessions.snapshot('four').gate.deny, 1, 'a new session is admitted by evicting the oldest');
 });
 
+test('checkpoint observations keep skips separate from attempts and never advance quality trend', () => {
+  const sessions = createSessionState();
+  for (const outcome of ['skipped', 'ok', 'uncertain', 'concern', 'error']) sessions.recordCheckpoint('s', outcome);
+  const state = sessions.snapshot('s');
+  assert.deepEqual(state.checkpoint, { attempts: 4, failures: 1, concern: 1, uncertain: 1, skipped: 1 });
+  assert.equal(state.attempts, 0, 'read-only observations never enter the automatic-decision total');
+  assert.equal(state.failures, 0);
+  assert.equal(state.hasAutomaticDecisions, false);
+  assert.equal(state.check, undefined);
+  assert.throws(() => sessions.recordCheckpoint('s', 'low'), /checkpoint/i);
+});
+
+test('checkpoint logs whitelist metadata and never persist full process evidence', () => {
+  const sink = [];
+  const sessions = createSessionState({ onLog: entry => sink.push(entry) });
+  sessions.log('s', { kind: 'checkpoint', outcome: 'concern', trigger: 'unresolved_failure', mode: 'observe',
+    task: 'token=hidden', throughSeq: 7, evidenceCount: 3, requestId: 'request-1', callId: 'call-1', latencyMs: 12.5,
+    inputTokens: 0, outputTokens: 2, requestBytes: 800, backendAttempts: 1, model: 'dev',
+    state: { secret: 'do-not-store' }, evidence: ['do-not-store'], result: 'do-not-store' });
+  const row = sessions.snapshot('s').log[0];
+  assert.equal(row.trigger, 'unresolved_failure');
+  assert.equal(row.inputTokens, 0);
+  assert.equal(row.requestId, 'request-1');
+  assert.equal(row.evidenceCount, 3);
+  assert.equal(row.latencyMs, 12.5);
+  assert.doesNotMatch(JSON.stringify(sink), /do-not-store|hidden/);
+  sessions.log('s', { kind: 'checkpoint', outcome: 'skipped', trigger: 'invalid', throughSeq: -1, latencyMs: NaN, inputTokens: -1 });
+  const malformed = sessions.snapshot('s').log.at(-1);
+  assert.equal(malformed.trigger, undefined);
+  assert.equal(malformed.inputTokens, undefined);
+});
+
 test('self-check records low scores and failures separately from the gate', () => {
   const sessions = createSessionState();
   sessions.recordCheck('one', 'ok');

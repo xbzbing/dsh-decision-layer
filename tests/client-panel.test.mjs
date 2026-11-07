@@ -946,8 +946,10 @@ test('the posted advanced body is accepted by the real config store and round-tr
   };
   const view = render(React.createElement(ConfigForm, { t: translate }));
   fireEvent.change(await view.findByLabelText(/^严重连续次数/), { target: { value: '7' } });
+  fireEvent.click(view.getByRole('checkbox', { name: '启用只读过程检查' }));
   fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
   await waitFor(() => assert.equal(savedBody?.checkSettings?.trendSevereRun, 7));
+  await waitFor(() => assert.equal(savedBody?.checkpointSettings?.enabled, true));
 
   const dir = await mkdtemp(join(tmpdir(), 'decision-roundtrip-'));
   try {
@@ -960,6 +962,9 @@ test('the posted advanced body is accepted by the real config store and round-tr
     assert.equal(persisted.checkSettings.rubric.length, 3);
     assert.equal(persisted.narrowSettings.batchMode, 'auto');
     assert.equal(persisted.completeSettings.minConfidence, 0.4);
+    const { DEFAULT_CHECKPOINT_SETTINGS } = await import('../lib/host/checkpoint-review.js');
+    assert.deepEqual(persisted.checkpointSettings, { ...DEFAULT_CHECKPOINT_SETTINGS, enabled: true },
+      'the client defaults must equal the server defaults, not a drifting copy');
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -1014,4 +1019,224 @@ test('a host without the projection reader keeps the trigger visible', async () 
   panelFetch();
   const view = render(React.createElement(Panel, { sessionId: 'legacy', t: translate }));
   assert.ok(view.getByRole('button', { name: /决策层/ }), 'absence of the capability must not remove the entry point');
+});
+
+const baseConfig = { url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://configured.test' };
+const emptyProfile = () => ({
+  gate: { attempts: 0, allow: 0, ask: 0, deny: 0, error: 0 },
+  check: { attempts: 0, ok: 0, low: 0, error: 0, scoreSum: 0, scoreCount: 0, confidence: {} },
+  narrow: { attempts: 0, applied: 0, error: 0, droppedSum: 0, tooManyCandidates: 0 },
+  complete: { attempts: 0, satisfied: 0, unsatisfied: 0, insufficient: 0, error: 0, steered: 0 },
+});
+
+function configFixture(initial = {}) {
+  let config = { ...baseConfig, ...initial };
+  const writes = [];
+  globalThis.fetch = async (url, init) => {
+    if (!String(url).endsWith('/config')) throw new Error(`Unexpected URL ${url}`);
+    if (init?.method === 'PUT') {
+      const body = JSON.parse(init.body);
+      writes.push(body);
+      config = { ...config, ...body };
+    }
+    return envelope(config);
+  };
+  return writes;
+}
+
+const openAdvanced = view => fireEvent.click(view.getByText('高级配置'));
+
+test('checkpoint settings default off and disclose extra process evidence before opt-in', async () => {
+  const writes = configFixture();
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  await waitFor(() => assert.equal(view.getByLabelText('服务地址').disabled, false));
+  openAdvanced(view);
+  const toggle = view.getByRole('checkbox', { name: '启用只读过程检查' });
+  assert.equal(toggle.checked, false);
+  assert.equal(view.getByLabelText('心跳步数', { exact: false }).value, '6');
+  assert.equal(view.getByLabelText('连续失败阈值', { exact: false }).value, '3');
+  assert.equal(view.getByLabelText('过程检查超时（毫秒）', { exact: false }).value, '1500');
+  assert.match(view.getByText(/有界的脱敏过程证据/).textContent, /当前要求/);
+  assert.match(view.getByText(/有界的脱敏过程证据/).textContent, /已配置.*端点/);
+  assert.match(view.getByText(/有界的脱敏过程证据/).textContent, /不.*提示.*不.*限制/);
+  assert.equal(writes.length, 0, 'reading defaults never implicitly enables or saves');
+  fireEvent.click(toggle);
+  fireEvent.change(view.getByLabelText('心跳步数', { exact: false }), { target: { value: '12' } });
+  fireEvent.change(view.getByLabelText('连续失败阈值', { exact: false }), { target: { value: '4' } });
+  fireEvent.change(view.getByLabelText('过程检查超时（毫秒）', { exact: false }), { target: { value: '800' } });
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.deepEqual(writes[0]?.checkpointSettings, { enabled: true, heartbeatSteps: 12, failureThreshold: 4, timeoutMs: 800 }));
+  assert.equal(writes[0].features, undefined, 'checkpoint is a separate settings section');
+  await waitFor(() => assert.equal(view.getByRole('button', { name: '保存高级配置' }).disabled, true));
+  fireEvent.click(view.getByRole('checkbox', { name: '启用只读过程检查' }));
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.deepEqual(writes[1]?.checkpointSettings, { enabled: false, heartbeatSteps: 12, failureThreshold: 4, timeoutMs: 800 }));
+  await waitFor(() => assert.equal(view.getByRole('checkbox', { name: '启用只读过程检查' }).checked, false));
+});
+
+test('other advanced and backend saves preserve the checkpoint section including unedited fields', async () => {
+  const checkpointSettings = { enabled: true, heartbeatSteps: 22, failureThreshold: 5, timeoutMs: 950 };
+  const writes = configFixture({ checkpointSettings });
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  await waitFor(() => assert.equal(view.getByLabelText('服务地址').disabled, false));
+  openAdvanced(view);
+  assert.equal(view.getByRole('checkbox', { name: '启用只读过程检查' }).checked, true);
+  assert.equal(view.getByLabelText('心跳步数', { exact: false }).value, '22');
+  fireEvent.click(view.getByRole('checkbox', { name: '得分偏低时自动补一轮' }));
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.deepEqual(writes[0]?.checkpointSettings, checkpointSettings));
+  await waitFor(() => assert.equal(view.getByRole('button', { name: '保存高级配置' }).disabled, true));
+  fireEvent.change(view.getByLabelText('模型'), { target: { value: 'changed-model' } });
+  fireEvent.click(view.getByRole('button', { name: '保存配置' }));
+  await waitFor(() => assert.equal(writes[1]?.model, 'changed-model'));
+  assert.equal(writes[1].checkpointSettings, undefined, 'backend-only save must leave the stored section alone');
+  await waitFor(() => assert.equal(view.getByRole('button', { name: '保存高级配置' }).disabled, true));
+  fireEvent.click(view.getByRole('checkbox', { name: '有未满足条件时自动补一轮' }));
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.deepEqual(writes[2]?.checkpointSettings, checkpointSettings));
+});
+
+test('checkpoint numeric controls carry server bounds and blank drafts use defaults', async () => {
+  const writes = configFixture({ checkpointSettings: { enabled: true, heartbeatSteps: 90, failureThreshold: 9, timeoutMs: 8000 } });
+  const view = render(React.createElement(ConfigForm, { t: translate }));
+  await waitFor(() => assert.equal(view.getByLabelText('服务地址').disabled, false));
+  openAdvanced(view);
+  for (const [label, min, max] of [['心跳步数', '2', '100'], ['连续失败阈值', '2', '10'], ['过程检查超时（毫秒）', '100', '10000']]) {
+    const input = view.getByLabelText(label, { exact: false });
+    assert.equal(input.min, min);
+    assert.equal(input.max, max);
+    fireEvent.change(input, { target: { value: '' } });
+  }
+  fireEvent.click(view.getByRole('button', { name: '保存高级配置' }));
+  await waitFor(() => assert.deepEqual(writes[0]?.checkpointSettings, { enabled: true, heartbeatSteps: 6, failureThreshold: 3, timeoutMs: 1500 }));
+});
+
+function analysisFixture(profile, entries = [], totalDecisions = entries.length) {
+  const writes = [];
+  globalThis.fetch = async (url, init) => {
+    const path = String(url);
+    if (path.includes('/session?')) return envelope({ enabled: true });
+    if (path.includes('/logs?')) return envelope({ totalDecisions, profile, annotations: { rated: 0, good: 0, bad: 0, unsure: 0 }, ratings: {}, trendBacktest: { warnHits: 0, severeHits: 0, maxRun: 0 } });
+    if (path.includes('/logrows?')) return envelope({ entries, total: entries.length, page: 1, pageSize: 100, pages: 1 });
+    if (path.endsWith('/annotate') && init?.method === 'POST') { writes.push(JSON.parse(init.body)); return envelope({ ok: true }); }
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  return writes;
+}
+
+test('checkpoint log uses fixed read-only outcomes and coordinates, supports annotation, and hides raw payloads', async () => {
+  const entries = [
+    ['ok', 'heartbeat'],
+    ['concern', 'unresolved_failure'],
+    ['uncertain', 'verification_after_change'],
+    ['error', 'heartbeat'],
+    ['skipped', 'heartbeat'],
+    ['concern', 'heartbeat'],
+  ].map(([outcome, trigger], index) => ({ id: `cp-${index}`, at: 1700000000000 + index, kind: 'checkpoint', outcome, trigger, mode: 'observe', turn: 2, step: index + 1, throughSeq: 40 + index, evidenceCount: 3, lowConfidence: index === 5,
+    reason: 'UNTRUSTED_DIAGNOSIS', state: { secret: 'RAW_STATE' }, evidence: 'RAW_EVIDENCE', result: 'RAW_RESULT' }));
+  const profile = { ...emptyProfile(), checkpoint: { attempts: 5, concern: 1, uncertain: 2, error: 1, skipped: 1 } };
+  const writes = analysisFixture(profile, entries);
+  const view = render(React.createElement(AnalysisView, { sessionId: 'checkpoint-log', t: translate }));
+  await waitFor(() => assert.equal(view.container.querySelectorAll('.decision-log-item').length, 6));
+  const rows = [...view.container.querySelectorAll('.decision-log-item')];
+  assert.equal(rows.length, 6);
+  const expectedResults = ['观察未见疑点', '观察到待复核信号', '判断不确定', '评估失败', '已跳过', '判断不确定'];
+  for (const [index, row] of rows.entries()) {
+    assert.match(row.textContent, new RegExp(expectedResults[index]));
+    assert.match(row.textContent, /过程检查/);
+    assert.match(row.textContent, /只读/);
+    assert.match(row.textContent, new RegExp(`回合 2 · 第 ${index + 1} 步`));
+    assert.match(row.textContent, new RegExp(`证据截至 #${40 + index}`));
+    assert.doesNotMatch(row.textContent, /RAW_|UNTRUSTED_DIAGNOSIS|通过/);
+  }
+  assert.match(rows[0].textContent, /心跳检查/);
+  assert.match(rows[1].textContent, /未解决失败/);
+  assert.match(rows[2].textContent, /修改后验证/);
+  assert.match(rows[5].textContent, /判断不确定/);
+  assert.ok(rows[5].classList.contains('decision-log-muted'), 'low-confidence concern is never highlighted as certain concern');
+  fireEvent.click(rows[1].querySelector('button[aria-label="判对了"]'));
+  await waitFor(() => assert.deepEqual(writes[0], { sessionId: 'checkpoint-log', target: 'cp-1', rating: 'good' }));
+});
+
+test('analysis retains old backend compatibility and shows measured zero separately from unknown', async () => {
+  const oldProfile = emptyProfile();
+  oldProfile.gate.attempts = 1;
+  analysisFixture(oldProfile, [], 1);
+  const legacy = render(React.createElement(AnalysisView, { sessionId: 'legacy-profile', t: translate }));
+  await legacy.findByText('过程画像');
+  assert.equal(legacy.queryByText('过程检查'), null);
+  assert.equal(legacy.queryByText('决策测量'), null);
+  legacy.unmount();
+  analysisFixture({ ...emptyProfile(), checkpoint: { attempts: 0, concern: 0, uncertain: 0, error: 0, skipped: 1 } }, [], 1);
+  const skippedOnly = render(React.createElement(AnalysisView, { sessionId: 'skipped-only', t: translate }));
+  await skippedOnly.findByText('过程检查');
+  assert.equal(skippedOnly.queryByText('本会话尚无决策记录。'), null, 'skip-only observations remain visible without inflating attempts');
+  skippedOnly.unmount();
+  const profile = { ...emptyProfile(), checkpoint: { attempts: 2, concern: 1, uncertain: 1, error: 0, skipped: 4 }, telemetry: { measured: 1, latencyMsSum: 0, latencyMsP50: 0, latencyMsP95: 0, inputTokens: 0, outputTokens: 0, usageMeasured: 1, backendAttempts: 0, transportMeasured: 1 } };
+  analysisFixture(profile, [], 6);
+  const measured = render(React.createElement(AnalysisView, { sessionId: 'measured', t: translate }));
+  const card = (await measured.findByText('决策测量')).closest('article');
+  assert.match(card.textContent, /1\/2/);
+  assert.match(card.textContent, /0 ms/);
+  assert.match(card.textContent, /0.*已测 1 次/);
+  assert.doesNotMatch(card.textContent, /后端请求次数.*未知/);
+  const checkpoint = measured.getByText('过程检查').closest('article');
+  assert.match(checkpoint.textContent, /跳过.*4|4.*跳过/);
+  measured.unmount();
+  analysisFixture({ ...profile, telemetry: { ...profile.telemetry, measured: 1, usageMeasured: 0, latencyMsSum: 0, latencyMsP50: 0, latencyMsP95: 0, inputTokens: 0, outputTokens: 0, transportMeasured: 0, backendAttempts: 0 } }, [], 6);
+  const unknown = render(React.createElement(AnalysisView, { sessionId: 'unknown', t: translate }));
+  const unknownCard = (await unknown.findByText('决策测量')).closest('article');
+  assert.match(unknownCard.textContent, /未知/);
+  assert.match(unknownCard.textContent, /0 ms/, 'a measured zero latency is not unknown');
+  const backendStat = [...unknownCard.querySelectorAll('.decision-stat')].find(node => node.textContent.includes('后端请求次数'));
+  assert.ok(backendStat);
+  assert.match(backendStat.textContent, /未知/);
+  unknown.unmount();
+  // With no measurement at all the card is pure noise and must not render.
+  analysisFixture({ ...profile, telemetry: { measured: 0, usageMeasured: 0, latencyMsSum: 0, latencyMsP50: null, latencyMsP95: null, inputTokens: 0, outputTokens: 0, transportMeasured: 0, backendAttempts: 0 } }, [], 6);
+  const unmeasured = render(React.createElement(AnalysisView, { sessionId: 'unmeasured', t: translate }));
+  await unmeasured.findByText('过程画像');
+  assert.equal(unmeasured.queryByText('决策测量'), null);
+  unknown.unmount();
+  analysisFixture({ ...profile, telemetry: { ...profile.telemetry, transportMeasured: undefined, backendAttempts: 0 } }, [], 6);
+  const legacyTelemetry = render(React.createElement(AnalysisView, { sessionId: 'legacy-telemetry', t: translate }));
+  const legacyCard = (await legacyTelemetry.findByText('决策测量')).closest('article');
+  const legacyBackendStat = [...legacyCard.querySelectorAll('.decision-stat')].find(node => node.textContent.includes('后端请求次数'));
+  assert.ok(legacyBackendStat);
+  assert.match(legacyBackendStat.textContent, /未知/);
+});
+
+test('a checkpoint-only session keeps the automatic-decision total at zero and still shows its log', async () => {
+  globalThis.fetch = async url => {
+    const s = String(url);
+    if (s.includes('/session?')) return envelope({ enabled: true });
+    if (s.includes('/metrics?')) return envelope({ hasAutomaticDecisions: false, attempts: 0, failures: 0,
+      checkpoint: { attempts: 1, failures: 0, concern: 1, uncertain: 0, skipped: 0 } });
+    if (s.includes('/log?')) return envelope({ entries: [
+      { id: 'cp-only-1', at: 1_700_000_000_000, kind: 'checkpoint', outcome: 'concern', trigger: 'heartbeat', mode: 'observe', turn: 1, step: 2 },
+    ] });
+    if (s.endsWith('/config')) return envelope({ url: '', model: '', apiKeySet: false, httpApprovedUrl: '', effectiveUrl: 'https://api.typesafe.ai' });
+    throw new Error(`Unexpected URL ${url}`);
+  };
+  const view = render(React.createElement(Panel, { sessionId: 'cp-only', t: translate }));
+  const trigger = view.getByRole('button', { name: '决策层' });
+  assert.match(trigger.textContent, /决策 0/);
+  fireEvent.click(trigger);
+  await view.findByText('尚无自动裁决。手动裁决不计入这里。');
+  await view.findByText(/另有 1 次只读过程检查/);
+  await view.findByText(/观察到待复核信号/);
+  assert.doesNotMatch(view.getByRole('dialog', { hidden: true }).textContent, /RAW_|evidence/);
+});
+
+test('a canceled checkpoint reads as discarded, never as an evaluation failure', async () => {
+  const entries = [{ id: 'cp-cancel', at: 1_700_000_000_000, kind: 'checkpoint', outcome: 'skipped', reason: 'canceled',
+    trigger: 'heartbeat', mode: 'observe', turn: 1, step: 3, throughSeq: 9, evidenceCount: 1 }];
+  analysisFixture({ ...emptyProfile(), checkpoint: { attempts: 0, concern: 0, uncertain: 0, error: 0, skipped: 1 } }, entries, 1);
+  const view = render(React.createElement(AnalysisView, { sessionId: 'cp-canceled', t: translate }));
+  await waitFor(() => assert.equal(view.container.querySelectorAll('.decision-log-item').length, 1));
+  const row = view.container.querySelector('.decision-log-item');
+  assert.match(row.textContent, /已跳过/);
+  assert.match(row.textContent, /已取消 \/ 结果已失效/);
+  assert.doesNotMatch(row.textContent, /评估失败/);
+  assert.ok(row.classList.contains('decision-log-muted'));
 });

@@ -2,6 +2,7 @@ import { createReadableStream } from './log-read.js';
 import { advanceRun, severityOf } from './quality-trend.js';
 import { narrowApplied } from './narrowing.js';
 import { isObject } from './types.js';
+import { sanitizeLogRow } from './log-row.js';
 import type { LogRow, SessionSeed, TrendConfig } from './types.js';
 
 // Offline analysis over the persisted decision JSONL logs. Pure aggregation:
@@ -16,7 +17,7 @@ export type PersistedRecord = Record<string, unknown>;
 export type Annotation = { rating?: unknown; at: number };
 export type TrendBacktest = { warnHits: number; severeHits: number; maxRun: number };
 
-const DECISION_KINDS = new Set<string>(['gate', 'check', 'narrow', 'complete']);
+const DECISION_KINDS = new Set<string>(['gate', 'check', 'narrow', 'complete', 'checkpoint']);
 
 const atOf = (record: PersistedRecord): number => {
   const value = record.at;
@@ -40,7 +41,8 @@ export function foldSession(records: Iterable<unknown>): { decisions: Map<string
       continue;
     }
     if (DECISION_KINDS.has(record.kind as string) && typeof record.id === 'string') {
-      decisions.set(record.id, record);
+      const row = sanitizeLogRow(record);
+      if (row) decisions.set(record.id, row as PersistedRecord);
     }
   }
   return { decisions, annotations };
@@ -60,6 +62,9 @@ export type Profile = {
   check: { attempts: number; ok: number; low: number; error: number; scoreSum: number; scoreCount: number; confidence: { lt40: number; lt60: number; lt80: number; gte80: number } };
   narrow: { attempts: number; applied: number; error: number; droppedSum: number; tooManyCandidates: number };
   complete: { attempts: number; satisfied: number; unsatisfied: number; insufficient: number; error: number; steered: number };
+  checkpoint: { attempts: number; concern: number; uncertain: number; error: number; skipped: number };
+  telemetry: { measured: number; latencyMsSum: number; latencyMsP50: number | null; latencyMsP95: number | null;
+    inputTokens: number; outputTokens: number; usageMeasured: number; backendAttempts: number; transportMeasured: number };
 };
 
 function emptyProfile(): Profile {
@@ -68,6 +73,9 @@ function emptyProfile(): Profile {
     check: { attempts: 0, ok: 0, low: 0, error: 0, scoreSum: 0, scoreCount: 0, confidence: { lt40: 0, lt60: 0, lt80: 0, gte80: 0 } },
     narrow: { attempts: 0, applied: 0, error: 0, droppedSum: 0, tooManyCandidates: 0 },
     complete: { attempts: 0, satisfied: 0, unsatisfied: 0, insufficient: 0, error: 0, steered: 0 },
+    checkpoint: { attempts: 0, concern: 0, uncertain: 0, error: 0, skipped: 0 },
+    telemetry: { measured: 0, latencyMsSum: 0, latencyMsP50: null, latencyMsP95: null,
+      inputTokens: 0, outputTokens: 0, usageMeasured: 0, backendAttempts: 0, transportMeasured: 0 },
   };
 }
 
@@ -77,8 +85,26 @@ function emptyProfile(): Profile {
 export function buildProfile(decisions: ReadonlyMap<string, PersistedRecord> | Iterable<PersistedRecord>): Profile {
   const profile = emptyProfile();
   const rows = decisions instanceof Map ? [...decisions.values()] : [...decisions];
+  const latencies: number[] = [];
   for (const record of rows) {
     const kind = record.kind;
+    if (DECISION_KINDS.has(kind as string) && record.outcome !== 'skipped') {
+      if (typeof record.latencyMs === 'number' && Number.isFinite(record.latencyMs) && record.latencyMs >= 0) {
+        profile.telemetry.measured++;
+        profile.telemetry.latencyMsSum += record.latencyMs;
+        latencies.push(record.latencyMs);
+      }
+      if (Number.isSafeInteger(record.inputTokens) && (record.inputTokens as number) >= 0 &&
+          Number.isSafeInteger(record.outputTokens) && (record.outputTokens as number) >= 0) {
+        profile.telemetry.usageMeasured++;
+        profile.telemetry.inputTokens += record.inputTokens as number;
+        profile.telemetry.outputTokens += record.outputTokens as number;
+      }
+      if (Number.isSafeInteger(record.backendAttempts) && (record.backendAttempts as number) >= 0) {
+        profile.telemetry.transportMeasured++;
+        profile.telemetry.backendAttempts += record.backendAttempts as number;
+      }
+    }
     switch (kind) {
       case 'gate': {
         const bucket = profile.gate;
@@ -119,8 +145,24 @@ export function buildProfile(decisions: ReadonlyMap<string, PersistedRecord> | I
         if (record.steered === true) bucket.steered++;
         break;
       }
+      case 'checkpoint': {
+        const bucket = profile.checkpoint;
+        if (record.outcome === 'skipped') bucket.skipped++;
+        else {
+          bucket.attempts++;
+          if (record.outcome === 'error') bucket.error++;
+          else if (record.outcome === 'concern') bucket.concern++;
+          else if (record.outcome === 'uncertain') bucket.uncertain++;
+        }
+        break;
+      }
       default: break;
     }
+  }
+  latencies.sort((a, b) => a - b);
+  if (latencies.length) {
+    profile.telemetry.latencyMsP50 = latencies[Math.ceil(latencies.length * 0.5) - 1]!;
+    profile.telemetry.latencyMsP95 = latencies[Math.ceil(latencies.length * 0.95) - 1]!;
   }
   return profile;
 }
@@ -219,16 +261,28 @@ export function buildSeed(decisions: ReadonlyMap<string, PersistedRecord>, { max
     check: { attempts: 0, failures: 0, low: 0, run: 0, severity: 'normal' },
     narrow: { attempts: 0, failures: 0, applied: 0, dropped: 0 },
     complete: { attempts: 0, failures: 0, unsatisfied: 0, satisfied: 0, insufficient: 0, steered: 0 },
+    checkpoint: { attempts: 0, failures: 0, concern: 0, uncertain: 0, skipped: 0 },
     log: [],
   };
   const minConfidence = typeof trendConfig.trendMinConfidence === 'number' ? trendConfig.trendMinConfidence : 0.6;
   const thresholds = { trendRun: trendConfig.trendRun ?? 3, trendSevereRun: trendConfig.trendSevereRun ?? 5 };
   let run = 0;
   for (const record of ordered) {
-    seed.attempts++;
+    // Checkpoint rows are observations, not automatic interventions: they keep
+    // their own counters and never enter the aggregate the dock shows.
+    const checkpoint = record.kind === 'checkpoint';
+    if (!checkpoint && record.outcome !== 'skipped') seed.attempts++;
     const isError = record.outcome === 'error';
-    if (isError) seed.failures++;
-    if (record.kind === 'gate') {
+    if (!checkpoint && isError) seed.failures++;
+    if (checkpoint) {
+      if (record.outcome === 'skipped') seed.checkpoint.skipped++;
+      else {
+        seed.checkpoint.attempts++;
+        if (isError) seed.checkpoint.failures++;
+        else if (record.outcome === 'concern') seed.checkpoint.concern++;
+        else if (record.outcome === 'uncertain') seed.checkpoint.uncertain++;
+      }
+    } else if (record.kind === 'gate') {
       seed.gate.attempts++;
       if (isError) seed.gate.failures++;
       if (record.outcome === 'allow') seed.gate.allow++;

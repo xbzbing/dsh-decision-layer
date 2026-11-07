@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { resolveConfig, featureEnabled } from './config-store.js';
 import { createBackend } from './backend.js';
@@ -12,6 +13,7 @@ import { createLoopGuard } from './loop-guard.js';
 import { createLogStore } from './log-store.js';
 import { createStateStore } from './state-store.js';
 import { createDecisionContext } from './decision-context.js';
+import { createCheckpointReview } from './checkpoint-review.js';
 import { analyzeSessionLogs, reconstructSessionSeed, listSessionDecisions } from './log-analyze.js';
 import { isObject } from './types.js';
 import type {
@@ -62,8 +64,11 @@ function agentTools(ctx: HostContext, agent: AgentLike | undefined): ToolCandida
   } catch { return []; }
 }
 
-export async function apply(ctx: HostContext, options: { configPath?: string } = {}): Promise<void> {
-  const path = options.configPath;
+export async function apply(ctx: HostContext, options: { configPath?: string; storageDir?: string } = {}): Promise<void> {
+  // Embedders and integration tests can isolate both persistence roots. Config
+  // is derived from storageDir too, so a caller cannot half-isolate the profile.
+  const path = options.configPath ?? (options.storageDir ? join(options.storageDir, 'config.json') : undefined);
+  const logDir = options.storageDir ? join(options.storageDir, 'logs') : undefined;
   const backend = createBackend({ config: () => resolveConfig({ path }) });
   // The research log sink is attached once the web server reveals the instance
   // port (used in the file name); until then decision logs stay in memory only.
@@ -71,8 +76,10 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
   // Durable per-session mirror of the live decision counters/log, keyed by
   // session id (not port), so a resumed session's panel survives an instance
   // restart instead of resetting to zero. Independent of the JSONL research log.
-  const stateStore = createStateStore();
+  const stateStore = createStateStore({ dir: options.storageDir ? join(options.storageDir, 'state') : undefined });
+  let closeCheckpoint: ((id: string) => void) | undefined;
   const sessions = createSessionState({
+    onEnabled: (id, enabled) => { if (!enabled) closeCheckpoint?.(id); },
     onLog: entry => logStore?.append(entry),
     // Restore a resumed session from its durable snapshot; if it has none yet but
     // has persisted JSONL decision history (e.g. a session that predates this
@@ -80,11 +87,12 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
     // logs instead. Logs are read across all ports and filtered by the globally
     // unique session id, so a changed instance port never orphans the history.
     loadState: async id => (await stateStore.load(id)) ?? reconstructSessionSeed(id, {
+      dir: logDir,
       trendConfig: (await resolveConfig({ path })).checkSettings,
     }).catch(() => undefined),
     persistState: (id, state) => stateStore.save(id, state),
   });
-  if (typeof ctx.effect === 'function') ctx.effect(() => () => { void stateStore.dispose(); });
+  if (typeof ctx.effect === 'function') ctx.effect(() => () => stateStore.dispose());
   // Messages this plugin steered itself carry `kind:user` for host compatibility
   // but are our own supplemental prompt, not the user's request; remember their
   // ids so the next context pass does not treat one as the task.
@@ -106,6 +114,15 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
   // One per-turn boundary and snapshot per agent, so every decision point reads
   // the same current request and the same current-turn evidence.
   const decisionContext = createDecisionContext({ ignored: id => steeredIds.has(id) });
+  const checkpoints = createCheckpointReview({
+    evaluate: (input, request) => backend.evaluate(input, request),
+    sessions,
+    settings: async () => (await resolveConfig({ path })).checkpointSettings,
+  });
+  closeCheckpoint = id => checkpoints.close(id);
+  if (typeof ctx.effect === 'function') ctx.effect(() => () => checkpoints.dispose());
+  const checkpointRequests = new WeakMap<AgentLike, { turn: number; request: string }>();
+
   const gate = createDangerGate({
     evaluate: (input, request) => backend.evaluate(input, request),
     sessions,
@@ -225,6 +242,17 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
         if (typeof id === 'string') await sessions.ensureLoaded(id);
         if (typeof id === 'string' && Number.isInteger(turn)) {
           const entered = decisionContext.enter(agent, { turn, messages: payload.messages });
+          // Bind observation even when narrowing is disabled. No backend work runs
+          // here: completed tool batches only schedule bounded read-only checks.
+          if (agent) {
+            try {
+              if (entered.snapshot) checkpointRequests.set(agent, { turn: turn as number, request: entered.snapshot.context.request });
+              const cached = checkpointRequests.get(agent);
+              checkpoints.enter(agent, { turn: turn as number,
+                request: cached && cached.turn === turn ? cached.request : '',
+                changed: entered.changed, signal: payload.signal });
+            } catch { /* observation must never reject a step */ }
+          }
           const previous = narrowedTurns.get(id);
           const turnChanged = !previous || previous.turn !== turn;
           if (turnChanged || entered.changed) {
@@ -275,13 +303,22 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
     // step (and a one-step turn would never recover). `turn/end` is appended in
     // the loop's finally — including aborted and failed turns — so releasing
     // there is the last point before the next turn's tools.resolve.
-    const installNarrowingRelease = () => ctx.on('session/event', (subject: unknown, event: unknown) => {
-      if (!isObject(event) || event.type !== 'turn/end') return;
-      const id = isObject(subject) && typeof subject.id === 'string' ? subject.id : undefined;
-      if (id !== undefined) releaseNarrowing(id);
-    });
-    if (typeof ctx.effect === 'function') ctx.effect(installNarrowingRelease);
-    else installNarrowingRelease();
+    // Post-commit observation plus the release points that must run on every
+    // turn end; the checkpoint observer lives here for the same reason.
+    const installSessionLifecycle = () => {
+      const offEvents = ctx.on('session/event', (subject: unknown, event: unknown) => {
+        try { checkpoints.observe(subject, event); } catch { /* post-commit observers cannot affect execution */ }
+        if (!isObject(event) || event.type !== 'turn/end') return;
+        const id = isObject(subject) && typeof subject.id === 'string' ? subject.id : undefined;
+        if (id !== undefined) releaseNarrowing(id);
+      });
+      const offDisposed = ctx.on('session/disposed', (subject: unknown) => {
+        if (isObject(subject) && typeof subject.id === 'string') checkpoints.close(subject.id);
+      });
+      return () => { offEvents?.(); offDisposed?.(); };
+    };
+    if (typeof ctx.effect === 'function') ctx.effect(installSessionLifecycle);
+    else installSessionLifecycle();
   }
   const rawSkill = await readFile(new URL('../../skills/decision-layer/SKILL.md', import.meta.url), 'utf8');
   const content = rawSkill.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').trim();
@@ -295,7 +332,11 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
       questions: { type: 'object', additionalProperties: { type: 'object', additionalProperties: true } },
     }, additionalProperties: false },
     output, timeoutMs: 25_000,
-    execute: (args, exec) => backend.evaluate(args as EvaluateInput, { signal: exec.signal }),
+    // Local measurement metadata never crosses the model-visible tool boundary.
+    execute: async (args, exec) => {
+      const result = await backend.evaluate(args as EvaluateInput, { signal: exec.signal });
+      return { model: result.model, answers: result.answers, ...(result.usage ? { usage: result.usage } : {}) };
+    },
   });
   ctx.tools.register({
     name: 'decision_check_connection', description: '向裁决端点发送一次轻量连通测试，不增加自动裁决指标。',
@@ -309,15 +350,15 @@ export async function apply(ctx: HostContext, options: { configPath?: string } =
   });
 
   ctx.inject(['webServer'], (web: WebFace) => {
-    logStore = createLogStore({ port: web.webServer.port });
+    logStore = createLogStore({ port: web.webServer.port, dir: logDir });
     const port = web.webServer.port;
     const analyze = async (sessionId: string) => analyzeSessionLogs(sessionId, {
-      port,
+      port, dir: logDir,
       trendConfig: (await resolveConfig({ path })).checkSettings,
     });
-    const listRows = (sessionId: string, { page, pageSize, lowOnly }: { page?: number; pageSize?: number; lowOnly?: boolean } = {}) => listSessionDecisions(sessionId, { port, page, pageSize, lowOnly });
+    const listRows = (sessionId: string, { page, pageSize, lowOnly }: { page?: number; pageSize?: number; lowOnly?: boolean } = {}) => listSessionDecisions(sessionId, { port, dir: logDir, page, pageSize, lowOnly });
     const unregister = createManagerRoutes({ path, sessions, backend, logStore, analyze, listRows, bindHost: web.webServer.host }).map(route => web.webServer.register(route));
-    return () => { unregister.forEach(dispose => dispose()); const store = logStore; logStore = undefined; void store?.dispose(); };
+    return () => { unregister.forEach(dispose => dispose()); const store = logStore; logStore = undefined; return store?.dispose(); };
   });
 }
 

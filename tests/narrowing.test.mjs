@@ -86,7 +86,7 @@ test('createNarrowing records observe suggestions without claiming to enforce', 
   assert.equal(result.evaluated, true);
   assert.equal(result.mode, 'observe');
   assert.deepEqual(result.drop, ['image_gen']);
-  assert.deepEqual(logs.at(-1), { kind: 'narrow', outcome: 'applied', task: 'search the web', turn: 1, dropped: 1, kept: 2, mode: 'observe', tools: ['image_gen'], applied: false });
+  assert.deepEqual(withoutTiming(logs.at(-1)), { kind: 'narrow', outcome: 'applied', task: 'search the web', turn: 1, dropped: 1, kept: 2, mode: 'observe', tools: ['image_gen'], applied: false });
 });
 
 test('narrow logs carry a bounded task excerpt and turn on success and every failure strategy', async () => {
@@ -427,3 +427,10 @@ test('a narrowing log row carries the step the pass ran at, and drops an invalid
   await check.review({ ...turn('search', tools, { turn: 2 }), step: -1 });
   assert.equal(logs.at(-1).step, undefined, 'a negative step is not recorded');
 });
+
+function withoutTiming(row) {
+  const { requestId, latencyMs, ...fields } = row;
+  assert.match(requestId, /^[a-f0-9-]{36}$/);
+  assert.ok(Number.isFinite(latencyMs) && latencyMs >= 0, 'a measured decision has nonnegative wall time');
+  return fields;
+}

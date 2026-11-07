@@ -11,7 +11,7 @@ interface GateMetrics { attempts: number; failures: number; ask: number; deny: n
 interface CheckMetrics { attempts: number; failures: number; low: number; trend?: { run: number; severity: 'normal' | 'warn' | 'severe' } }
 interface NarrowMetrics { attempts: number; failures: number; applied: number; dropped: number }
 interface CompleteMetrics { attempts: number; failures: number; unsatisfied: number; satisfied: number; insufficient: number; steered: number }
-interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics; narrow?: NarrowMetrics; complete?: CompleteMetrics }
+interface Metrics { hasAutomaticDecisions: boolean; attempts: number; failures: number; gate?: GateMetrics; check?: CheckMetrics; narrow?: NarrowMetrics; complete?: CompleteMetrics; checkpoint?: { attempts: number; concern: number; uncertain: number; skipped: number } }
 interface Probe { connected: boolean; model?: string; effectiveUrl?: string; reason?: string }
 // Host-computed context reading; shape mirrors the `contextPressure` projection
 // the official composer footer reads next to our entry.
@@ -173,7 +173,8 @@ function SessionPanel({ sessionId, t, useProjection }: Props) {
           <button type="button" className="decision-status-recheck" disabled={status === 'checking'} onClick={() => checkStatus()}>{t('recheck')}</button>
         </div></section>
       <section><h3>{t('metrics')}</h3>
-        {!metrics?.gate && !metrics?.check && !metrics?.narrow && !metrics?.complete ? <p className="decision-empty" role="status">{t('empty')}</p> : <div className="decision-cards">
+        {!metrics?.gate && !metrics?.check && !metrics?.narrow && !metrics?.complete ? <><p className="decision-empty" role="status">{t('empty')}</p>
+          {metrics?.checkpoint && metrics.checkpoint.attempts + metrics.checkpoint.skipped > 0 && <p className="decision-muted">{t('checkpointDockHint', { count: metrics.checkpoint.attempts + metrics.checkpoint.skipped })}</p>}</> : <div className="decision-cards">
           {metrics.gate && <article className="decision-card decision-card-wide">
             <header className="decision-card-head">
               <span className="decision-card-title">{t('cardGate')}</span>

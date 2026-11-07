@@ -1,7 +1,8 @@
 import { setTimeout as wait } from 'node:timers/promises';
 import { DEFAULT_MODEL } from './config-store.js';
+import { measuredEvaluator } from './evaluation-trace.js';
 import { isObject, isProbability } from './types.js';
-import type { Answer, AnswerMap, BackendConfig, EvaluateInput, EvaluateResult, Question, QuestionMap } from './types.js';
+import type { Answer, AnswerMap, BackendConfig, EvaluateInput, EvaluateResult, Question, QuestionMap, EvaluationTelemetry } from './types.js';
 
 const REQUEST_LIMIT = 256 * 1024;
 const RESPONSE_LIMIT = 1024 * 1024;
@@ -10,7 +11,7 @@ const isContent = (value: unknown): boolean => typeof value === 'string' ? value
 // A backend failure carries a stable `reason` code so callers can surface the
 // specific cause (unreachable / http-error / invalid-response / config) instead
 // of a single generic error.
-export type BackendError = Error & { reason: string };
+export type BackendError = Error & { reason: string; telemetry?: EvaluationTelemetry };
 
 function backendError(reason: string, message: string): BackendError {
   const error = new Error(message) as BackendError;
@@ -75,10 +76,13 @@ function validateResponse(value: unknown, questions: QuestionMap): EvaluateResul
   const answers: AnswerMap = Object.create(null) as AnswerMap;
   for (const [id, question] of Object.entries(questions)) answers[id] = validateAnswer(raw[id], question);
   const usage = value.usage;
-  return { model: value.model, answers, usage: isObject(usage) ? {
-    input_tokens: Number.isSafeInteger(usage.input_tokens) ? usage.input_tokens as number : 0,
-    output_tokens: Number.isSafeInteger(usage.output_tokens) ? usage.output_tokens as number : 0,
-  } : undefined };
+  const usageFields = isObject(usage) ? {
+    ...(Number.isSafeInteger(usage.input_tokens) && (usage.input_tokens as number) >= 0 ? { input_tokens: usage.input_tokens as number } : {}),
+    ...(Number.isSafeInteger(usage.output_tokens) && (usage.output_tokens as number) >= 0 ? { output_tokens: usage.output_tokens as number } : {}),
+  } : undefined;
+  // Omit usage entirely when the provider reported no usable field; an empty
+  // object would read as "measured zero" to a caller.
+  return { model: value.model, answers, ...(usageFields && Object.keys(usageFields).length > 0 ? { usage: usageFields } : {}) };
 }
 
 async function boundedJson(response: Response): Promise<unknown> {
@@ -109,7 +113,10 @@ export function createBackend({ config, fetcher = globalThis.fetch, timeoutMs = 
     throw new Error('Invalid backend dependencies');
   }
   return {
-    async evaluate(input: EvaluateInput, { signal }: { signal?: AbortSignal } = {}): Promise<EvaluateResult> {
+    async evaluate(input: EvaluateInput, options: { signal?: AbortSignal } = {}): Promise<EvaluateResult> {
+      let backendAttempts = 0;
+      let requestBytes: number | undefined;
+      const measured = measuredEvaluator(async (input, { signal } = {}) => {
       const { state, questions } = validateRequest(input);
       const settings = await config();
       const key = settings.apiKey?.trim();
@@ -123,13 +130,16 @@ export function createBackend({ config, fetcher = globalThis.fetch, timeoutMs = 
       const endpoint = new URL(url.href);
       endpoint.pathname = `${url.pathname.replace(/\/+$/, '')}/v1/systemone`;
       if (endpoint.origin !== url.origin) throw backendError('config', 'Invalid backend endpoint');
+      const body = JSON.stringify({ state, questions, model });
+      requestBytes = Buffer.byteLength(body);
       const timeout = AbortSignal.timeout(timeoutMs);
       const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
       for (let attempt = 0; attempt < 3; attempt++) {
         let reply: Response;
         try {
+          backendAttempts++;
           reply = await fetcher(endpoint.href, { method: 'POST', redirect: 'error', signal: combined,
-            headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body: JSON.stringify({ state, questions, model }) });
+            headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' }, body });
         } catch { throw backendError('unreachable', 'Backend request failed or timed out'); }
         if (reply.ok) return validateResponse(await boundedJson(reply), questions);
         await reply.body?.cancel().catch(() => {});
@@ -139,6 +149,16 @@ export function createBackend({ config, fetcher = globalThis.fetch, timeoutMs = 
       }
       // Unreachable: the last attempt always returns or throws above.
       throw backendError('http-error', 'Backend retries exhausted');
+      });
+      try {
+        const result = await measured(input, options);
+        return { ...result, telemetry: { ...result.telemetry!, backendAttempts, requestBytes } };
+      } catch (error) {
+        if (error instanceof Error && (error as BackendError).telemetry) {
+          Object.assign((error as BackendError).telemetry!, { backendAttempts, requestBytes });
+        }
+        throw error;
+      }
     },
   };
 }

@@ -177,6 +177,21 @@ test('a flat save leaves untouched sections on disk instead of dropping them', a
   assert.equal(resolved.completeSettings.minConfidence, 0.2);
 });
 
+test('checkpoint settings are opt-in, strictly validated and preserved by other saves', async () => {
+  const checkpointFile = join(temporary, 'checkpoint.json');
+  assert.equal((await resolveConfig({ path: checkpointFile, env: {} })).checkpointSettings, undefined);
+  const settings = { enabled: true, heartbeatSteps: 6, failureThreshold: 3, timeoutMs: 1500 };
+  assert.deepEqual((await saveConfig({ checkpointSettings: settings }, checkpointFile)).checkpointSettings, settings);
+  await saveConfig({ model: 'changed' }, checkpointFile);
+  assert.deepEqual((await resolveConfig({ path: checkpointFile, env: {} })).checkpointSettings, settings);
+  for (const invalid of [null, [], 'yes', { enabled: 1 }, { heartbeatSteps: 1 }, { heartbeatSteps: 101 },
+    { failureThreshold: 1 }, { failureThreshold: 11 }, { timeoutMs: 99 }, { timeoutMs: 10001 }, { mode: 'steer' }]) {
+    await assert.rejects(saveConfig({ checkpointSettings: invalid }, checkpointFile), /checkpoint/i);
+  }
+  assert.deepEqual((await saveConfig({ checkpointSettings: {} }, checkpointFile)).checkpointSettings, {});
+  assert.equal((await loadConfig(checkpointFile)).apiKeySet, false);
+});
+
 test('invalid URLs are rejected and missing config has a safe display view', async () => {
   const missing = await loadConfig(join(temporary, 'missing.json'));
   assert.deepEqual(missing, { url: '', model: '', apiKeySet: false, httpApprovedUrl: '' });

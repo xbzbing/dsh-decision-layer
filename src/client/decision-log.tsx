@@ -130,7 +130,57 @@ function renderComplete({ t }: RowProps, entry: LogEntry) {
   return <>{label} · <span className="decision-log-verdict">{result}</span>{typeof entry.conditions === 'number' ? <span className="decision-log-detail"> · {t('completeConditions')} {entry.conditions}</span> : null}{tally}{steer}</>;
 }
 
+// Checkpoint reasons are codes, never model-authored diagnosis. Unknown codes
+// receive a local fallback rather than exposing arbitrary backend text.
+function checkpointReason(t: Translate<TranslationKey>, reason: string) {
+  switch (reason) {
+    case 'disabled': return t('checkpointReasonDisabled');
+    case 'no-task': return t('checkpointReasonNoTask');
+    case 'stale': case 'superseded': return t('checkpointReasonStale');
+    case 'canceled': case 'aborted': return t('checkpointReasonCanceled');
+    case 'timeout': return t('checkpointReasonTimeout');
+    case 'queue-full': case 'budget': return t('checkpointReasonBusy');
+    case 'unchanged': case 'no-evidence': return t('checkpointReasonUnchanged');
+    case 'low-confidence': return t('reasonLowConfidence');
+    case 'unavailable': case 'unreachable': return t('reasonUnavailable');
+    case 'http-error': return t('reasonHttpError');
+    case 'invalid-response': return t('reasonInvalidResponse');
+    case 'config': return t('reasonConfig');
+    default: return t('checkpointReasonUnknown');
+  }
+}
+
+const checkpointOutcome = (entry: LogEntry) => entry.outcome === 'concern' && entry.lowConfidence === true ? 'uncertain' : entry.outcome;
+
+function renderCheckpoint({ t }: RowProps, entry: LogEntry) {
+  const outcome = checkpointOutcome(entry);
+  // A canceled/stale check is deliberate suppression, not a failed judgement:
+  // label it neutrally and do not repeat the reason in the detail suffix.
+  const discarded = outcome === 'error' && (entry.reason === 'canceled' || entry.reason === 'aborted');
+  const result = discarded ? t('checkpointReasonCanceled')
+    : outcome === 'ok' ? t('checkpointOk')
+    : outcome === 'concern' ? t('checkpointConcern')
+    : outcome === 'error' ? t('logEvalFailed')
+    : outcome === 'skipped' ? t('checkpointSkipped') : t('checkpointUncertain');
+  const trigger = entry.trigger === 'heartbeat' ? t('checkpointHeartbeat')
+    : entry.trigger === 'unresolved_failure' ? t('checkpointFailure')
+    : entry.trigger === 'verification_after_change' ? t('checkpointVerification') : t('checkpointTriggerUnknown');
+  return <><span>{t('logCheckpoint')}</span>{turnTag(t, entry)}
+    <span className="decision-log-detail"> · {t('checkpointReadOnly')} · {trigger}</span>
+    <span className={outcome === 'uncertain' || outcome === 'skipped' || discarded ? 'decision-log-muted-verdict' : 'decision-log-verdict'}> · {result}</span>
+    {Number.isSafeInteger(entry.throughSeq) && <span className="decision-log-detail"> · {t('checkpointThroughSeq', { seq: entry.throughSeq as number })}</span>}
+    {Number.isSafeInteger(entry.evidenceCount) && <span className="decision-log-detail"> · {t('checkpointEvidenceCount', { count: entry.evidenceCount as number })}</span>}
+    {typeof entry.confidence === 'number' && <span className="decision-log-detail"> · {t('logConfidence')} {entry.confidence}</span>}
+    {entry.reason && !discarded && <span className="decision-log-detail"> · {checkpointReason(t, entry.reason)}</span>}
+  </>;
+}
+
 function outcomeTagOf(entry: LogEntry) {
+  if (entry.kind === 'checkpoint') {
+    const outcome = checkpointOutcome(entry);
+    const discarded = outcome === 'error' && (entry.reason === 'canceled' || entry.reason === 'aborted');
+    return discarded ? 'muted' : outcome === 'concern' ? 'warn' : outcome === 'error' ? 'error' : outcome === 'ok' ? 'ok' : 'muted';
+  }
   if (entry.kind === 'narrow') return entry.outcome === 'error' ? 'error' : 'ok';
   if (entry.kind === 'complete') return entry.outcome === 'error' ? 'error' : entry.outcome === 'unsatisfied' ? 'warn' : 'ok';
   if (entry.outcome === 'deny') return 'deny';
@@ -145,6 +195,7 @@ function renderBody(props: RowProps, entry: LogEntry) {
   return entry.kind === 'gate' ? renderGate(props, entry)
     : entry.kind === 'narrow' ? renderNarrow(props, entry)
     : entry.kind === 'complete' ? renderComplete(props, entry)
+    : entry.kind === 'checkpoint' ? renderCheckpoint(props, entry)
     : renderCheck(props, entry);
 }
 

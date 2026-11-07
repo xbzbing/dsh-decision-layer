@@ -11,8 +11,9 @@ interface CheckSettings {
 }
 interface NarrowSettings { mode: 'observe' | 'enforce'; threshold?: number; keepPrefixes?: string[]; maxCandidates?: number; batchMode?: BatchMode }
 interface CompleteSettings { mode: 'observe' | 'steer'; minConditions?: number; minConfidence?: number }
+interface CheckpointSettings { enabled?: boolean; heartbeatSteps?: number; failureThreshold?: number; timeoutMs?: number }
 interface Features { gate?: boolean; check?: boolean; narrow?: boolean; complete?: boolean }
-interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string; gateSettings?: GateSettings; checkSettings?: CheckSettings; narrowSettings?: NarrowSettings; completeSettings?: CompleteSettings; features?: Features }
+interface Config { url: string; model: string; apiKeySet: boolean; httpApprovedUrl: string; effectiveUrl: string; gateSettings?: GateSettings; checkSettings?: CheckSettings; narrowSettings?: NarrowSettings; completeSettings?: CompleteSettings; checkpointSettings?: CheckpointSettings; features?: Features }
 interface Envelope<T> { ok: boolean; value?: T; error?: string }
 export interface ConfigFormProps { t: Translate<TranslationKey>; fetchFn?: typeof fetch }
 
@@ -33,6 +34,14 @@ const DEFAULT_MAX_CANDIDATES = 20;
 // as fairly relevant survive, so the tool surface stays small.
 const DEFAULT_THRESHOLD = 0.7;
 const DEFAULT_BATCH_MODE: BatchMode = 'auto';
+// Mirrors the opt-in observer settings; separate from the four intervention flags.
+const CHECKPOINT_DEFAULTS = { enabled: false, heartbeatSteps: 6, failureThreshold: 3, timeoutMs: 1500 };
+const checkpointFieldsOf = (settings?: CheckpointSettings) => ({
+  enabled: settings?.enabled === true,
+  heartbeatSteps: String(settings?.heartbeatSteps ?? CHECKPOINT_DEFAULTS.heartbeatSteps),
+  failureThreshold: String(settings?.failureThreshold ?? CHECKPOINT_DEFAULTS.failureThreshold),
+  timeoutMs: String(settings?.timeoutMs ?? CHECKPOINT_DEFAULTS.timeoutMs),
+});
 // The built-in grading levels, mirroring src/host/self-check.ts DEFAULT_RUBRIC.
 const DEFAULT_RUBRIC = [
   '明显答非所问，或存在严重遗漏 / 自相矛盾',
@@ -151,6 +160,7 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
   const [narrowOn, setNarrowOn] = useState(true);
   const [completeOn, setCompleteOn] = useState(true);
   const [completeMode, setCompleteMode] = useState<'observe' | 'steer'>('observe');
+  const [checkpoint, setCheckpoint] = useState(() => checkpointFieldsOf());
   const [key, setKey] = useState('');
   const [busy, setBusy] = useState(false);
   // Two independent dirty flags: the advanced section (features + self-check +
@@ -175,12 +185,13 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
     setConfig(value);
   };
 
-  // Reflect the advanced section (self-check / narrowing / completion tuning)
+  // Reflect the advanced section (self-check, narrowing, completion and process checks).
   // from a saved config.
   const applyAdvanced = (value: Config) => {
     setCheckMode(value.checkSettings?.mode ?? 'observe');
     setNarrowMode(value.narrowSettings?.mode ?? 'enforce');
     setCompleteMode(value.completeSettings?.mode ?? 'observe');
+    setCheckpoint(checkpointFieldsOf(value.checkpointSettings));
     setKeepPrefixes(prefixesText(value.narrowSettings));
     setMaxCandidates(String(maxCandidatesOf(value.narrowSettings)));
     setThreshold(String(thresholdOf(value.narrowSettings)));
@@ -287,6 +298,13 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
             minConditions: clampNumber(thresholds.minConditions, THRESHOLD_DEFAULTS.minConditions, 2, 20, true),
             minConfidence: clampNumber(thresholds.completeMin, THRESHOLD_DEFAULTS.completeMin, 0, 1),
           },
+          checkpointSettings: {
+            ...config.checkpointSettings,
+            enabled: checkpoint.enabled,
+            heartbeatSteps: clampNumber(checkpoint.heartbeatSteps, CHECKPOINT_DEFAULTS.heartbeatSteps, 2, 100, true),
+            failureThreshold: clampNumber(checkpoint.failureThreshold, CHECKPOINT_DEFAULTS.failureThreshold, 2, 10, true),
+            timeoutMs: clampNumber(checkpoint.timeoutMs, CHECKPOINT_DEFAULTS.timeoutMs, 100, 10000, true),
+          },
         }) });
       // Refresh the echoed sections (not the backend one, which may hold unsaved
       // edits) so the next save spreads server truth rather than a stale copy.
@@ -294,7 +312,8 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
         gateSettings: value.gateSettings ?? previous.gateSettings,
         checkSettings: value.checkSettings ?? previous.checkSettings,
         narrowSettings: value.narrowSettings ?? previous.narrowSettings,
-        completeSettings: value.completeSettings ?? previous.completeSettings }));
+        completeSettings: value.completeSettings ?? previous.completeSettings,
+        checkpointSettings: value.checkpointSettings ?? previous.checkpointSettings }));
       applyAdvanced(value); setAdvancedDirty(false); setMessage({ text: t('saved'), ok: true });
     } catch (error) {
       // Surface the server's reason (e.g. "Invalid self-check settings") instead of
@@ -438,6 +457,26 @@ export function ConfigForm({ t, fetchFn = fetch }: ConfigFormProps) {
               <input className="decision-narrow-cap" type="number" min={2} max={20} step={1} value={thresholds.minConditions} disabled={!canEdit || !completeOn}
                 onChange={event => setThresholdField('minConditions', event.target.value)} />
               <small className="decision-muted">{t('minConditionsHint')}</small></label>
+            </div>
+          </div>
+          <div className="decision-field-block decision-field-block-wide">
+            <span className="decision-subhead">{t('checkpointSettings')}</span>
+            <Toggle label={t('checkpointEnabled')} checked={checkpoint.enabled} disabled={!canEdit}
+              onChange={enabled => { setCheckpoint(previous => ({ ...previous, enabled })); setAdvancedDirty(true); }} />
+            <p className="decision-muted">{t('checkpointHint')}</p>
+            <div className="decision-threshold-grid">
+              <label className="decision-field decision-field-inline">{t('checkpointHeartbeatLabel')}
+                <input className="decision-narrow-cap" type="number" min={2} max={100} step={1} value={checkpoint.heartbeatSteps} disabled={!canEdit || !checkpoint.enabled}
+                  onChange={event => { setCheckpoint(previous => ({ ...previous, heartbeatSteps: event.target.value })); setAdvancedDirty(true); }} />
+                <small className="decision-muted">{t('checkpointHeartbeatHint')}</small></label>
+              <label className="decision-field decision-field-inline">{t('checkpointFailureLabel')}
+                <input className="decision-narrow-cap" type="number" min={2} max={10} step={1} value={checkpoint.failureThreshold} disabled={!canEdit || !checkpoint.enabled}
+                  onChange={event => { setCheckpoint(previous => ({ ...previous, failureThreshold: event.target.value })); setAdvancedDirty(true); }} />
+                <small className="decision-muted">{t('checkpointFailureHint')}</small></label>
+              <label className="decision-field decision-field-inline">{t('checkpointTimeoutLabel')}
+                <input className="decision-narrow-cap" type="number" min={100} max={10000} step={1} value={checkpoint.timeoutMs} disabled={!canEdit || !checkpoint.enabled}
+                  onChange={event => { setCheckpoint(previous => ({ ...previous, timeoutMs: event.target.value })); setAdvancedDirty(true); }} />
+                <small className="decision-muted">{t('checkpointTimeoutHint')}</small></label>
             </div>
           </div>
           <div className="decision-field-block decision-field-block-wide">

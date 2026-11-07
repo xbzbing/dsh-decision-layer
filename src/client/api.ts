@@ -7,13 +7,17 @@ export const API_BASE = '/plugins/dsh-decision-layer/api';
 export type Rating = 'good' | 'bad' | 'unsure';
 
 export interface LogEntry {
-  id?: string; at: number; kind: 'gate' | 'check' | 'narrow' | 'complete'; outcome: string;
+  id?: string; at: number; kind: 'gate' | 'check' | 'narrow' | 'complete' | 'checkpoint'; outcome: string;
   tool?: string; suggestion?: string; action?: string; reason?: string; score?: number; confidence?: number;
   command?: string; path?: string; subject?: string;
   task?: string; turn?: number; step?: number;
   mode?: string; dropped?: number; kept?: number; candidates?: number; tools?: string[]; applied?: boolean;
   conditions?: number; satisfied?: number; unsatisfied?: number; insufficient?: number; steered?: boolean;
   lowConfidence?: boolean;
+  trigger?: 'heartbeat' | 'unresolved_failure' | 'verification_after_change';
+  throughSeq?: number; evidenceCount?: number;
+  requestId?: string; latencyMs?: number; inputTokens?: number; outputTokens?: number;
+  requestBytes?: number; backendAttempts?: number; model?: string;
 }
 
 // Session-scoped runtime state from /session: whether automatic interventions
@@ -33,6 +37,13 @@ export interface Analysis {
     check: { attempts: number; ok: number; low: number; error: number; scoreSum: number; scoreCount: number; confidence: Record<string, number> };
     narrow: { attempts: number; applied: number; error: number; droppedSum: number; tooManyCandidates: number };
     complete: { attempts: number; satisfied: number; unsatisfied: number; insufficient: number; error: number; steered: number };
+    checkpoint?: { attempts: number; concern: number; uncertain: number; error: number; skipped: number };
+    telemetry?: {
+      measured: number; latencyMsSum: number; latencyMsP50: number | null; latencyMsP95: number | null;
+      inputTokens: number; outputTokens: number; usageMeasured: number; backendAttempts: number;
+      /** Number of decision rows whose backendAttempts field was actually measured. */
+      transportMeasured?: number;
+    };
   };
 }
 

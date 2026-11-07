@@ -135,11 +135,11 @@ test('gate logs a deny with action deny; a pass-through records action pass', as
   const deny = createDangerGate({ sessions, evaluate: async () => ({ answers: { verdict: { type: 'choice', choice: 'deny', confidence: 1, probabilities: { allow: 0, ask: 0, deny: 1 } } } }) });
   await deny.evaluate(exec('bash', { command: 'rm -rf /tmp/build' }));
   // The gated command rides along on the log so a human reviewer sees WHAT was gated.
-  assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'deny', tool: 'bash', command: 'rm -rf /tmp/build', suggestion: 'deny', action: 'deny' });
+  assert.deepEqual(withoutTiming(entries.at(-1)), { kind: 'gate', callId: 'call-1', confidence: 1, outcome: 'deny', tool: 'bash', command: 'rm -rf /tmp/build', suggestion: 'deny', action: 'deny' });
   // A backend failure is a pass-through (no intervention), logged as error/pass.
   const unavailable = createDangerGate({ sessions, evaluate: async () => { throw new Error('offline'); } });
   await unavailable.evaluate(exec('edit', { path: '/etc/passwd' }));
-  assert.deepEqual(entries.at(-1), { kind: 'gate', outcome: 'error', tool: 'edit', path: '/etc/passwd', action: 'pass', reason: 'unreachable' });
+  assert.deepEqual(withoutTiming(entries.at(-1)), { kind: 'gate', callId: 'call-1', outcome: 'error', tool: 'edit', path: '/etc/passwd', action: 'pass', reason: 'unreachable' });
 });
 
 test('gate logs distinct pass-through reasons for invalid response and low confidence', async () => {
@@ -185,3 +185,10 @@ test('a broken confidence resolver falls back to the built-in floor, never to bl
       'an invalid floor must fall back to the 0.6 default, not to 0 (which would block every deny)');
   }
 });
+
+function withoutTiming(row) {
+  const { requestId, latencyMs, ...fields } = row;
+  assert.match(requestId, /^[a-f0-9-]{36}$/);
+  assert.ok(Number.isFinite(latencyMs) && latencyMs >= 0, 'a measured decision has nonnegative wall time');
+  return fields;
+}

@@ -1,3 +1,4 @@
+import { createEvaluationTrace } from './evaluation-trace.js';
 import { taskExcerpt } from './excerpt.js';
 import { errorReason, isObject, isProbability } from './types.js';
 import type { AgentLike, DangerRuleAdditions, DangerRuleSet, EvaluateInput, Evaluator, SessionsFace, ToolExec } from './types.js';
@@ -145,7 +146,7 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
       try { task = taskExcerpt(taskText(exec?.agent)); } catch { task = undefined; }
     }
     if (task) args.task = task;
-    try { sessions.log(id, { kind: 'gate', outcome, tool: exec?.name, ...args, ...detail }); }
+    try { sessions.log(id, { kind: 'gate', outcome, tool: exec?.name, callId: exec?.callId, ...args, ...detail }); }
     catch { /* logging is best effort */ }
   };
   // Two-tier model: the gate intervenes ONLY on a high-confidence `deny`
@@ -178,12 +179,13 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
       evaluatedCalls.delete(exec);
     },
     async evaluate(exec: ToolExec): Promise<GateDecision | undefined> {
+      const trace = createEvaluationTrace(evaluate);
       let result;
       try {
-        result = await evaluate(suggestionQuestion(exec), { signal: exec.signal });
+        result = await trace.evaluate(suggestionQuestion(exec), { signal: exec.signal });
       } catch (error) {
         // Backend failure: no verdict, so do not intervene (pass through).
-        return passThrough(exec, 'error', { reason: errorReason(error) });
+        return passThrough(exec, 'error', { ...trace.detail(), reason: errorReason(error) });
       }
       // The backend validates the wire shape, but an injected evaluator (a test
       // or an embedder) may hand us a bare verdict: read the two fields it can
@@ -192,19 +194,19 @@ export function createDangerGate({ evaluate, sessions, rules = DEFAULT_DANGEROUS
       const answer = result?.answers?.verdict as { choice?: unknown; confidence?: unknown } | undefined;
       const choice = typeof answer?.choice === 'string' ? answer.choice : undefined;
       const confidence = typeof answer?.confidence === 'number' ? answer.confidence : undefined;
-      if (choice === undefined || !['allow', 'ask', 'deny'].includes(choice)) return passThrough(exec, 'error', { reason: 'invalid-response' });
+      if (choice === undefined || !['allow', 'ask', 'deny'].includes(choice)) return passThrough(exec, 'error', { ...trace.detail(), reason: 'invalid-response' });
       const minConfidenceNow = await resolveMinConfidence();
       const confident = confidence !== undefined && Number.isFinite(confidence) && confidence >= minConfidenceNow;
       // Only a high-confidence deny blocks the call.
       if (choice === 'deny' && confident) {
-        record(exec, 'deny', { suggestion: 'deny', action: 'deny' });
+        record(exec, 'deny', { ...trace.detail(), confidence, suggestion: 'deny', action: 'deny' });
         if (exec && typeof exec === 'object') deniedCalls.add(exec);
         return { kind: 'deny', reason: 'Dangerous call rejected by decision policy', modelSuggestion: choice };
       }
       // Uncertain (low confidence) or a non-deny verdict → do not intervene.
       const detail: { suggestion: string; reason?: string; confidence?: number } = { suggestion: choice };
       if (!confident) { detail.reason = 'low-confidence'; if (confidence !== undefined && Number.isFinite(confidence)) detail.confidence = confidence; }
-      return passThrough(exec, 'allow', detail);
+      return passThrough(exec, 'allow', { ...trace.detail(), confidence, ...detail });
     },
     async preExecute(exec: ToolExec, next: () => unknown): Promise<unknown> {
       const classification = classifyDangerous(exec, await resolveRules());
